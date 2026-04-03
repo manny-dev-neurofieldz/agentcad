@@ -88,8 +88,8 @@ function initViewer() {
 }
 
 function showMesh(geometry) {
-  if (!renderer) initViewer();
   container.classList.add('active');
+  if (!renderer) initViewer();
   if (currentMesh) scene.remove(currentMesh);
   geometry.computeVertexNormals();
   currentMesh = new THREE.Mesh(geometry,

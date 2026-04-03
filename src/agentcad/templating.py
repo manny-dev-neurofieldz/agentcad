@@ -216,7 +216,7 @@ class Page:
         """Read vendor JS files and return inline <script> tags."""
         vendor_dir = _TEMPLATES_DIR / "vendor"
         scripts = []
-        for name in ["three.min.js", "OrbitControls.js", "STLLoader.js"]:
+        for name in ["three.min.js", "OrbitControls.js", "STLLoader.js", "hljs-openscad.min.js"]:
             path = vendor_dir / name
             if path.exists():
                 scripts.append(f"<script>/* {name} */\n{path.read_text()}</script>")
