@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcad"
+version = "0.1.0.dev0"
+description = "Extensible agentic feedback loop for parametric 3D CAD design"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [
+    {name = "Craig Wm. Versek", email = "cversek@gmail.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+
+[project.optional-dependencies]
+openscad = []  # OpenSCAD binary required externally
+voxelcad = ["voxelcad"]
+dev = ["pytest"]
+
+[project.scripts]
+agentcad = "agentcad.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
