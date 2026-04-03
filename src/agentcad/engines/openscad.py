@@ -30,7 +30,7 @@ class OpenSCADEngine(CADEngine):
         binary_path: Optional[str] = None,
         library_path: Optional[str] = None,
         backend: str = "Manifold",
-        color_scheme: str = "Tomorrow Night",
+        color_scheme: str = "Cornfield",
     ):
         self._binary = binary_path or shutil.which("openscad") or "openscad"
         self._library_path = library_path or os.environ.get(
@@ -113,6 +113,7 @@ class OpenSCADEngine(CADEngine):
 
             args = [
                 "--backend", self._backend,
+                "--render",
                 "-o", str(out_file),
                 f"--camera={preset.camera_string}",
                 f"--imgsize={image_size},{image_size}",
@@ -126,13 +127,19 @@ class OpenSCADEngine(CADEngine):
                 # Capture warnings from stderr
                 if result.stderr:
                     for line in result.stderr.splitlines():
-                        if "ERROR" in line or "error" in line.lower():
-                            if "shader" not in line.lower():
-                                errors.append(line.strip())
+                        stripped = line.strip()
+                        if not stripped:
+                            continue
+                        # Skip informational lines
+                        if "NoError" in stripped or "Facets:" in stripped:
+                            continue
+                        if stripped.startswith("ERROR"):
+                            if "shader" not in stripped.lower():
+                                errors.append(stripped)
                             else:
-                                warnings.append(line.strip())
-                        elif "WARNING" in line:
-                            warnings.append(line.strip())
+                                warnings.append(stripped)
+                        elif "WARNING" in stripped:
+                            warnings.append(stripped)
 
                 if out_file.exists() and out_file.stat().st_size > 0:
                     images[view_name] = out_file
