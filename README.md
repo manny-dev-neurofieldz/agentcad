@@ -4,6 +4,31 @@ Extensible agentic feedback loop for parametric 3D CAD design. Write CAD code, r
 
 AgentCAD abstracts the design feedback loop so it works with any CLI or API-scriptable CAD engine. The agent generates parametric code, renders it to multi-view PNG images, analyzes the visual output, identifies errors, and corrects the design autonomously.
 
+## Architecture
+
+```
+╭──────────────────────────────────────────────────────────╮
+│                    AI Agent (Claude)                     │
+│                                                          │
+│  ╭──────────╮    ╭──────────╮    ╭────────────────────╮  │
+│  │  Write   │───▶│  Render  │───▶│  Analyze images    │  │
+│  │ CAD code │    │  via CLI │    │  (multimodal)      │  │
+│  ╰──────────╯    ╰──────────╯    ╰─────────┬──────────╯  │
+│       ▲                                    │             │
+│       └──────────── Feedback Loop ─────────╯             │
+╰──────────────────────────┬───────────────────────────────╯
+                           │
+                   ╭───────┴───────╮
+                   │   CADEngine   │ ◀── Abstract interface
+                   ╰───────┬───────╯
+            ┌──────────────┼──────────────┐
+            ▼              ▼              ▼
+     ┌────────────┐ ┌────────────┐ ┌────────────┐
+     │  OpenSCAD  │ │  VoxelCAD  │ │   Future   │
+     │   Engine   │ │   Engine   │ │    ...     │
+     └────────────┘ └────────────┘ └────────────┘
+```
+
 ## Quick Start
 
 ```bash
