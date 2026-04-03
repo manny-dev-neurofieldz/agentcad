@@ -25,19 +25,25 @@ _DEFAULT_OPENSCADPATH = "/opt/openscad-libraries"
 class OpenSCADEngine(CADEngine):
     """OpenSCAD rendering engine with BOSL2 and Manifold support."""
 
-    def __init__(
-        self,
-        binary_path: Optional[str] = None,
-        library_path: Optional[str] = None,
-        backend: str = "Manifold",
-        color_scheme: str = "Cornfield",
-    ):
-        self._binary = binary_path or shutil.which("openscad") or "openscad"
-        self._library_path = library_path or os.environ.get(
-            "OPENSCADPATH", _DEFAULT_OPENSCADPATH
-        )
-        self._backend = backend
-        self._color_scheme = color_scheme
+    def __init__(self, config=None, **overrides):
+        """Initialize from OpenSCADConfig or keyword overrides.
+
+        Args:
+            config: Optional OpenSCADConfig dataclass.
+            **overrides: Override individual config fields.
+        """
+        from agentcad.config import OpenSCADConfig
+        cfg = config or OpenSCADConfig()
+        for k, v in overrides.items():
+            if hasattr(cfg, k):
+                setattr(cfg, k, v)
+
+        self._binary = shutil.which("openscad") or "openscad"
+        self._library_path = os.environ.get("OPENSCADPATH", cfg.library_path)
+        self._backend = cfg.backend
+        self._color_scheme = cfg.colorscheme
+        self._fa = cfg.fa
+        self._fs = cfg.fs
 
     @property
     def name(self) -> str:
@@ -114,6 +120,8 @@ class OpenSCADEngine(CADEngine):
             args = [
                 "--backend", self._backend,
                 "--render",
+                "-D", f"$fa={self._fa}",
+                "-D", f"$fs={self._fs}",
                 "-o", str(out_file),
                 f"--camera={preset.camera_string}",
                 f"--imgsize={image_size},{image_size}",
@@ -170,6 +178,9 @@ class OpenSCADEngine(CADEngine):
         args = [
             "--backend", self._backend,
             "--render",
+            "--export-format", "binstl",
+            "-D", f"$fa={self._fa}",
+            "-D", f"$fs={self._fs}",
             "-o", str(output_path),
             str(source_path),
         ]

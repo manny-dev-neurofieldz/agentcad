@@ -71,6 +71,21 @@ def cmd_info(args):
     print(f"\nCamera presets: {list(STANDARD_PRESETS.keys())}")
 
 
+def cmd_check(args):
+    """Check an HTML viewer page for JS console errors."""
+    from agentcad.webdebug import check_html
+
+    html_path = Path(args.html_file)
+    if not html_path.exists():
+        print(f"Error: File not found: {html_path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Checking {html_path} with headless Chromium...")
+    result = check_html(html_path, timeout_ms=args.timeout)
+    print(result.summary())
+    sys.exit(0 if result.success else 1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="agentcad",
@@ -98,6 +113,12 @@ def main():
     # info
     p_info = sub.add_parser("info", help="Show engine and environment info")
     p_info.set_defaults(func=cmd_info)
+
+    # check
+    p_check = sub.add_parser("check", help="Check HTML viewer for JS errors")
+    p_check.add_argument("html_file", help="Path to index.html")
+    p_check.add_argument("-t", "--timeout", type=int, default=10000, help="Timeout in ms (default: 10000)")
+    p_check.set_defaults(func=cmd_check)
 
     args = parser.parse_args()
     if not args.command:
