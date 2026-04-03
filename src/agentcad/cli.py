@@ -71,6 +71,23 @@ def cmd_info(args):
     print(f"\nCamera presets: {list(STANDARD_PRESETS.keys())}")
 
 
+def cmd_new_project(args):
+    """Create a new design project folder structure."""
+    from agentcad.output import DesignProject
+    from agentcad.config import OutputConfig
+
+    config = OutputConfig()
+    if args.base_dir:
+        config.base_dir = args.base_dir
+
+    project = DesignProject(args.name, config)
+    path = project.setup()
+    print(f"Created project: {path}")
+    print(f"  source/   — .scad source files")
+    print(f"  renders/  — multi-view PNGs")
+    print(f"  exports/  — STL files")
+
+
 def cmd_check(args):
     """Check an HTML viewer page for JS console errors."""
     from agentcad.webdebug import check_html
@@ -113,6 +130,12 @@ def main():
     # info
     p_info = sub.add_parser("info", help="Show engine and environment info")
     p_info.set_defaults(func=cmd_info)
+
+    # new-project
+    p_newproj = sub.add_parser("new-project", help="Create a design project folder")
+    p_newproj.add_argument("name", help="Project name")
+    p_newproj.add_argument("-b", "--base-dir", help="Override output base directory")
+    p_newproj.set_defaults(func=cmd_new_project)
 
     # check
     p_check = sub.add_parser("check", help="Check HTML viewer for JS errors")

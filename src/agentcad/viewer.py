@@ -31,7 +31,11 @@ def generate_html(project: "DesignProject") -> str:
         vb = page.variant(v.name)
 
         for key, value in v.params.items():
-            vb.param(key, value)
+            # Notes are rendered separately, not as a param row
+            if key == "notes":
+                vb.notes(str(value))
+            else:
+                vb.param(key, value)
 
         for view_name, img_path in sorted(v.renders.items()):
             vb.render(view_name, _relative(base, img_path))

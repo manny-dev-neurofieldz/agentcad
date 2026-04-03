@@ -42,6 +42,18 @@ ${threejs_scripts}
   #viewer-close { position: absolute; top: 10px; right: 14px; background: var(--highlight);
     color: #fff; border: none; border-radius: 50%; width: 32px; height: 32px; cursor: pointer;
     font-size: 1.2rem; z-index: 10; }
+  .version-bar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem;
+    padding: 0.75rem 1rem; background: var(--card); border-radius: 8px; }
+  .version-bar label { font-weight: bold; color: var(--highlight); }
+  .version-bar select { background: var(--accent); color: var(--text); border: 1px solid #444;
+    border-radius: 6px; padding: 6px 12px; font-size: 0.95rem; cursor: pointer; }
+  .variant { display: none; }
+  .variant.active { display: block; }
+  .notes { background: #0d1b2a; border-radius: 8px; padding: 1rem; margin: 0.5rem 0;
+    font-family: system-ui; line-height: 1.6; }
+  .notes p { margin: 0.3rem 0; }
+  .notes strong { color: var(--highlight); }
+  .timestamp { color: #666; font-size: 0.85rem; margin-left: 0.5rem; }
 </style>
 </head>
 <body>
@@ -52,6 +64,11 @@ ${threejs_scripts}
 <summary>Project Metadata</summary>
 <table class="meta"><tbody>${metadata_rows}</tbody></table>
 </details>
+
+<div class="version-bar">
+  <label for="version-select">Version:</label>
+  <select id="version-select" onchange="selectVersion(this.value)"></select>
+</div>
 
 <div id="viewer-container">
   <button id="viewer-close" onclick="closeViewer()">&#215;</button>
@@ -119,6 +136,46 @@ window.loadSTL = function(path) {
 };
 
 window.closeViewer = function() { container.classList.remove('active'); };
+
+// Version selector
+window.selectVersion = function(idx) {
+  document.querySelectorAll('.variant').forEach((el, i) => {
+    el.classList.toggle('active', i === parseInt(idx));
+  });
+  closeViewer();
+};
+
+// Initialize: populate selector, show first (latest)
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('version-select');
+  const variants = document.querySelectorAll('.variant');
+  variants.forEach((el, i) => {
+    const name = el.querySelector('h2')?.textContent || ('v' + (i + 1));
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = name;
+    sel.appendChild(opt);
+  });
+  if (variants.length > 0) {
+    sel.value = '0';
+    selectVersion('0');
+  }
+
+  // Render markdown in notes blocks
+  document.querySelectorAll('.notes-raw').forEach(el => {
+    const md = el.textContent;
+    // Simple markdown: **bold**, *italic*, `code`, newlines
+    let html = md
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$$1</em>')
+      .replace(/`(.+?)`/g, '<code>$$1</code>')
+      .replace(/\n/g, '<br>');
+    el.innerHTML = html;
+    el.classList.remove('notes-raw');
+    el.classList.add('notes');
+  });
+});
 </script>
 <script>hljs.highlightAll();</script>
 </body>

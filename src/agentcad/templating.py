@@ -146,6 +146,7 @@ class VariantBuilder:
         self._stl_data: Optional[bytes] = None
         self._source_title = ""
         self._source_code = ""
+        self._notes: List[str] = []
 
     def param(self, key: str, value: Any, unit: str = "") -> "VariantBuilder":
         display = f"{value} {unit}".strip() if unit else str(value)
@@ -159,6 +160,10 @@ class VariantBuilder:
     def stl(self, path: str, data: Optional[bytes] = None) -> "VariantBuilder":
         self._stl_path = path
         self._stl_data = data
+        return self
+
+    def notes(self, text: str) -> "VariantBuilder":
+        self._notes.append(text)
         return self
 
     def source(self, title: str, code: str, language: str = "openscad") -> "VariantBuilder":
@@ -185,10 +190,18 @@ class VariantBuilder:
                 self._params.build()
             ).build()
 
+        notes_html = ""
+        if self._notes:
+            notes_content = "\n".join(self._notes)
+            notes_html = Details("Agent Notes", open_=True).body(
+                f'<div class="notes-raw">{notes_content}</div>'
+            ).build()
+
         return variant_template.substitute(
             variant_name=_esc(self.name),
             stl_buttons=stl_buttons + stl_embed,
             params_table=params_html,
+            notes_block=notes_html,
             gallery_items=self._gallery.build(),
             source_block=CodeBlock(self._source_title, self._source_code).build(),
         )
