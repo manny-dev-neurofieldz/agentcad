@@ -28,8 +28,18 @@ def list_engines() -> list:
 
 
 # Auto-register engines that are importable
+import logging as _logging
+
+_log = _logging.getLogger(__name__)
+
 try:
     from agentcad.engines.openscad import OpenSCADEngine
     register_engine("openscad", OpenSCADEngine)
-except ImportError:
-    pass
+except ImportError as e:
+    _log.debug("OpenSCAD engine not available: %s", e)
+
+try:
+    from agentcad.engines.voxelcad import VoxelCADEngine
+    register_engine("voxelcad", VoxelCADEngine)
+except ImportError as e:
+    _log.debug("VoxelCAD engine not available: %s", e)
