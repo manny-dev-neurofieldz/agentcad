@@ -8,6 +8,16 @@ from agentcad import __version__
 from agentcad.camera import MULTI_VIEW_DEFAULT, STANDARD_PRESETS
 
 
+def _parse_defines(define_list):
+    """Parse ['-D', 'key=value', ...] into a dict."""
+    defines = {}
+    for d in define_list:
+        if "=" in d:
+            k, v = d.split("=", 1)
+            defines[k] = v
+    return defines
+
+
 def cmd_render(args):
     """Render a CAD source file to PNG images."""
     from agentcad.engines import get_engine
@@ -26,7 +36,8 @@ def cmd_render(args):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     views = args.views if args.views else MULTI_VIEW_DEFAULT
-    result = engine.render(source, output_dir, views=views, image_size=args.size)
+    defines = _parse_defines(args.define) if args.define else None
+    result = engine.render(source, output_dir, views=views, image_size=args.size, defines=defines)
 
     if result.errors:
         for err in result.errors:
@@ -49,7 +60,8 @@ def cmd_export(args):
     source = Path(args.source_file)
     output = Path(args.output) if args.output else source.with_suffix(".stl")
 
-    result = engine.export_stl(source, output)
+    defines = _parse_defines(args.define) if args.define else None
+    result = engine.export_stl(source, output, defines=defines)
     if result.success:
         print(f"Exported: {result.stl_path} ({result.facet_count} facets, {result.render_time_ms:.0f}ms)")
     else:
@@ -118,6 +130,8 @@ def main():
     p_render.add_argument("-v", "--views", nargs="+", choices=list(STANDARD_PRESETS.keys()))
     p_render.add_argument("-s", "--size", type=int, default=1024, help="Image size (default: 1024)")
     p_render.add_argument("-e", "--engine", default="openscad", help="CAD engine (default: openscad)")
+    p_render.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
+                          help="Override OpenSCAD variable (repeatable)")
     p_render.set_defaults(func=cmd_render)
 
     # export
@@ -125,6 +139,8 @@ def main():
     p_export.add_argument("source_file", help="Path to CAD source file")
     p_export.add_argument("-o", "--output", help="Output STL path")
     p_export.add_argument("-e", "--engine", default="openscad", help="CAD engine (default: openscad)")
+    p_export.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
+                          help="Override OpenSCAD variable (repeatable)")
     p_export.set_defaults(func=cmd_export)
 
     # info

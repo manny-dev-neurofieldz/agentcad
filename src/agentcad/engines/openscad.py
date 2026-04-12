@@ -100,6 +100,7 @@ class OpenSCADEngine(CADEngine):
         output_dir: Path,
         views: Optional[List[str]] = None,
         image_size: int = 1024,
+        defines: Optional[dict] = None,
     ) -> RenderResult:
         source_path = Path(source_path)
         output_dir = Path(output_dir)
@@ -122,13 +123,19 @@ class OpenSCADEngine(CADEngine):
                 "--render",
                 "-D", f"$fa={self._fa}",
                 "-D", f"$fs={self._fs}",
+            ]
+            # User-defined variable overrides
+            if defines:
+                for k, v in defines.items():
+                    args.extend(["-D", f"{k}={v}"])
+            args.extend([
                 "-o", str(out_file),
                 f"--camera={preset.camera_string}",
                 f"--imgsize={image_size},{image_size}",
                 "--viewall", "--autocenter",
                 f"--colorscheme={self._color_scheme}",
                 str(source_path),
-            ]
+            ])
 
             try:
                 result = self._run(args)
@@ -169,6 +176,7 @@ class OpenSCADEngine(CADEngine):
         self,
         source_path: Path,
         output_path: Path,
+        defines: Optional[dict] = None,
     ) -> ExportResult:
         source_path = Path(source_path)
         output_path = Path(output_path)
@@ -181,9 +189,14 @@ class OpenSCADEngine(CADEngine):
             "--export-format", "binstl",
             "-D", f"$fa={self._fa}",
             "-D", f"$fs={self._fs}",
+        ]
+        if defines:
+            for k, v in defines.items():
+                args.extend(["-D", f"{k}={v}"])
+        args.extend([
             "-o", str(output_path),
             str(source_path),
-        ]
+        ])
 
         try:
             result = self._run(args, timeout=300)

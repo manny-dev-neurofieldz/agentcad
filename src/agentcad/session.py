@@ -188,9 +188,32 @@ class DesignSession:
                     filename=f"{self.name}_v{it.number}.stl",
                 )
 
+        # Generate print manifest for final iteration
+        from agentcad.manifest import PrintManifest
+        manifest = PrintManifest(
+            part_name=self.name,
+            project_name=self.project.name,
+            stl_filename=f"{self.name}_v{self.iterations[-1].number}.stl",
+            design_iterations=self.iteration_count,
+            engine=self.engine.name,
+            agent_notes=[n for it in self.iterations for n in it.notes],
+        )
+        # Apply any print params from session
+        for k in ("material", "layer_height", "infill_percent", "supports",
+                   "print_orientation", "printer_profile"):
+            if k in self.params:
+                setattr(manifest, k, self.params[k])
+
+        manifest_path = self.project.exports_dir / f"{self.name}.print.json"
+        manifest.save(manifest_path)
+        self.project.metadata["manifest"] = str(manifest_path.name)
+
         # Add session metadata
         self.project.metadata["iterations"] = self.iteration_count
         self.project.metadata["finalized"] = datetime.now().isoformat()
+
+        # Store manifest on project for viewer access
+        self.project._manifest = manifest
 
         # Generate HTML viewer
         return self.project.generate_viewer()
