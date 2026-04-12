@@ -84,9 +84,9 @@ def cmd_info(args):
 
 
 def cmd_new_project(args):
-    """Create a new design project folder structure."""
+    """Create a new design project folder structure with agentcad.toml."""
     from agentcad.output import DesignProject
-    from agentcad.config import OutputConfig
+    from agentcad.config import OutputConfig, generate_config_template, CONFIG_FILENAME
 
     config = OutputConfig()
     if args.base_dir:
@@ -94,10 +94,106 @@ def cmd_new_project(args):
 
     project = DesignProject(args.name, config)
     path = project.setup()
+
+    # Generate agentcad.toml inside the project
+    config_path = path / CONFIG_FILENAME
+    if not config_path.exists():
+        desc = args.description if args.description else ""
+        engine = args.engine if args.engine else "openscad"
+        config_path.write_text(generate_config_template(args.name, desc, engine))
+
     print(f"Created project: {path}")
-    print(f"  source/   — .scad source files")
-    print(f"  renders/  — multi-view PNGs")
-    print(f"  exports/  — STL files")
+    print(f"  agentcad.toml — project config")
+    print(f"  source/       — .scad source files")
+    print(f"  renders/      — multi-view PNGs")
+    print(f"  exports/      — STL files")
+
+
+def cmd_projects(args):
+    """List all AgentCAD projects."""
+    from agentcad.config import list_projects
+
+    projects = list_projects()
+    if not projects:
+        print("No AgentCAD projects found.")
+        return
+
+    print(f"{'Project':<30} {'Engine':<12} {'Description'}")
+    print("-" * 70)
+    for cfg in projects:
+        print(f"{cfg.name or cfg.project_dir.name:<30} {cfg.engine:<12} {cfg.description[:40]}")
+
+
+def cmd_status(args):
+    """Show project status."""
+    from agentcad.config import find_project, OutputConfig
+    from pathlib import Path
+
+    # Try to find project by name in designs dir
+    designs = OutputConfig().designs_dir
+    project_path = designs / args.project
+    if not project_path.exists():
+        project_path = Path(args.project)
+
+    cfg = find_project(project_path)
+    if cfg:
+        print(cfg.show())
+    else:
+        print(f"No agentcad.toml found in {project_path}")
+        print("Run: agentcad new-project <name> to create one")
+        return
+
+    # File counts
+    source_dir = project_path / "source"
+    renders_dir = project_path / "renders"
+    exports_dir = project_path / "exports"
+    print(f"\nFiles:")
+    if source_dir.exists():
+        sources = list(source_dir.glob("*.*"))
+        print(f"  source/  : {len(sources)} files")
+    if renders_dir.exists():
+        renders = list(renders_dir.glob("*.png"))
+        print(f"  renders/ : {len(renders)} PNGs")
+    if exports_dir.exists():
+        stls = list(exports_dir.glob("*.stl"))
+        jsons = list(exports_dir.glob("*.json"))
+        print(f"  exports/ : {len(stls)} STLs, {len(jsons)} manifests")
+    if (project_path / "index.html").exists():
+        print(f"  index.html : present")
+
+
+def cmd_open(args):
+    """Print project path for shell integration."""
+    from agentcad.config import OutputConfig
+
+    designs = OutputConfig().designs_dir
+    project_path = designs / args.project
+    print(project_path)
+
+
+def cmd_config_init(args):
+    """Create agentcad.toml in current directory."""
+    from agentcad.config import generate_config_template, CONFIG_FILENAME
+
+    path = Path.cwd() / CONFIG_FILENAME
+    if path.exists() and not args.force:
+        print(f"{CONFIG_FILENAME} already exists. Use --force to overwrite.")
+        sys.exit(1)
+
+    name = args.name or Path.cwd().name
+    path.write_text(generate_config_template(name, args.description or ""))
+    print(f"Created {path}")
+
+
+def cmd_config_show(args):
+    """Show resolved project config."""
+    from agentcad.config import ProjectConfig
+
+    cfg = ProjectConfig.discover()
+    if cfg:
+        print(cfg.show())
+    else:
+        print("No agentcad.toml found in current directory or parents.")
 
 
 def cmd_check(args):
@@ -151,7 +247,34 @@ def main():
     p_newproj = sub.add_parser("new-project", help="Create a design project folder")
     p_newproj.add_argument("name", help="Project name")
     p_newproj.add_argument("-b", "--base-dir", help="Override output base directory")
+    p_newproj.add_argument("-d", "--description", default="", help="Project description")
+    p_newproj.add_argument("-e", "--engine", default="openscad", help="CAD engine")
     p_newproj.set_defaults(func=cmd_new_project)
+
+    # projects
+    p_projects = sub.add_parser("projects", help="List all AgentCAD projects")
+    p_projects.set_defaults(func=cmd_projects)
+
+    # status
+    p_status = sub.add_parser("status", help="Show project status")
+    p_status.add_argument("project", help="Project name or path")
+    p_status.set_defaults(func=cmd_status)
+
+    # open
+    p_open = sub.add_parser("open", help="Print project path")
+    p_open.add_argument("project", help="Project name")
+    p_open.set_defaults(func=cmd_open)
+
+    # config init
+    p_cinit = sub.add_parser("config-init", help="Create agentcad.toml in current dir")
+    p_cinit.add_argument("-n", "--name", help="Project name (default: dir name)")
+    p_cinit.add_argument("-d", "--description", default="", help="Description")
+    p_cinit.add_argument("-f", "--force", action="store_true", help="Overwrite existing")
+    p_cinit.set_defaults(func=cmd_config_init)
+
+    # config show
+    p_cshow = sub.add_parser("config-show", help="Show resolved project config")
+    p_cshow.set_defaults(func=cmd_config_show)
 
     # check
     p_check = sub.add_parser("check", help="Check HTML viewer for JS errors")
