@@ -49,6 +49,19 @@ ${threejs_scripts}
     border-radius: 6px; padding: 6px 12px; font-size: 0.95rem; cursor: pointer; }
   .variant { display: none; }
   .variant.active { display: block; }
+  .tab-bar { display: flex; gap: 2px; margin: 0.75rem 0 0; border-bottom: 2px solid #333; }
+  .tab { background: transparent; color: #888; border: none; padding: 8px 16px;
+    cursor: pointer; font-size: 0.9rem; font-weight: bold; border-radius: 6px 6px 0 0;
+    transition: all 0.15s; }
+  .tab:hover { color: var(--text); background: rgba(255,255,255,0.05); }
+  .tab.active { color: var(--highlight); border-bottom: 2px solid var(--highlight);
+    margin-bottom: -2px; }
+  .tab-content { display: none; padding: 1rem 0; }
+  .tab-content.active { display: block; }
+  .print-table { border-collapse: collapse; margin: 0.5rem 0; width: 100%; max-width: 500px; }
+  .print-table th, .print-table td { padding: 6px 14px; border: 1px solid #333; text-align: left; }
+  .print-table th { background: var(--accent); width: 40%; }
+  .print-table .critical { color: #ff6b6b; font-weight: bold; }
   .notes { background: #0d1b2a; border-radius: 8px; padding: 1rem; margin: 0.5rem 0;
     font-family: system-ui; line-height: 1.6; }
   .notes p { margin: 0.3rem 0; }
@@ -136,6 +149,15 @@ window.loadSTL = function(path) {
 };
 
 window.closeViewer = function() { container.classList.remove('active'); };
+
+// Tab switching within a variant
+window.switchTab = function(btn, tabName) {
+  const variant = btn.closest('.variant');
+  variant.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  variant.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  btn.classList.add('active');
+  variant.querySelector('[data-tab="' + tabName + '"]').classList.add('active');
+};
 
 // Version selector
 window.selectVersion = function(idx) {

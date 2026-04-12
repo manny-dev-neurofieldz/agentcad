@@ -138,7 +138,11 @@ class Button:
 class VariantBuilder:
     """Builder for a single design variant section."""
 
+    _id_counter = 0
+
     def __init__(self, name: str):
+        VariantBuilder._id_counter += 1
+        self._id = VariantBuilder._id_counter
         self.name = name
         self._params = Table(["Parameter", "Value"])
         self._gallery = Gallery()
@@ -147,6 +151,7 @@ class VariantBuilder:
         self._source_title = ""
         self._source_code = ""
         self._notes: List[str] = []
+        self._print_manifest: Optional[dict] = None
 
     def param(self, key: str, value: Any, unit: str = "") -> "VariantBuilder":
         display = f"{value} {unit}".strip() if unit else str(value)
@@ -164,6 +169,10 @@ class VariantBuilder:
 
     def notes(self, text: str) -> "VariantBuilder":
         self._notes.append(text)
+        return self
+
+    def print_settings(self, manifest_dict: dict) -> "VariantBuilder":
+        self._print_manifest = manifest_dict
         return self
 
     def source(self, title: str, code: str, language: str = "openscad") -> "VariantBuilder":
@@ -193,14 +202,27 @@ class VariantBuilder:
         notes_html = ""
         if self._notes:
             notes_content = "\n".join(self._notes)
-            notes_html = Details("Agent Notes", open_=True).body(
-                f'<div class="notes-raw">{notes_content}</div>'
-            ).build()
+            notes_html = f'<div class="notes-raw">{notes_content}</div>'
+
+        # Print manifest table
+        print_html = "<p>No print settings available</p>"
+        if self._print_manifest:
+            pt = Table(["Setting", "Value"], css_class="print-table")
+            skip = {"custom", "agent_notes", "stl_filename", "created"}
+            for k, v in self._print_manifest.items():
+                if k in skip or not v:
+                    continue
+                label = k.replace("_", " ").title()
+                val = str(v)
+                pt.row(label, val)
+            print_html = pt.build()
 
         return variant_template.substitute(
+            variant_id=self._id,
             variant_name=_esc(self.name),
             stl_buttons=stl_buttons + stl_embed,
             params_table=params_html,
+            print_manifest=print_html,
             notes_block=notes_html,
             gallery_items=self._gallery.build(),
             source_block=CodeBlock(self._source_title, self._source_code).build(),

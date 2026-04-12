@@ -51,4 +51,10 @@ def generate_html(project: "DesignProject") -> str:
             name = v.source_path.name if v.source_path else f"{v.name}.scad"
             vb.source(name, code)
 
+        # Print manifest (if available on project)
+        manifest = getattr(project, '_manifest', None)
+        if manifest:
+            from dataclasses import asdict
+            vb.print_settings(asdict(manifest))
+
     return page.build()

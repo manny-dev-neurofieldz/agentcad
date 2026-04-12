@@ -1,8 +1,29 @@
-<div class="variant">
+<div class="variant" data-variant-id="${variant_id}">
     <h2>${variant_name}</h2>
-    ${stl_buttons}
-    ${params_table}
-    ${notes_block}
-    <div class="gallery">${gallery_items}</div>
-    ${source_block}
+    <div class="tab-bar">
+        <button class="tab active" onclick="switchTab(this, 'renders')">Renders</button>
+        <button class="tab" onclick="switchTab(this, '3dview')">3D View</button>
+        <button class="tab" onclick="switchTab(this, 'params')">Parameters</button>
+        <button class="tab" onclick="switchTab(this, 'print')">Print Settings</button>
+        <button class="tab" onclick="switchTab(this, 'notes')">Notes</button>
+        <button class="tab" onclick="switchTab(this, 'source')">Source</button>
+    </div>
+    <div class="tab-content active" data-tab="renders">
+        <div class="gallery">${gallery_items}</div>
+    </div>
+    <div class="tab-content" data-tab="3dview">
+        ${stl_buttons}
+    </div>
+    <div class="tab-content" data-tab="params">
+        ${params_table}
+    </div>
+    <div class="tab-content" data-tab="print">
+        ${print_manifest}
+    </div>
+    <div class="tab-content" data-tab="notes">
+        ${notes_block}
+    </div>
+    <div class="tab-content" data-tab="source">
+        ${source_block}
+    </div>
 </div>
