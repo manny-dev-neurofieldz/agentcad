@@ -21,6 +21,7 @@ Usage:
     result = session.finalize()              # STL + HTML viewer
 """
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,8 @@ from typing import Any, Dict, List, Optional
 from agentcad.config import OutputConfig, ProjectConfig
 from agentcad.engine import CADEngine, RenderResult
 from agentcad.output import DesignProject
+
+SESSION_STATE_FILE = "session.json"
 
 
 @dataclass
@@ -40,12 +43,35 @@ class Iteration:
     source_path: Optional[Path] = None
     render_result: Optional[RenderResult] = None
     notes: List[str] = field(default_factory=list)
+    _saved_image_paths: Dict[str, Path] = field(default_factory=dict)
 
     @property
     def image_paths(self) -> Dict[str, Path]:
         if self.render_result:
             return self.render_result.images
-        return {}
+        return self._saved_image_paths
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "number": self.number,
+            "timestamp": self.timestamp,
+            "source_path": str(self.source_path) if self.source_path else None,
+            "image_paths": {k: str(v) for k, v in self.image_paths.items()},
+            "notes": list(self.notes),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Iteration":
+        src = Path(data["source_path"]) if data.get("source_path") else None
+        code = src.read_text() if src and src.exists() else ""
+        return cls(
+            number=data["number"],
+            timestamp=data["timestamp"],
+            source_code=code,
+            source_path=src,
+            notes=list(data.get("notes", [])),
+            _saved_image_paths={k: Path(v) for k, v in (data.get("image_paths") or {}).items()},
+        )
 
 
 class DesignSession:
@@ -224,7 +250,7 @@ class DesignSession:
         lines.append(f"  Engine: {self.engine.name}")
         lines.append(f"  Iterations: {self.iteration_count}/{self.max_iterations}")
         for it in self.iterations:
-            status = "OK" if it.render_result and it.render_result.success else "FAIL"
+            status = "OK" if (it.render_result and it.render_result.success) or it.image_paths else "?"
             notes_count = len(it.notes)
             lines.append(f"  v{it.number}: [{status}] {notes_count} note(s)")
             for note in it.notes:
@@ -232,3 +258,72 @@ class DesignSession:
         if self._finalized:
             lines.append(f"  Finalized: {self.project.project_dir}")
         return "\n".join(lines)
+
+    @property
+    def state_file(self) -> Path:
+        return self._work_dir / SESSION_STATE_FILE
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "engine_name": self.engine.name,
+            "max_iterations": self.max_iterations,
+            "views": list(self.views),
+            "params": dict(self.params),
+            "finalized": self._finalized,
+            "project_metadata": dict(self.project.metadata),
+            "iterations": [it.to_dict() for it in self.iterations],
+        }
+
+    def save_state(self) -> Path:
+        """Persist session state to {project_dir}/_work/session.json."""
+        self._work_dir.mkdir(parents=True, exist_ok=True)
+        path = self.state_file
+        path.write_text(json.dumps(self.to_dict(), indent=2))
+        return path
+
+    @classmethod
+    def load_state(
+        cls,
+        project_name: str,
+        engine: CADEngine,
+        config: Optional[ProjectConfig] = None,
+    ) -> "DesignSession":
+        """Reconstruct a session from {project_dir}/_work/session.json.
+
+        Args:
+            project_name: Project folder name (becomes session name).
+            engine: Reconstructed engine (caller provides via get_engine()).
+            config: Project config (defaults to fresh ProjectConfig()).
+        """
+        config = config or ProjectConfig()
+        project_dir = config.output.designs_dir / project_name
+        state_path = project_dir / "_work" / SESSION_STATE_FILE
+        if not state_path.exists():
+            raise FileNotFoundError(
+                f"No session state at {state_path}. Run `agentcad session start {project_name}` first."
+            )
+
+        data = json.loads(state_path.read_text())
+
+        # Sanity: engine match
+        if data.get("engine_name") and data["engine_name"] != engine.name:
+            raise ValueError(
+                f"Session was started with engine '{data['engine_name']}' "
+                f"but loaded engine is '{engine.name}'."
+            )
+
+        session = cls(
+            name=data["name"],
+            engine=engine,
+            config=config,
+            max_iterations=data.get("max_iterations", 10),
+            views=data.get("views"),
+            params=data.get("params") or {},
+        )
+        session._finalized = data.get("finalized", False)
+        for meta_k, meta_v in (data.get("project_metadata") or {}).items():
+            session.project.metadata.setdefault(meta_k, meta_v)
+        for it_data in data.get("iterations", []):
+            session.iterations.append(Iteration.from_dict(it_data))
+        return session
