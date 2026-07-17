@@ -41,6 +41,16 @@ class OpenSCADEngine(CADEngine):
         self._binary = shutil.which("openscad") or "openscad"
         self._library_path = os.environ.get("OPENSCADPATH", cfg.library_path)
         self._backend = cfg.backend
+        # Older OpenSCAD releases (e.g. 2024.03) lack the --backend flag and dump
+        # usage instead of rendering. Drop it if the installed binary doesn't list it.
+        if self._backend:
+            try:
+                _h = subprocess.run([self._binary, "--help"], capture_output=True,
+                                    text=True, timeout=10)
+                if "--backend" not in (_h.stdout + _h.stderr):
+                    self._backend = ""
+            except Exception:
+                pass
         self._color_scheme = cfg.colorscheme
         self._fa = cfg.fa
         self._fs = cfg.fs
@@ -119,11 +129,12 @@ class OpenSCADEngine(CADEngine):
             out_file = output_dir / f"{source_path.stem}_{view_name}.png"
 
             args = [
-                "--backend", self._backend,
                 "--render",
                 "-D", f"$fa={self._fa}",
                 "-D", f"$fs={self._fs}",
             ]
+            if self._backend:
+                args = ["--backend", self._backend] + args
             # User-defined variable overrides
             if defines:
                 for k, v in defines.items():
