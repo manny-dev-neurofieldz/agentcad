@@ -22,19 +22,19 @@ jobs:
 
       # OpenSCAD from the distribution archive: an older release without the
       # --backend flag, which the engine detects and drops. xvfb supplies the
-      # GL context headless PNG rendering needs on a runner. VoxelCAD and
-      # build123d are not installed here, so their contract cases skip; the
-      # OpenSCAD cases and every engine-neutral test run for real.
+      # GL context headless PNG rendering needs on a runner. build123d comes
+      # from PyPI with the extra below. VoxelCAD is not installed here, so its
+      # contract cases skip; everything else runs for real.
       - name: Install OpenSCAD and a virtual framebuffer
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openscad xvfb
+          sudo apt-get install -y --no-install-recommends openscad xvfb libgl1 libxrender1 libxcursor1 libxft2 libxinerama1
           openscad --version
 
       - name: Install agentcad with test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install -e ".[dev,build123d]"
 
       - name: Engine inventory
         run: agentcad info

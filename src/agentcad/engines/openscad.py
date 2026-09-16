@@ -276,13 +276,19 @@ class OpenSCADEngine(CADEngine):
         match = re.search(r"Facets:\s+(\d+)", result.stderr or "")
         if match:
             facets = int(match.group(1))
+        errors: List[str] = []
+        warnings: List[str] = []
+        self._classify_stderr(result.stderr, errors, warnings)
 
         produced = output_path.exists() and output_path.stat().st_size > 0
+        if not produced:
+            errors.append(f"OpenSCAD produced no {fmt} file")
         return ExportResult(
             output_path=output_path if produced else None,
             format=fmt,
-            success=produced,
-            errors=[] if produced else [f"OpenSCAD produced no {fmt} file"],
+            success=produced and not errors,
+            errors=errors,
+            warnings=warnings,
             facet_count=facets,
             render_time_ms=elapsed_ms,
             metadata={"facet_count": facets} if facets else {},

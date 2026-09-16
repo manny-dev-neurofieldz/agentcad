@@ -22,6 +22,7 @@ classifiers = [
 [project.optional-dependencies]
 openscad = []  # OpenSCAD binary required externally
 voxelcad = ["voxelcad"]
+build123d = ["build123d", "pyvista", "bd_warehouse"]
 dev = ["pytest"]
 
 [project.scripts]

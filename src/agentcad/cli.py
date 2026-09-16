@@ -86,6 +86,8 @@ def cmd_export(args):
 
     defines = _parse_defines(args.define) if args.define else None
     result = engine.export(source, output, fmt=fmt, defines=defines)
+    for warn in result.warnings:
+        print(f"Warning: {warn}", file=sys.stderr)
     if result.success:
         facets = f", {result.facet_count} facets" if result.facet_count else ""
         print(f"Exported: {result.output_path} ({fmt}{facets}, {result.render_time_ms:.0f}ms)")

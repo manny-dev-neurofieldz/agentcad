@@ -37,6 +37,7 @@ class ExportResult:
     format: str = "stl"
     success: bool = True
     errors: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     facet_count: int = 0  # mesh formats only; 0 when unknown or not a mesh
     render_time_ms: float = 0.0
     metadata: Dict[str, Any] = field(default_factory=dict)
