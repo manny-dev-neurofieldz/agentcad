@@ -196,6 +196,185 @@ def cmd_config_show(args):
         print("No agentcad.toml found in current directory or parents.")
 
 
+def _resolve_project(project_arg):
+    """Resolve project name/path → (ProjectConfig, project_dir, project_name).
+
+    Returns (cfg, project_dir, project_name). Exits if project not found.
+    """
+    from agentcad.config import OutputConfig, find_project
+
+    designs = OutputConfig().designs_dir
+    project_path = designs / project_arg
+    if not project_path.exists():
+        project_path = Path(project_arg)
+    if not project_path.exists():
+        print(f"Error: project not found: {project_arg}", file=sys.stderr)
+        sys.exit(1)
+
+    cfg = find_project(project_path)
+    if cfg is None:
+        print(f"Error: no agentcad.toml in {project_path}. "
+              f"Run `agentcad config-init` inside the project folder.", file=sys.stderr)
+        sys.exit(1)
+    return cfg, project_path, project_path.name
+
+
+def cmd_session_start(args):
+    """Start a new design session."""
+    from agentcad.engines import get_engine
+    from agentcad.session import DesignSession
+
+    cfg, project_dir, project_name = _resolve_project(args.project)
+    engine_name = args.engine or cfg.engine
+    engine = get_engine(engine_name)
+    if not engine.available():
+        print(f"Error: engine '{engine_name}' is not available.", file=sys.stderr)
+        sys.exit(1)
+
+    session = DesignSession(
+        name=project_name,
+        engine=engine,
+        config=cfg,
+        max_iterations=args.max_iter,
+    )
+
+    # Refuse to overwrite an active (non-finalized) session unless --force.
+    if session.state_file.exists() and not args.force:
+        import json as _json
+        try:
+            prior = _json.loads(session.state_file.read_text())
+            if not prior.get("finalized", False) and prior.get("iterations"):
+                print(f"Error: active session exists at {session.state_file} "
+                      f"with {len(prior['iterations'])} iteration(s). "
+                      f"Use --force to overwrite or `agentcad session finalize` first.",
+                      file=sys.stderr)
+                sys.exit(1)
+        except Exception:
+            pass
+
+    state_path = session.save_state()
+    print(f"Session started for project '{project_name}' (engine: {engine.name})")
+    print(f"  Project dir: {project_dir}")
+    print(f"  State file:  {state_path}")
+    print(f"  Max iter:    {session.max_iterations}")
+
+
+def cmd_session_iterate(args):
+    """Add an iteration to the active session."""
+    from agentcad.engines import get_engine
+    from agentcad.session import DesignSession
+
+    cfg, project_dir, project_name = _resolve_project(args.project)
+    engine = get_engine(cfg.engine)
+
+    try:
+        session = DesignSession.load_state(project_name, engine=engine, config=cfg)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    source = Path(args.source_file)
+    if not source.exists():
+        print(f"Error: source file not found: {source}", file=sys.stderr)
+        sys.exit(1)
+
+    code = source.read_text()
+    try:
+        it = session.iterate(code)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    session.save_state()
+    print(f"Iteration v{it.number} recorded")
+    if it.render_result and it.render_result.success:
+        print(f"  Rendered {len(it.image_paths)} view(s) in {it.render_result.render_time_ms:.0f}ms")
+        for view, path in it.image_paths.items():
+            print(f"    {view}: {path}")
+    else:
+        errors = it.render_result.errors if it.render_result else ["no render result"]
+        for err in errors:
+            print(f"  Render error: {err}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_session_note(args):
+    """Add an analysis note to the current iteration."""
+    from agentcad.engines import get_engine
+    from agentcad.session import DesignSession
+
+    cfg, _, project_name = _resolve_project(args.project)
+    engine = get_engine(cfg.engine)
+    try:
+        session = DesignSession.load_state(project_name, engine=engine, config=cfg)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        session.note(args.text)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    session.save_state()
+    print(f"Note added to v{session.current.number}: {args.text}")
+
+
+def cmd_session_finalize(args):
+    """Finalize the session: STL exports, HTML viewer, print manifest."""
+    from agentcad.engines import get_engine
+    from agentcad.session import DesignSession
+
+    cfg, _, project_name = _resolve_project(args.project)
+    engine = get_engine(cfg.engine)
+    try:
+        session = DesignSession.load_state(project_name, engine=engine, config=cfg)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if session._finalized:
+        print(f"Session already finalized. Project: {session.project.project_dir}")
+        return
+
+    html_path = session.finalize()
+    session.save_state()
+    print(f"Session finalized.")
+    print(f"  HTML viewer: {html_path}")
+    print(f"  Iterations:  {session.iteration_count}")
+
+
+def cmd_session_status(args):
+    """Show current session state."""
+    from agentcad.engines import get_engine
+    from agentcad.session import DesignSession
+
+    cfg, _, project_name = _resolve_project(args.project)
+    engine = get_engine(cfg.engine)
+    try:
+        session = DesignSession.load_state(project_name, engine=engine, config=cfg)
+    except FileNotFoundError:
+        print(f"No active session in project '{project_name}'.")
+        print(f"Start one with: agentcad session start {project_name}")
+        sys.exit(1)
+    print(session.summary())
+
+
+def cmd_viewer(args):
+    """Regenerate the HTML viewer for a project from files on disk."""
+    from agentcad.viewer import regenerate_from_project_dir
+
+    cfg, project_dir, _ = _resolve_project(args.project)
+    try:
+        html_path = regenerate_from_project_dir(project_dir, cfg=cfg)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    print(f"Regenerated: {html_path}")
+
+
 def cmd_check(args):
     """Check an HTML viewer page for JS console errors."""
     from agentcad.webdebug import check_html
@@ -276,14 +455,52 @@ def main():
     p_cshow = sub.add_parser("config-show", help="Show resolved project config")
     p_cshow.set_defaults(func=cmd_config_show)
 
+    # viewer (regenerate HTML from existing files)
+    p_viewer = sub.add_parser("viewer", help="Regenerate HTML viewer from project files")
+    p_viewer.add_argument("project", help="Project name (folder under designs_dir) or path")
+    p_viewer.set_defaults(func=cmd_viewer)
+
     # check
     p_check = sub.add_parser("check", help="Check HTML viewer for JS errors")
     p_check.add_argument("html_file", help="Path to index.html")
     p_check.add_argument("-t", "--timeout", type=int, default=10000, help="Timeout in ms (default: 10000)")
     p_check.set_defaults(func=cmd_check)
 
+    # session (nested subcommands)
+    p_session = sub.add_parser("session", help="Manage design sessions (iterative feedback loop)")
+    sub_session = p_session.add_subparsers(dest="session_command")
+
+    p_ss = sub_session.add_parser("start", help="Start a new design session")
+    p_ss.add_argument("project", help="Project name (folder under designs_dir) or path")
+    p_ss.add_argument("--engine", help="Override project's default engine")
+    p_ss.add_argument("--max-iter", type=int, default=10, help="Max iterations (default: 10)")
+    p_ss.add_argument("-f", "--force", action="store_true",
+                      help="Overwrite an existing un-finalized session")
+    p_ss.set_defaults(func=cmd_session_start)
+
+    p_si = sub_session.add_parser("iterate", help="Add iteration: render source file, record")
+    p_si.add_argument("project", help="Project name or path")
+    p_si.add_argument("source_file", help="Path to CAD source file for this iteration")
+    p_si.set_defaults(func=cmd_session_iterate)
+
+    p_sn = sub_session.add_parser("note", help="Add analysis note to current iteration")
+    p_sn.add_argument("project", help="Project name or path")
+    p_sn.add_argument("text", help="Note text")
+    p_sn.set_defaults(func=cmd_session_note)
+
+    p_sf = sub_session.add_parser("finalize", help="Finalize session: STL exports + HTML viewer")
+    p_sf.add_argument("project", help="Project name or path")
+    p_sf.set_defaults(func=cmd_session_finalize)
+
+    p_sst = sub_session.add_parser("status", help="Show session state")
+    p_sst.add_argument("project", help="Project name or path")
+    p_sst.set_defaults(func=cmd_session_status)
+
     args = parser.parse_args()
     if not args.command:
         parser.print_help()
+        sys.exit(0)
+    if args.command == "session" and not getattr(args, "session_command", None):
+        p_session.print_help()
         sys.exit(0)
     args.func(args)
