@@ -1,0 +1,109 @@
+#!/bin/bash
+# MacEff git hook dispatcher — versioned on purpose.
+#
+# Git gives a repository exactly ONE file per hook, so every installer that
+# wants a say has to either refuse or clobber. This runs a DIRECTORY instead, so
+# concerns compose and nobody has to choose.
+#
+# TWO SOURCES, and the split is the point:
+#
+#   $REPO/.githooks/<hook>.d/              versioned — travels to every clone
+#   $GIT_DIR/hooks.local.d/<hook>.d/       per-clone — never committed
+#
+# A hooklet goes in the local directory when it embeds something that must not
+# be published (the OPSEC gate hardcodes a path to a private pattern file) or
+# when it was ADOPTED from a hook the developer already had. Committing either
+# would publish a local's private material to everyone who clones — which is the
+# failure a single shared directory walks straight into.
+#
+# Ordering is by BASENAME across both directories, so 00-local-preexisting runs
+# before 10-opsec regardless of which directory each lives in. Numeric prefixes
+# are the whole ordering contract.
+#
+# Bash 3.2 compatible: macOS ships 3.2 and this names /bin/bash. No mapfile, no
+# associative arrays, and every optional array expansion guarded.
+set -uo pipefail
+
+# A designed escape hatch. `--no-verify` exists and will be used regardless; an
+# escape nobody planned becomes --no-verify on everything, including the checks
+# that were working.
+if [ "${MACF_SKIP_HOOKS:-}" = "1" ]; then
+  echo "[hooks] MACF_SKIP_HOOKS=1 — every $(basename "$0") hooklet skipped." >&2
+  exit 0
+fi
+
+HOOK_NAME=$(basename "$0")
+REPO=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+
+# --git-common-dir, not --git-dir: a worktree has its own git dir but shares the
+# common one, so a per-clone hooklet installed once must be found from all of them.
+GIT_COMMON=$(git rev-parse --git-common-dir 2>/dev/null) || exit 0
+# Leading-paren patterns throughout, including here where it is not strictly
+# required. One rule with no exceptions is checkable; "only inside $( )" is a
+# rule whose checker has to reproduce the parser confusion it is looking for.
+case "$GIT_COMMON" in
+  (/*) ;;
+  (*)  GIT_COMMON="$REPO/$GIT_COMMON" ;;
+esac
+
+LOCAL_D="$GIT_COMMON/hooks.local.d/$HOOK_NAME.d"
+VERSIONED_D="$REPO/.githooks/$HOOK_NAME.d"
+
+# Collect "basename<TAB>path" from both directories and order by basename.
+# A while-read loop rather than mapfile, which does not exist in bash 3.2.
+ENTRIES=$(
+  for d in "$LOCAL_D" "$VERSIONED_D"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*; do
+      [ -f "$f" ] || continue
+      # The LEADING paren is load-bearing, not style. Inside `$( )`, bash 3.2's
+      # parser counts the `)` that closes a case pattern as the one closing the
+      # substitution, and dies with "syntax error near unexpected token ;;".
+      # bash 4+ parses it either way, so this fails only on macOS — the same
+      # CI-invisible direction as everything else in this hook.
+      case "$(basename "$f")" in
+        (.*|*~|*.bak|*.sample) continue ;;
+      esac
+      printf '%s\t%s\n' "$(basename "$f")" "$f"
+    done
+  done | LC_ALL=C sort
+)
+
+if [ -z "$ENTRIES" ]; then
+  # Silence here would be indistinguishable from "everything passed".
+  echo "[hooks] no $HOOK_NAME hooklets found in $LOCAL_D or $VERSIONED_D" >&2
+  exit 0
+fi
+
+FAILED=""
+while IFS="$(printf '\t')" read -r name path; do
+  [ -n "$path" ] || continue
+
+  if [ ! -x "$path" ]; then
+    # REFUSE rather than skip. A hooklet that is present but not executable is
+    # the exact case where skipping quietly reports success for a gate that did
+    # not run — which is worse than having no gate, because it is believed.
+    echo "[hooks] $name is present but NOT EXECUTABLE — refusing to treat that" >&2
+    echo "[hooks] as a pass. Fix it:  chmod +x $path" >&2
+    FAILED="$FAILED $name"
+    continue
+  fi
+
+  "$path" "$@"
+  rc=$?
+  if [ $rc -ne 0 ]; then
+    echo "[hooks] $name exited $rc" >&2
+    FAILED="$FAILED $name"
+    break   # first failure stops the chain; the rest would only add noise
+  fi
+done <<EOF
+$ENTRIES
+EOF
+
+if [ -n "$FAILED" ]; then
+  echo "[hooks] $HOOK_NAME BLOCKED by:$FAILED" >&2
+  echo "[hooks] deliberate bypass:  git commit --no-verify   (or MACF_SKIP_HOOKS=1)" >&2
+  exit 1
+fi
+
+exit 0

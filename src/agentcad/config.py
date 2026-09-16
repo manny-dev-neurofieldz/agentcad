@@ -2,12 +2,13 @@
 
 Project-centric config: each project folder contains agentcad.toml.
 Discovery: agentcad finds projects by locating agentcad.toml in folder structure.
-Layered: package defaults → project agentcad.toml → env vars → CLI flags.
+Layered: package defaults -> project agentcad.toml -> env vars -> CLI flags.
 """
 
-from dataclasses import dataclass, field
+import sys
+from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import tomllib
@@ -72,7 +73,10 @@ class ProjectConfig:
     # Sub-configs
     output: OutputConfig = field(default_factory=OutputConfig)
     print: PrintConfig = field(default_factory=PrintConfig)
-    engine_configs: Dict[str, object] = field(default_factory=dict)
+    #: Raw ``[engine.<name>]`` tables, keyed by engine name. Kept as plain
+    #: dicts so any registered engine can read its own keys; the engine
+    #: decides which keys it knows and reports the rest.
+    engine_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # Source path (where agentcad.toml was loaded from)
     _project_dir: Optional[Path] = field(default=None, repr=False)
@@ -81,8 +85,18 @@ class ProjectConfig:
     def project_dir(self) -> Optional[Path]:
         return self._project_dir
 
+    def engine_settings(self, name: str) -> Dict[str, Any]:
+        """Settings table for engine ``name`` (a copy; empty when absent)."""
+        return dict(self.engine_configs.get(name, {}))
+
     def get_openscad_config(self) -> OpenSCADConfig:
-        return self.engine_configs.get("openscad", OpenSCADConfig())
+        """OpenSCAD settings as the legacy dataclass (known keys only)."""
+        cfg = OpenSCADConfig()
+        table = self.engine_settings("openscad")
+        for f in fields(OpenSCADConfig):
+            if f.name in table:
+                setattr(cfg, f.name, table[f.name])
+        return cfg
 
     @classmethod
     def discover(cls, start_path: Optional[Path] = None) -> Optional["ProjectConfig"]:
@@ -140,15 +154,16 @@ class ProjectConfig:
             if k in pr:
                 setattr(config.print, k, pr[k])
 
-        # Engine configs
+        # Engine configs: every [engine.<name>] table, verbatim
         engines = data.get("engine", {})
-        if "openscad" in engines:
-            osc = engines["openscad"]
-            cfg = OpenSCADConfig()
-            for k in ("fa", "fs", "backend", "colorscheme", "library_path"):
-                if k in osc:
-                    setattr(cfg, k, osc[k])
-            config.engine_configs["openscad"] = cfg
+        for engine_name, table in engines.items():
+            if isinstance(table, dict):
+                config.engine_configs[engine_name] = dict(table)
+            else:
+                print(
+                    f"agentcad warning: [engine.{engine_name}] in {path} is not a table (ignored)",
+                    file=sys.stderr,
+                )
 
         return config
 
@@ -167,8 +182,9 @@ class ProjectConfig:
         lines.append(f"  Layer height: {self.print.layer_height}mm")
         lines.append(f"  Infill: {self.print.infill_percent}%")
         lines.append(f"  Printer: {self.print.printer_profile}")
-        osc = self.get_openscad_config()
-        lines.append(f"  OpenSCAD: $fa={osc.fa} $fs={osc.fs} backend={osc.backend}")
+        for engine_name, table in sorted(self.engine_configs.items()):
+            settings = " ".join(f"{k}={v}" for k, v in table.items())
+            lines.append(f"  [engine.{engine_name}] {settings}")
         return "\n".join(lines)
 
 
@@ -184,14 +200,26 @@ version = "{AGENTCAD_VERSION}"          # config format version (for compat)
 
 [project]
 name = "{name}"
-engine = "{engine}"                     # "openscad" or "voxelcad"
+engine = "{engine}"                     # "openscad", "voxelcad" or "build123d"
 description = "{description}"
+
+# Per-engine settings live in [engine.<name>] tables. Only the table for the
+# project's engine is used; unknown keys are reported, not silently ignored.
 
 [engine.openscad]
 fa = 1.0                               # fragment angle (smooth curves)
 fs = 0.5                               # fragment size (mm)
 # backend = "Manifold"                 # "Manifold" (fast) or "CGAL" (legacy)
 # colorscheme = "Cornfield"            # render color scheme
+
+# [engine.voxelcad]
+# voxel_size = 0.2                     # mm per voxel
+# color = "steelblue"                  # render colour
+# background = "white"
+
+# [engine.build123d]
+# tolerance = 0.01                     # tessellation tolerance (mm)
+# timeout = 120                        # seconds per render
 
 [output]
 image_size = 1024                       # render resolution

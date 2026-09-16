@@ -31,16 +31,23 @@ class DesignProject:
 
     Creates structured folder:
         {designs_dir}/{project_name}/
-        ├── source/           # .scad source files
-        ├── renders/          # multi-view PNGs
-        ├── exports/          # STL files
-        └── index.html        # interactive viewer
+        |-- source/           # engine source files (extension from the engine)
+        |-- renders/          # multi-view PNGs
+        |-- exports/          # mesh/geometry exports (.stl, .step, ...)
+        `-- index.html        # interactive viewer
+
+    ``source_extension`` and ``syntax_language`` come from the engine the
+    project is designed with; the session sets them, and the viewer reads
+    them, so no file extension is assumed anywhere in between.
     """
 
-    def __init__(self, name: str, config: Optional[OutputConfig] = None):
+    def __init__(self, name: str, config: Optional[OutputConfig] = None,
+                 source_extension: str = "", syntax_language: str = "plaintext"):
         self.name = name
         self.config = config or OutputConfig()
         self.variants: List[DesignVariant] = []
+        self.source_extension = source_extension
+        self.syntax_language = syntax_language
         self.metadata: Dict[str, Any] = {
             "created": datetime.now().isoformat(),
             "engine": "",
@@ -78,10 +85,20 @@ class DesignProject:
 
     def save_source(self, variant: DesignVariant, code: str,
                     filename: Optional[str] = None) -> Path:
-        """Save source code for a variant."""
+        """Save source code for a variant.
+
+        Without ``filename`` the name is ``{variant.name}{source_extension}``,
+        which needs the project's engine extension to be set.
+        """
         self.setup()
-        fname = filename or f"{variant.name}.scad"
-        out = self.source_dir / fname
+        if filename is None:
+            if not self.source_extension:
+                raise ValueError(
+                    "save_source needs a filename or a project source_extension "
+                    "(set from the engine's file_extension)"
+                )
+            filename = f"{variant.name}{self.source_extension}"
+        out = self.source_dir / filename
         out.write_text(code)
         variant.source_code = code
         variant.source_path = out
