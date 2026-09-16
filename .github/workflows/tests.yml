@@ -1,0 +1,43 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # OpenSCAD from the distribution archive: an older release without the
+      # --backend flag, which the engine detects and drops. xvfb supplies the
+      # GL context headless PNG rendering needs on a runner. VoxelCAD and
+      # build123d are not installed here, so their contract cases skip; the
+      # OpenSCAD cases and every engine-neutral test run for real.
+      - name: Install OpenSCAD and a virtual framebuffer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openscad xvfb
+          openscad --version
+
+      - name: Install agentcad with test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Engine inventory
+        run: agentcad info
+
+      - name: Run the test suite
+        run: xvfb-run -a python -m pytest --tb=short -q -rs

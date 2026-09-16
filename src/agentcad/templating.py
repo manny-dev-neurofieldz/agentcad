@@ -13,7 +13,7 @@ Usage:
         v.render("iso", "renders/bracket_iso.png")
         v.render("front", "renders/bracket_front.png")
         v.stl("exports/bracket.stl")
-        v.source("source/bracket.scad")
+        v.source("bracket source", code, language="openscad")
 
     html = page.build()
 """
@@ -108,7 +108,7 @@ class Gallery:
 class CodeBlock:
     """Syntax-highlighted source code in a details block."""
 
-    def __init__(self, title: str, code: str, language: str = "openscad"):
+    def __init__(self, title: str, code: str, language: str = "plaintext"):
         self.title = title
         self.code = code
         self.language = language
@@ -150,6 +150,7 @@ class VariantBuilder:
         self._stl_data: Optional[bytes] = None
         self._source_title = ""
         self._source_code = ""
+        self._source_language = "plaintext"
         self._notes: List[str] = []
         self._print_manifest: Optional[dict] = None
 
@@ -175,9 +176,10 @@ class VariantBuilder:
         self._print_manifest = manifest_dict
         return self
 
-    def source(self, title: str, code: str, language: str = "openscad") -> "VariantBuilder":
+    def source(self, title: str, code: str, language: str = "plaintext") -> "VariantBuilder":
         self._source_title = title
         self._source_code = code
+        self._source_language = language
         return self
 
     def build(self, variant_template: Template) -> str:
@@ -225,7 +227,7 @@ class VariantBuilder:
             print_manifest=print_html,
             notes_block=notes_html,
             gallery_items=self._gallery.build(),
-            source_block=CodeBlock(self._source_title, self._source_code).build(),
+            source_block=CodeBlock(self._source_title, self._source_code, self._source_language).build(),
         )
 
 

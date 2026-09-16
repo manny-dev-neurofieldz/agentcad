@@ -1,4 +1,4 @@
-"""Design session — iteration lifecycle for the agentic feedback loop.
+"""Design session - iteration lifecycle for the agentic feedback loop.
 
 A DesignSession tracks the full history of a design's evolution:
 each iteration captures the source code, rendered views, analysis notes,
@@ -6,11 +6,11 @@ and any modifications. The session integrates with DesignProject for
 organized output and HTML viewer generation.
 
 The agent drives the loop:
-    1. session.iterate(code) — saves code, renders views
+    1. session.iterate(code) - saves code, renders views
     2. Agent reads PNGs via Read tool, analyzes visually
-    3. session.note(text) — records analysis/observations
+    3. session.note(text) - records analysis/observations
     4. Agent modifies code, calls session.iterate(new_code)
-    5. session.finalize() — exports STL, generates HTML viewer
+    5. session.finalize() - exports STL, generates HTML viewer
 
 Usage:
     session = DesignSession("bracket", engine)
@@ -22,6 +22,7 @@ Usage:
 """
 
 import json
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -93,6 +94,7 @@ class DesignSession:
         max_iterations: int = 10,
         views: Optional[List[str]] = None,
         params: Optional[Dict[str, Any]] = None,
+        defines: Optional[Dict[str, str]] = None,
     ):
         self.name = name
         self.engine = engine
@@ -100,11 +102,17 @@ class DesignSession:
         self.max_iterations = max_iterations
         self.views = views or self.config.output.default_views
         self.params = params or {}
+        #: Model parameter overrides passed to every render and export.
+        self.defines: Dict[str, str] = dict(defines or {})
         self.iterations: List[Iteration] = []
         self._finalized = False
 
         # Set up project
-        self.project = DesignProject(name, self.config.output)
+        self.project = DesignProject(
+            name, self.config.output,
+            source_extension=engine.file_extension,
+            syntax_language=engine.syntax_language,
+        )
         self.project.metadata["engine"] = engine.name
         self.project.metadata["started"] = datetime.now().isoformat()
         self.project.setup()
@@ -148,6 +156,7 @@ class DesignSession:
             src_path, render_dir,
             views=self.views,
             image_size=self.config.output.image_size,
+            defines=self.defines or None,
         )
 
         iteration = Iteration(
@@ -163,7 +172,7 @@ class DesignSession:
     def note(self, text: str) -> None:
         """Add an analysis note to the current iteration."""
         if not self.iterations:
-            raise RuntimeError("No iteration to annotate — call iterate() first")
+            raise RuntimeError("No iteration to annotate - call iterate() first")
         self.iterations[-1].notes.append(text)
 
     def finalize(self) -> Path:
@@ -205,14 +214,20 @@ class DesignSession:
                     filename=f"{self.name}_v{it.number}_{view}.png",
                 )
 
-            # Export STL for each iteration
+            # Export STL for each iteration (the viewer's 3D tab reads STL)
             stl_path = self._work_dir / f"{self.name}_v{it.number}.stl"
-            stl_result = self.engine.export_stl(it.source_path, stl_path)
+            stl_result = self.engine.export(
+                it.source_path, stl_path, fmt="stl", defines=self.defines or None,
+            )
             if stl_result.success:
                 self.project.register_stl(
-                    variant, stl_result.stl_path,
+                    variant, stl_result.output_path,
                     filename=f"{self.name}_v{it.number}.stl",
                 )
+            else:
+                for err in stl_result.errors:
+                    print(f"agentcad warning: v{it.number} STL export failed (viewer without mesh): {err}",
+                          file=sys.stderr)
 
         # Generate print manifest for final iteration
         from agentcad.manifest import PrintManifest
@@ -270,6 +285,7 @@ class DesignSession:
             "max_iterations": self.max_iterations,
             "views": list(self.views),
             "params": dict(self.params),
+            "defines": dict(self.defines),
             "finalized": self._finalized,
             "project_metadata": dict(self.project.metadata),
             "iterations": [it.to_dict() for it in self.iterations],
@@ -320,6 +336,7 @@ class DesignSession:
             max_iterations=data.get("max_iterations", 10),
             views=data.get("views"),
             params=data.get("params") or {},
+            defines=data.get("defines") or {},
         )
         session._finalized = data.get("finalized", False)
         for meta_k, meta_v in (data.get("project_metadata") or {}).items():

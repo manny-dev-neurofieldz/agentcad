@@ -1,6 +1,7 @@
 """AgentCAD command-line interface."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -18,18 +19,32 @@ def _parse_defines(define_list):
     return defines
 
 
-def cmd_render(args):
-    """Render a CAD source file to PNG images."""
+def _engine_for(engine_name, cfg):
+    """Resolve the engine: explicit flag, else the project config, else openscad.
+
+    Settings come from the config's ``[engine.<name>]`` table when a config is
+    present, so a project's tuning reaches the engine on every command path.
+    """
     from agentcad.engines import get_engine
 
-    engine = get_engine(args.engine)
-    if not engine.available():
-        print(f"Error: {engine.name} is not available.", file=sys.stderr)
-        sys.exit(1)
+    name = engine_name or (cfg.engine if cfg else None) or "openscad"
+    settings = cfg.engine_settings(name) if cfg else None
+    return get_engine(name, settings=settings)
+
+
+def cmd_render(args):
+    """Render a CAD source file to PNG images."""
+    from agentcad.config import ProjectConfig
 
     source = Path(args.source_file)
     if not source.exists():
         print(f"Error: File not found: {source}", file=sys.stderr)
+        sys.exit(1)
+
+    cfg = ProjectConfig.discover(source.parent)
+    engine = _engine_for(args.engine, cfg)
+    if not engine.available():
+        print(f"Error: {engine.name} is not available.", file=sys.stderr)
         sys.exit(1)
 
     output_dir = Path(args.output_dir) if args.output_dir else source.parent / "output"
@@ -39,12 +54,15 @@ def cmd_render(args):
     defines = _parse_defines(args.define) if args.define else None
     result = engine.render(source, output_dir, views=views, image_size=args.size, defines=defines)
 
-    if result.errors:
-        for err in result.errors:
-            print(f"Error: {err}", file=sys.stderr)
+    for warn in result.warnings:
+        print(f"Warning: {warn}", file=sys.stderr)
+    for err in result.errors:
+        print(f"Error: {err}", file=sys.stderr)
 
     for view_name, img_path in result.images.items():
         print(f"  {view_name}: {img_path}")
+    for key, value in result.metadata.items():
+        print(f"  {key}: {value}")
 
     if result.success:
         print(f"\nRendered {len(result.images)} view(s) in {result.render_time_ms:.0f}ms")
@@ -53,17 +71,24 @@ def cmd_render(args):
 
 
 def cmd_export(args):
-    """Export a CAD source file to STL."""
-    from agentcad.engines import get_engine
+    """Export a CAD source file to a geometry file (STL by default)."""
+    from agentcad.config import ProjectConfig
 
-    engine = get_engine(args.engine)
     source = Path(args.source_file)
-    output = Path(args.output) if args.output else source.with_suffix(".stl")
+    if not source.exists():
+        print(f"Error: File not found: {source}", file=sys.stderr)
+        sys.exit(1)
+
+    cfg = ProjectConfig.discover(source.parent)
+    engine = _engine_for(args.engine, cfg)
+    fmt = args.format.lower()
+    output = Path(args.output) if args.output else source.with_suffix(f".{fmt}")
 
     defines = _parse_defines(args.define) if args.define else None
-    result = engine.export_stl(source, output, defines=defines)
+    result = engine.export(source, output, fmt=fmt, defines=defines)
     if result.success:
-        print(f"Exported: {result.stl_path} ({result.facet_count} facets, {result.render_time_ms:.0f}ms)")
+        facets = f", {result.facet_count} facets" if result.facet_count else ""
+        print(f"Exported: {result.output_path} ({fmt}{facets}, {result.render_time_ms:.0f}ms)")
     else:
         for err in result.errors:
             print(f"Error: {err}", file=sys.stderr)
@@ -75,11 +100,15 @@ def cmd_info(args):
     from agentcad.engines import list_engines, get_engine
 
     print(f"AgentCAD v{__version__}")
-    print(f"Available engines: {list_engines()}")
+    print(f"Registered engines: {list_engines()}")
     for name in list_engines():
         eng = get_engine(name)
-        status = "available" if eng.available() else "not found"
-        print(f"  {eng.name}: {status}")
+        if eng.available():
+            status = f"available (version {eng.version() or 'unknown'})"
+        else:
+            status = "not found"
+        formats = ", ".join(eng.supported_export_formats)
+        print(f"  {name}: {eng.name} - {status}; sources {eng.file_extension}; exports {formats}")
     print(f"\nCamera presets: {list(STANDARD_PRESETS.keys())}")
 
 
@@ -96,17 +125,19 @@ def cmd_new_project(args):
     path = project.setup()
 
     # Generate agentcad.toml inside the project
+    engine_name = args.engine if args.engine else "openscad"
     config_path = path / CONFIG_FILENAME
     if not config_path.exists():
         desc = args.description if args.description else ""
-        engine = args.engine if args.engine else "openscad"
-        config_path.write_text(generate_config_template(args.name, desc, engine))
+        config_path.write_text(generate_config_template(args.name, desc, engine_name))
 
+    from agentcad.engines import engine_extensions
+    ext = engine_extensions().get(engine_name, "")
     print(f"Created project: {path}")
-    print(f"  agentcad.toml — project config")
-    print(f"  source/       — .scad source files")
-    print(f"  renders/      — multi-view PNGs")
-    print(f"  exports/      — STL files")
+    print(f"  agentcad.toml - project config (engine: {engine_name})")
+    print(f"  source/       - {ext or 'engine'} source files")
+    print(f"  renders/      - multi-view PNGs")
+    print(f"  exports/      - geometry exports (STL, ...)")
 
 
 def cmd_projects(args):
@@ -197,7 +228,7 @@ def cmd_config_show(args):
 
 
 def _resolve_project(project_arg):
-    """Resolve project name/path → (ProjectConfig, project_dir, project_name).
+    """Resolve project name/path -> (ProjectConfig, project_dir, project_name).
 
     Returns (cfg, project_dir, project_name). Exits if project not found.
     """
@@ -221,14 +252,12 @@ def _resolve_project(project_arg):
 
 def cmd_session_start(args):
     """Start a new design session."""
-    from agentcad.engines import get_engine
     from agentcad.session import DesignSession
 
     cfg, project_dir, project_name = _resolve_project(args.project)
-    engine_name = args.engine or cfg.engine
-    engine = get_engine(engine_name)
+    engine = _engine_for(args.engine, cfg)
     if not engine.available():
-        print(f"Error: engine '{engine_name}' is not available.", file=sys.stderr)
+        print(f"Error: engine '{engine.name}' is not available.", file=sys.stderr)
         sys.exit(1)
 
     session = DesignSession(
@@ -236,21 +265,22 @@ def cmd_session_start(args):
         engine=engine,
         config=cfg,
         max_iterations=args.max_iter,
+        defines=_parse_defines(args.define) if args.define else None,
     )
 
     # Refuse to overwrite an active (non-finalized) session unless --force.
     if session.state_file.exists() and not args.force:
-        import json as _json
         try:
-            prior = _json.loads(session.state_file.read_text())
-            if not prior.get("finalized", False) and prior.get("iterations"):
-                print(f"Error: active session exists at {session.state_file} "
-                      f"with {len(prior['iterations'])} iteration(s). "
-                      f"Use --force to overwrite or `agentcad session finalize` first.",
-                      file=sys.stderr)
-                sys.exit(1)
-        except Exception:
-            pass
+            prior = json.loads(session.state_file.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Warning: existing session state unreadable, starting fresh: {e}", file=sys.stderr)
+            prior = {}
+        if not prior.get("finalized", False) and prior.get("iterations"):
+            print(f"Error: active session exists at {session.state_file} "
+                  f"with {len(prior['iterations'])} iteration(s). "
+                  f"Use --force to overwrite or `agentcad session finalize` first.",
+                  file=sys.stderr)
+            sys.exit(1)
 
     state_path = session.save_state()
     print(f"Session started for project '{project_name}' (engine: {engine.name})")
@@ -261,11 +291,10 @@ def cmd_session_start(args):
 
 def cmd_session_iterate(args):
     """Add an iteration to the active session."""
-    from agentcad.engines import get_engine
     from agentcad.session import DesignSession
 
     cfg, project_dir, project_name = _resolve_project(args.project)
-    engine = get_engine(cfg.engine)
+    engine = _engine_for(None, cfg)
 
     try:
         session = DesignSession.load_state(project_name, engine=engine, config=cfg)
@@ -290,10 +319,15 @@ def cmd_session_iterate(args):
 
     session.save_state()
     print(f"Iteration v{it.number} recorded")
+    if it.render_result:
+        for warn in it.render_result.warnings:
+            print(f"  Warning: {warn}", file=sys.stderr)
     if it.render_result and it.render_result.success:
         print(f"  Rendered {len(it.image_paths)} view(s) in {it.render_result.render_time_ms:.0f}ms")
         for view, path in it.image_paths.items():
             print(f"    {view}: {path}")
+        for key, value in it.render_result.metadata.items():
+            print(f"    {key}: {value}")
     else:
         errors = it.render_result.errors if it.render_result else ["no render result"]
         for err in errors:
@@ -303,11 +337,10 @@ def cmd_session_iterate(args):
 
 def cmd_session_note(args):
     """Add an analysis note to the current iteration."""
-    from agentcad.engines import get_engine
     from agentcad.session import DesignSession
 
     cfg, _, project_name = _resolve_project(args.project)
-    engine = get_engine(cfg.engine)
+    engine = _engine_for(None, cfg)
     try:
         session = DesignSession.load_state(project_name, engine=engine, config=cfg)
     except FileNotFoundError as e:
@@ -324,11 +357,10 @@ def cmd_session_note(args):
 
 def cmd_session_finalize(args):
     """Finalize the session: STL exports, HTML viewer, print manifest."""
-    from agentcad.engines import get_engine
     from agentcad.session import DesignSession
 
     cfg, _, project_name = _resolve_project(args.project)
-    engine = get_engine(cfg.engine)
+    engine = _engine_for(None, cfg)
     try:
         session = DesignSession.load_state(project_name, engine=engine, config=cfg)
     except FileNotFoundError as e:
@@ -348,11 +380,10 @@ def cmd_session_finalize(args):
 
 def cmd_session_status(args):
     """Show current session state."""
-    from agentcad.engines import get_engine
     from agentcad.session import DesignSession
 
     cfg, _, project_name = _resolve_project(args.project)
-    engine = get_engine(cfg.engine)
+    engine = _engine_for(None, cfg)
     try:
         session = DesignSession.load_state(project_name, engine=engine, config=cfg)
     except FileNotFoundError:
@@ -404,18 +435,22 @@ def main():
     p_render.add_argument("-o", "--output-dir", help="Output directory (default: ./output)")
     p_render.add_argument("-v", "--views", nargs="+", choices=list(STANDARD_PRESETS.keys()))
     p_render.add_argument("-s", "--size", type=int, default=1024, help="Image size (default: 1024)")
-    p_render.add_argument("-e", "--engine", default="openscad", help="CAD engine (default: openscad)")
+    p_render.add_argument("-e", "--engine", default=None,
+                          help="CAD engine (default: the project's agentcad.toml, else openscad)")
     p_render.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
-                          help="Override OpenSCAD variable (repeatable)")
+                          help="Override a model parameter (repeatable)")
     p_render.set_defaults(func=cmd_render)
 
     # export
-    p_export = sub.add_parser("export", help="Export CAD source to STL")
+    p_export = sub.add_parser("export", help="Export CAD source to STL or another format")
     p_export.add_argument("source_file", help="Path to CAD source file")
-    p_export.add_argument("-o", "--output", help="Output STL path")
-    p_export.add_argument("-e", "--engine", default="openscad", help="CAD engine (default: openscad)")
+    p_export.add_argument("-o", "--output", help="Output path (default: source name with the format's extension)")
+    p_export.add_argument("-f", "--format", default="stl",
+                          help="Export format (default: stl; see `agentcad info` for each engine's list)")
+    p_export.add_argument("-e", "--engine", default=None,
+                          help="CAD engine (default: the project's agentcad.toml, else openscad)")
     p_export.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
-                          help="Override OpenSCAD variable (repeatable)")
+                          help="Override a model parameter (repeatable)")
     p_export.set_defaults(func=cmd_export)
 
     # info
@@ -474,6 +509,8 @@ def main():
     p_ss.add_argument("project", help="Project name (folder under designs_dir) or path")
     p_ss.add_argument("--engine", help="Override project's default engine")
     p_ss.add_argument("--max-iter", type=int, default=10, help="Max iterations (default: 10)")
+    p_ss.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
+                      help="Model parameter override applied to every iteration (repeatable)")
     p_ss.add_argument("-f", "--force", action="store_true",
                       help="Overwrite an existing un-finalized session")
     p_ss.set_defaults(func=cmd_session_start)
