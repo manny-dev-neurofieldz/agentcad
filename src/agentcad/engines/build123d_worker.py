@@ -276,7 +276,13 @@ def _render(b3d, shape, job: Dict[str, Any], out: Dict[str, Any]) -> None:
         plotter = pv.Plotter(off_screen=True, window_size=[size, size])
         plotter.set_background(spec.get("background", "white"))
         if mesh is not None:
-            plotter.add_mesh(mesh, color=spec.get("color", "#cfd8e3"), smooth_shading=False, specular=0.15)
+            # Smooth shading interpolates vertex normals (PyVista splits them at
+            # sharp edges, so corners stay crisp). Flat shading paints each
+            # triangle with its own normal, which on a lofted or twisted face
+            # shows the tessellation as a crumpled surface even though the
+            # B-rep is smooth.
+            smooth = spec.get("shading", "smooth") != "flat"
+            plotter.add_mesh(mesh, color=spec.get("color", "#cfd8e3"), smooth_shading=smooth, specular=0.15)
         if edges is not None:
             plotter.add_mesh(edges, color=spec.get("edge_color", "black"), line_width=2)
         d = view.get("distance") or 0.0

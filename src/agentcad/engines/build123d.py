@@ -14,6 +14,10 @@ Settings (``[engine.build123d]``):
     timeout            seconds allowed for a render (default 120)
     export_timeout     seconds allowed for an export (default 300)
     color, background, edge_color   render colours
+    shading            "smooth" (default) interpolates vertex normals so a curved
+                       face reads as curved; "flat" shades each triangle on its
+                       own normal, which shows the tessellation on lofted or
+                       twisted faces
 """
 
 import importlib.metadata
@@ -43,6 +47,7 @@ _DEFAULTS: Dict[str, Any] = {
     "color": "#cfd8e3",
     "background": "white",
     "edge_color": "black",
+    "shading": "smooth",
 }
 
 
@@ -137,6 +142,7 @@ class Build123dEngine(CADEngine):
             "color": self.setting("color", _DEFAULTS["color"]),
             "background": self.setting("background", _DEFAULTS["background"]),
             "edge_color": self.setting("edge_color", _DEFAULTS["edge_color"]),
+            "shading": str(self.setting("shading", _DEFAULTS["shading"])).lower(),
         }
         res = self._run_worker(job, self._timeout, cwd=source_path.parent)
         images = {name: Path(p) for name, p in res.get("images", {}).items()}

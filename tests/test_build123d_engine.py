@@ -126,6 +126,24 @@ def test_unnamed_product_is_harvested_by_size_with_a_warning(engine, tmp_path):
     assert any("'widget'" in w for w in result.warnings), result.warnings
 
 
+def test_shading_is_a_known_setting_and_both_modes_render(tmp_path):
+    """Smooth shading is the default; "flat" is accepted and still renders."""
+    src = tmp_path / "box.py"
+    src.write_text(BOX)
+    smooth = get_engine("build123d")
+    if not smooth.available():
+        pytest.skip("build123d backend not available")
+    assert "shading" in smooth.known_settings
+    assert smooth.setting("shading", None) in (None, "smooth")
+    flat = get_engine("build123d", settings={"shading": "flat"})
+    for eng, tag in ((smooth, "smooth"), (flat, "flat")):
+        result = eng.render(src, tmp_path / tag, views=["iso"], image_size=64)
+        if result.errors and any("pyvista" in e.lower() for e in result.errors):
+            pytest.skip("pyvista unavailable for rendering")
+        assert result.success, result.errors
+        assert (tmp_path / tag / "box_iso.png").exists()
+
+
 def test_validate_syntax_runs_an_import_only_dry_run(engine):
     assert engine.validate_syntax(BOX).valid
     bad = engine.validate_syntax("def build(:\n")
