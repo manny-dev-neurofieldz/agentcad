@@ -220,6 +220,7 @@ fs = 0.5                               # fragment size (mm)
 # [engine.build123d]
 # tolerance = 0.01                     # tessellation tolerance (mm)
 # timeout = 120                        # seconds per render
+# shading = "smooth"                   # "flat" shows the tessellation on curved faces
 
 [output]
 image_size = 1024                       # render resolution
