@@ -183,6 +183,7 @@ class VoxelCADEngine(CADEngine):
             format=fmt,
             success=produced,
             errors=[] if produced else ["VoxelCAD produced no STL file"],
+            warnings=warnings,
             facet_count=facets,
             render_time_ms=elapsed_ms,
             metadata=self._measure(model),

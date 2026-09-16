@@ -23,11 +23,18 @@ SOURCES: Dict[str, str] = {
         "def build(size=10):\n"
         "    return Cube(size=size)\n"
     ),
+    "build123d": (
+        "from build123d import Box\n"
+        "\n"
+        "def build(size=10):\n"
+        "    return Box(size, size, size)\n"
+    ),
 }
 
 BAD_SOURCES: Dict[str, str] = {
     "openscad": "cube(10;\n",
     "voxelcad": "def build(:\n",
+    "build123d": "def build(:\n",
 }
 
 

@@ -23,10 +23,10 @@ AgentCAD abstracts the design feedback loop so it works with any CLI or API-scri
                    ╰───────┬───────╯
             ┌──────────────┼──────────────┐
             ▼              ▼              ▼
-     ┌────────────┐ ┌────────────┐ ┌────────────┐
-     │  OpenSCAD  │ │  VoxelCAD  │ │   Future   │
-     │   Engine   │ │   Engine   │ │    ...     │
-     └────────────┘ └────────────┘ └────────────┘
+     +------------+ +------------+ +------------+
+     |  OpenSCAD  | |  VoxelCAD  | | build123d  |
+     |   Engine   | |   Engine   | |   Engine   |
+     +------------+ +------------+ +------------+
 ```
 
 ## Quick Start
@@ -67,8 +67,17 @@ and which export formats it supports.
 - Source contract: `def build(**params)` returning the model (overrides are
   coerced to the types of the defaults), or a module-level `model`
 
-### build123d (planned)
-- B-rep modelling with STEP/STL/3MF/SVG export; same Python source contract as VoxelCAD
+### build123d
+- B-rep modelling (OCCT) with STEP, STL, 3MF and SVG export
+- Same Python source contract as VoxelCAD: `def build(**params)` or a module-level
+  `part`; a script that names its product differently is harvested by size with
+  a warning naming the variable chosen
+- Every kernel call runs in a subprocess with a configurable timeout, so a hung
+  operation is reported instead of waited on; renders are shaded tessellations
+  with true B-rep edges; STEP/STL/3MF/SVG export work without PyVista
+- Measured facts (volume, area, bounding box, face and edge counts, validity)
+  travel back in `RenderResult.metadata` / `ExportResult.metadata`
+- Install the backend with `pip install -e ".[build123d]"`
 
 ## Configuration
 

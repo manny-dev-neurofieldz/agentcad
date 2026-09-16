@@ -61,3 +61,9 @@ try:
     register_engine("voxelcad", VoxelCADEngine)
 except ImportError as e:
     _log.debug("VoxelCAD engine not available: %s", e)
+
+try:
+    from agentcad.engines.build123d import Build123dEngine
+    register_engine("build123d", Build123dEngine)
+except ImportError as e:
+    _log.debug("build123d engine not available: %s", e)
