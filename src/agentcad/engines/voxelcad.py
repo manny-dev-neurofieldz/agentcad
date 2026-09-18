@@ -1,46 +1,66 @@
 """VoxelCAD engine backend.
 
-Executes Python VoxelCAD code, renders via PyVista offscreen, and exports
-STL via the SDF + Butterworth smoothed mesh pipeline.
+Voxel modelling through the VoxelCAD package: the source builds a model on a
+voxel grid, PyVista renders its smoothed surface offscreen, and export writes
+STL through the SDF + Butterworth pipeline. The source contract is the one
+every Python-source engine shares (see ``agentcad.params``): ``build(**params)``
+returning the model, or a module-level ``model``. All grid work runs in a
+subprocess (``voxelcad_worker``) with a timeout, so an oversize grid or an
+out-of-memory kill is reported as an error rather than taking the CLI down.
 
-Source contract (shared with every Python-based engine):
-    * ``def build(**params)`` returning the model - parameter overrides
-      (``-D name=value``) are coerced to the types of the defaults and
-      passed in; or
-    * a module-level ``model`` - no overrides possible; any given are
-      reported as ignored.
+Settings (``[engine.voxelcad]``):
+    grid            voxels along the model's longest side when voxel_size is
+                    not given (default 256): the grid is sized from the
+                    model's extent, so a 10 mm part and a 100 mm part both
+                    build at the same cell count
+    voxel_size      explicit voxel edge in model units; overrides grid
+    warn_voxels     warn when the grid exceeds this many cells (default 64M)
+    timeout         seconds allowed for a render (default 120)
+    export_timeout  seconds allowed for an export (default 300)
+    color, background   render colours
+
+Measured metadata: grid_resolution, voxel_size, grid_target, bbox_min,
+bbox_size, occupied_voxels, volume (occupied cells times the cell volume),
+counts.solids (connected components on the grid), runtime_s. Area, validity
+and a face census have no meaning on a voxel grid and are not reported.
 """
 
-import sys
+import importlib.metadata
+import importlib.util
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from agentcad.camera import MULTI_VIEW_DEFAULT
 from agentcad.engine import (
     CADEngine, Defines, RenderResult, ExportResult, ValidationResult,
 )
-from agentcad.params import coerce_defines
+from agentcad.engines.subprocess_worker import run_worker
+
+_WORKER_MODULE = "agentcad.engines.voxelcad_worker"
 
 _DEFAULTS: Dict[str, Any] = {
-    "voxel_size": 0.2,
+    "grid": 256,
+    "voxel_size": None,
+    "warn_voxels": 64_000_000,
+    "timeout": 120,
+    "export_timeout": 300,
     "color": "steelblue",
     "background": "white",
 }
 
 
 class VoxelCADEngine(CADEngine):
-    """VoxelCAD rendering engine with PyVista offscreen and smoothed mesh export."""
+    """VoxelCAD rendering engine, worker-hosted, with PyVista offscreen renders and smoothed STL export."""
 
-    known_settings = ("voxel_size", "color", "background")
+    known_settings = tuple(_DEFAULTS)
     FILE_EXTENSION = ".py"
     EXPORT_FORMATS = ("stl",)
 
     def __init__(self, settings=None, **overrides):
         super().__init__(settings, **overrides)
-        self._voxel_size = self.setting("voxel_size", _DEFAULTS["voxel_size"])
-        self._color = self.setting("color", _DEFAULTS["color"])
-        self._background = self.setting("background", _DEFAULTS["background"])
+        self._timeout = float(self.setting("timeout", _DEFAULTS["timeout"]))
+        self._export_timeout = float(self.setting("export_timeout", _DEFAULTS["export_timeout"]))
 
     @property
     def name(self) -> str:
@@ -51,20 +71,46 @@ class VoxelCADEngine(CADEngine):
         return "python"
 
     def available(self) -> bool:
-        try:
-            import voxelcad  # noqa: F401
-            return True
-        except ImportError:
-            return False
+        return importlib.util.find_spec("voxelcad") is not None
 
     def version(self) -> Optional[str]:
         try:
-            import voxelcad
-            return voxelcad.__version__
-        except (ImportError, AttributeError):
-            return None
+            return importlib.metadata.version("voxelcad")
+        except importlib.metadata.PackageNotFoundError:
+            try:
+                import voxelcad
+                return getattr(voxelcad, "__version__", None)
+            except ImportError:
+                return None
 
-    # --- contract -----------------------------------------------------------
+    # --- worker plumbing --------------------------------------------------------
+
+    def _job_base(self, mode: str, defines: Defines) -> Dict[str, Any]:
+        voxel = self.setting("voxel_size", _DEFAULTS["voxel_size"])
+        return {
+            "mode": mode,
+            "defines": dict(defines or {}),
+            "resolution": {
+                "voxel_size": float(voxel) if voxel else None,
+                "grid": int(self.setting("grid", _DEFAULTS["grid"])),
+                "warn_voxels": int(self.setting("warn_voxels", _DEFAULTS["warn_voxels"])),
+            },
+        }
+
+    def _run_worker(self, job: Dict[str, Any], timeout: float, cwd: Optional[Path] = None) -> Dict[str, Any]:
+        return run_worker(_WORKER_MODULE, job, timeout, label="voxelcad", cwd=cwd)
+
+    def _view_spec(self, name: str) -> Dict[str, Any]:
+        preset = self.get_preset(name)
+        return {
+            "name": preset.name,
+            "eye": list(preset.eye),
+            "up": list(preset.up),
+            "orthographic": preset.orthographic,
+            "distance": preset.distance,
+        }
+
+    # --- contract ---------------------------------------------------------------
 
     def render(
         self,
@@ -77,61 +123,30 @@ class VoxelCADEngine(CADEngine):
         source_path = Path(source_path)
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-
         if views is None:
             views = MULTI_VIEW_DEFAULT
 
-        images: Dict[str, Path] = {}
-        errors: List[str] = []
-        warnings: List[str] = []
         t0 = time.monotonic()
-
-        model = self._execute_source(source_path, defines, errors, warnings)
-        if model is None:
-            return RenderResult(
-                images={}, success=False, errors=errors, warnings=warnings,
-                render_time_ms=(time.monotonic() - t0) * 1000,
-            )
-
-        metadata = self._measure(model)
-
-        try:
-            import pyvista as pv
-            pv.OFF_SCREEN = True
-
-            mesh = model.render_surface_mesh()
-            center, radius = _bounding_sphere(mesh.bounds)
-
-            for view_name in views:
-                preset = self.get_preset(view_name)
-                out_file = output_dir / f"{source_path.stem}_{view_name}.png"
-
-                plotter = pv.Plotter(off_screen=True, window_size=[image_size, image_size])
-                plotter.set_background(self._background)
-                plotter.add_mesh(mesh, color=self._color, smooth_shading=True)
-                plotter.camera_position = [preset.eye_position(center, radius), center, preset.up]
-                if preset.orthographic:
-                    plotter.enable_parallel_projection()
-                plotter.reset_camera()
-                plotter.screenshot(str(out_file))
-                plotter.close()
-
-                if out_file.exists() and out_file.stat().st_size > 0:
-                    images[view_name] = out_file
-                else:
-                    errors.append(f"{view_name}: screenshot produced no file")
-        except Exception as e:
-            # Deliberately broad: PyVista/VTK raise many types for a missing
-            # GL context; none is recoverable here and the message is what matters.
-            errors.append(f"PyVista render error: {type(e).__name__}: {e}")
-
+        job = self._job_base("render", defines)
+        job["source_path"] = str(source_path)
+        job["render"] = {
+            "output_dir": str(output_dir),
+            "stem": source_path.stem,
+            "image_size": int(image_size),
+            "views": [self._view_spec(name) for name in views],
+            "color": self.setting("color", _DEFAULTS["color"]),
+            "background": self.setting("background", _DEFAULTS["background"]),
+        }
+        res = self._run_worker(job, self._timeout, cwd=source_path.parent)
+        images = {name: Path(p) for name, p in res.get("images", {}).items()}
+        errors = list(res.get("errors", []))
         return RenderResult(
             images=images,
-            success=len(images) > 0 and len(errors) == 0,
+            success=len(images) > 0 and not errors,
             errors=errors,
-            warnings=warnings,
+            warnings=list(res.get("warnings", [])),
             render_time_ms=(time.monotonic() - t0) * 1000,
-            metadata=metadata,
+            metadata=dict(res.get("metadata", {})),
         )
 
     def export(
@@ -144,49 +159,26 @@ class VoxelCADEngine(CADEngine):
         fmt = fmt.lower()
         if fmt not in self.supported_export_formats:
             return self._unsupported_format(fmt)
-
         source_path = Path(source_path)
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        errors: List[str] = []
-        warnings: List[str] = []
         t0 = time.monotonic()
-
-        model = self._execute_source(source_path, defines, errors, warnings)
-        if model is None:
-            return ExportResult(format=fmt, success=False, errors=errors)
-
-        try:
-            model.export(str(output_path))
-        except Exception as e:
-            # Deliberately broad: user geometry can fail anywhere in the
-            # export pipeline; the caller gets the message, not a crash.
-            return ExportResult(
-                format=fmt, success=False,
-                errors=[f"STL export error: {type(e).__name__}: {e}"],
-                render_time_ms=(time.monotonic() - t0) * 1000,
-            )
-
-        elapsed_ms = (time.monotonic() - t0) * 1000
-
-        # Count facets from file size (binary STL: 84 bytes header + 50 bytes/facet)
-        facets = 0
-        produced = output_path.exists() and output_path.stat().st_size > 0
-        if produced:
-            size = output_path.stat().st_size
-            if size > 84:
-                facets = (size - 84) // 50
-
+        job = self._job_base("export", defines)
+        job["source_path"] = str(source_path)
+        job["export"] = {"output_path": str(output_path), "fmt": fmt}
+        res = self._run_worker(job, self._export_timeout, cwd=source_path.parent)
+        errors = list(res.get("errors", []))
+        produced = res.get("output_path")
         return ExportResult(
-            output_path=output_path if produced else None,
+            output_path=Path(produced) if produced else None,
             format=fmt,
-            success=produced,
-            errors=[] if produced else ["VoxelCAD produced no STL file"],
-            warnings=warnings,
-            facet_count=facets,
-            render_time_ms=elapsed_ms,
-            metadata=self._measure(model),
+            success=bool(produced) and not errors,
+            errors=errors,
+            warnings=list(res.get("warnings", [])),
+            facet_count=int(res.get("facet_count") or 0),
+            render_time_ms=(time.monotonic() - t0) * 1000,
+            metadata=dict(res.get("metadata", {})),
         )
 
     def validate_syntax(self, code: str) -> ValidationResult:
@@ -196,82 +188,3 @@ class VoxelCADEngine(CADEngine):
         except SyntaxError as e:
             errors.append(f"Line {e.lineno}: {e.msg}")
         return ValidationResult(valid=len(errors) == 0, errors=errors, warnings=[])
-
-    # --- helpers ------------------------------------------------------------
-
-    def _execute_source(self, source_path: Path, defines: Defines, errors: List[str], warnings: List[str]):
-        """Run a VoxelCAD script and return its model, or None with errors filled.
-
-        A ``build(**params)`` function takes precedence and receives coerced
-        overrides; otherwise the module-level ``model`` is harvested.
-        """
-        code = source_path.read_text()
-        namespace: Dict[str, Any] = {"__file__": str(source_path), "__name__": "__agentcad_source__"}
-
-        try:
-            exec(code, namespace)
-        except Exception as e:
-            # Deliberately broad: this runs user code, which may raise anything.
-            errors.append(f"Execution error: {type(e).__name__}: {e}")
-            return None
-
-        build = namespace.get("build")
-        if callable(build):
-            try:
-                params = coerce_defines(defines, build)
-            except ValueError as e:
-                errors.append(f"Parameter override rejected: {e}")
-                return None
-            try:
-                model = build(**params)
-            except Exception as e:
-                # Deliberately broad: user code again.
-                errors.append(f"build() raised {type(e).__name__}: {e}")
-                return None
-        else:
-            if defines:
-                warnings.append(
-                    f"Overrides {sorted(defines)} ignored: source defines no build(**params)"
-                )
-            model = namespace.get("model")
-
-        if model is None:
-            errors.append(
-                "Script must define build(**params) returning the model, or assign it "
-                "to a variable named 'model'. Example: model = Sphere(r=5) & Cube(size=8, center=True)"
-            )
-            return None
-
-        # Ensure rendered
-        if not hasattr(model, "voxel_data") or model.voxel_data is None:
-            try:
-                model.render_volume()
-            except Exception as e:
-                # Deliberately broad: geometry evaluation of user models.
-                errors.append(f"render_volume() failed: {type(e).__name__}: {e}")
-                return None
-
-        return model
-
-    @staticmethod
-    def _measure(model) -> Dict[str, Any]:
-        """Measured facts about a rendered VoxelCAD model (best effort, never raises)."""
-        metadata: Dict[str, Any] = {}
-        grid = getattr(model, "grid", None)
-        if grid is None:
-            return metadata
-        try:
-            metadata["grid_resolution"] = [int(v) for v in grid.res_vector]
-            metadata["voxel_size"] = [float(v) for v in grid.voxel_size_vector]
-            metadata["bbox"] = [list(map(float, grid.xlim)), list(map(float, grid.ylim)), list(map(float, grid.zlim))]
-        except (AttributeError, TypeError, ValueError) as e:
-            print(f"agentcad warning: VoxelCAD metadata incomplete: {e}", file=sys.stderr)
-        return metadata
-
-
-def _bounding_sphere(bounds) -> Tuple[Tuple[float, float, float], float]:
-    """Centre and radius of the sphere around a PyVista bounds tuple."""
-    xmin, xmax, ymin, ymax, zmin, zmax = bounds
-    center = ((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2)
-    radius = 0.5 * ((xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2) ** 0.5
-    return center, max(radius, 1e-9)
