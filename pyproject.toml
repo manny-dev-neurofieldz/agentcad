@@ -21,7 +21,7 @@ classifiers = [
 
 [project.optional-dependencies]
 openscad = []  # OpenSCAD binary required externally
-voxelcad = ["voxelcad[viz] @ git+https://github.com/cversek/voxelcad.git", "scipy"]
+voxelcad = ["voxelcad[viz] @ git+https://github.com/cversek/voxelcad.git", "scipy", "psutil"]  # kernels need build_ext in that checkout; psutil is imported but undeclared upstream
 build123d = ["build123d", "pyvista", "bd_warehouse"]
 dev = ["pytest", "pytest-cov"]
 
