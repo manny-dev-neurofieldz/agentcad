@@ -93,3 +93,20 @@ def test_unknown_setting_is_announced(engine_name, capsys):
     err = capsys.readouterr().err
     assert "bogus_setting" in err and eng.name in err
     assert eng.setting("bogus_setting") is None
+
+
+def test_metadata_keys_are_documented(engine, source_file, tmp_path):
+    """Every key an engine reports is in METADATA_KEYS or is a <key>_error sibling.
+
+    The report layer reads only the documented vocabulary; a number an
+    engine wants on the tray must go under one of those names.
+    """
+    from agentcad.engine import METADATA_KEYS
+
+    result = engine.export(source_file, tmp_path / "m.stl", fmt="stl")
+    assert result.success, result.errors
+    undocumented = [k for k in result.metadata if k not in METADATA_KEYS and not k.endswith("_error")]
+    assert not undocumented, undocumented
+    render = engine.render(source_file, tmp_path / "r", views=["iso"], image_size=64)
+    undocumented = [k for k in render.metadata if k not in METADATA_KEYS and not k.endswith("_error")]
+    assert not undocumented, undocumented

@@ -18,6 +18,45 @@ from agentcad.camera import CameraPreset, STANDARD_PRESETS, MULTI_VIEW_DEFAULT
 
 Defines = Optional[Mapping[str, str]]
 
+#: Measured-metadata keys an engine may report in ``RenderResult.metadata`` /
+#: ``ExportResult.metadata``. Every key is optional: an engine that cannot
+#: measure something omits the key (a reader prints "n/a"), and a measurement
+#: that failed is reported as ``<key>_error`` with the reason. Engines may add
+#: keys of their own, but the report layer (``agentcad.report``) reads only
+#: these, so a number an engine wants on the tray goes under one of them.
+#:
+#:   bbox_min, bbox_size   [x, y, z] in model units
+#:   volume, area          model units cubed / squared
+#:   center_of_mass        [x, y, z]
+#:   counts                {solids, faces, edges, vertices}; solids is the
+#:                         connectivity gate (a part in three pieces renders whole)
+#:   is_valid              kernel validity (B-rep engines)
+#:   face_census           {plane, cylinder, cone, sphere, torus, bspline, other: n}
+#:   short_edges           edges shorter than the ``short_edge_mm`` setting
+#:   min_edge_mm           the shortest edge
+#:   expected_solids       the ``expected_solids`` setting the engine ran with
+#:   twisted_faces         free-form faces whose normal turns sharply along a
+#:                         ruling (a twisted loft), with ``twisted_faces_detail``
+#:   grid_resolution, voxel_size, grid_target, occupied_voxels   (voxel engines)
+#:   kind                  "3d" | "2d" | "1d"
+#:   runtime_s             seconds the engine spent building and measuring
+METADATA_KEYS = frozenset({
+    "bbox_min", "bbox_size", "bbox", "volume", "area", "center_of_mass", "counts",
+    "is_valid", "face_census", "short_edges", "min_edge_mm", "expected_solids",
+    "twisted_faces", "twisted_faces_detail",
+    "grid_resolution", "voxel_size", "grid_target", "occupied_voxels",
+    "kind", "runtime_s", "facet_count",
+    # engine identity lines
+    "build123d_version", "openscad_version", "voxelcad_version",
+})
+
+#: Settings every engine accepts in its ``[engine.<name>]`` table regardless
+#: of backend: they parameterise the report, not the kernel.
+#:   expected_solids   how many bodies a single-part source should produce (default 1)
+#:   short_edge_mm     an edge below this length is counted in ``short_edges`` (default 0.25)
+UNIVERSAL_SETTINGS: Tuple[str, ...] = ("expected_solids", "short_edge_mm")
+UNIVERSAL_DEFAULTS: Dict[str, Any] = {"expected_solids": 1, "short_edge_mm": 0.25}
+
 
 @dataclass
 class RenderResult:
@@ -97,7 +136,7 @@ class CADEngine(ABC):
                 f"{self.name}: settings must be a mapping or dataclass, got {type(settings).__name__}"
             )
         for key, value in list(source.items()) + list(overrides.items()):
-            if key in self.known_settings:
+            if key in self.known_settings or key in UNIVERSAL_SETTINGS:
                 merged[key] = value
             else:
                 print(
@@ -108,8 +147,12 @@ class CADEngine(ABC):
         return merged
 
     def setting(self, key: str, default: Any = None) -> Any:
-        """Read a merged setting with a default."""
-        return self._settings.get(key, default)
+        """Read a merged setting with a default (universal settings carry their own)."""
+        if key in self._settings:
+            return self._settings[key]
+        if key in UNIVERSAL_DEFAULTS and default is None:
+            return UNIVERSAL_DEFAULTS[key]
+        return default
 
     # --- identity -----------------------------------------------------------
 
