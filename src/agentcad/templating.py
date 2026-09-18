@@ -148,6 +148,9 @@ class VariantBuilder:
         self._gallery = Gallery()
         self._stl_path: Optional[str] = None
         self._stl_data: Optional[bytes] = None
+        #: (name, relative path, bytes or None, quantity) per mesh of the variant
+        self._meshes: List[tuple] = []
+        self._mesh_note: str = ""
         self._source_title = ""
         self._source_code = ""
         self._source_language = "plaintext"
@@ -164,8 +167,19 @@ class VariantBuilder:
         return self
 
     def stl(self, path: str, data: Optional[bytes] = None) -> "VariantBuilder":
+        """Single-mesh compatibility: one mesh named after the variant."""
         self._stl_path = path
         self._stl_data = data
+        return self.mesh(self.name, path, data)
+
+    def mesh(self, name: str, path: str, data: Optional[bytes] = None, quantity: int = 1) -> "VariantBuilder":
+        """Add one mesh; ``data`` inline when given, else loaded from ``path`` beside the page."""
+        self._meshes.append((name, path, data, quantity))
+        return self
+
+    def mesh_note(self, text: str) -> "VariantBuilder":
+        """A badge shown on the 3D tab (why a mesh is linked rather than embedded)."""
+        self._mesh_note = text
         return self
 
     def notes(self, text: str) -> "VariantBuilder":
@@ -187,13 +201,22 @@ class VariantBuilder:
 
         stl_buttons = ""
         stl_embed = ""
-        if self._stl_path:
-            stl_buttons = Button.download("Download STL", self._stl_path)
-            if self._stl_data:
-                stl_id = self.name.replace(" ", "_").replace("-", "_")
-                b64 = base64.b64encode(self._stl_data).decode("ascii")
-                stl_buttons += " " + Button.action("View 3D", f"loadSTLData('{stl_id}')")
-                stl_embed = f'<script id="stl-data-{stl_id}" type="application/octet-stream">{b64}</script>'
+        if self._meshes:
+            blocks = []
+            for name, path, data, quantity in self._meshes:
+                label = _esc(name) + (f" x{quantity}" if quantity and quantity > 1 else "")
+                stl_buttons += Button.download(f"Download {label}", path) + " "
+                if data is not None:
+                    b64 = base64.b64encode(data).decode("ascii")
+                    blocks.append(f'<script class="mesh-data" type="application/octet-stream" '
+                                  f'data-variant="{self._id}" data-name="{_esc(name)}">{b64}</script>')
+                else:
+                    blocks.append(f'<script class="mesh-data" type="application/octet-stream" '
+                                  f'data-variant="{self._id}" data-name="{_esc(name)}" data-src="{_esc(path)}"></script>')
+            stl_buttons += Button.action("View 3D", f"loadVariantMeshes('{self._id}')")
+            stl_embed = "\n".join(blocks)
+        if self._mesh_note:
+            stl_buttons += f' <span class="mesh-badge">{_esc(self._mesh_note)}</span>'
 
         params_html = ""
         if self._params.rows:
@@ -234,11 +257,20 @@ class VariantBuilder:
 class Page:
     """Top-level HTML page builder."""
 
-    def __init__(self, title: str, template: str = "viewer.html"):
+    #: Pinned CDN builds used when a page must not carry vendored scripts
+    #: (an artifact fragment loads scripts only from the allowed hosts).
+    CDN_SCRIPTS = (
+        "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+        "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js",
+        "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js",
+    )
+
+    def __init__(self, title: str, template: str = "viewer.html", cdn: bool = False):
         self.title = title
         self._template_name = template
         self._metadata = Table(css_class="meta")
         self._variants: List[VariantBuilder] = []
+        self._cdn = cdn
 
     def metadata(self, key: str, value: Any) -> "Page":
         self._metadata.row(key, value)
@@ -250,14 +282,31 @@ class Page:
         return v
 
     def _load_vendor_scripts(self) -> str:
-        """Read vendor JS files and return inline <script> tags."""
+        """Inline vendor JS (offline page), or pinned CDN tags in cdn mode."""
         vendor_dir = _TEMPLATES_DIR / "vendor"
+        if self._cdn:
+            tags = [f'<script src="{url}"></script>' for url in self.CDN_SCRIPTS]
+            hl = vendor_dir / "hljs-openscad.min.js"
+            if hl.exists():
+                tags.append(f"<script>/* hljs-openscad.min.js */\n{hl.read_text()}</script>")
+            return "\n".join(tags)
         scripts = []
         for name in ["three.min.js", "OrbitControls.js", "STLLoader.js", "hljs-openscad.min.js"]:
             path = vendor_dir / name
             if path.exists():
                 scripts.append(f"<script>/* {name} */\n{path.read_text()}</script>")
         return "\n".join(scripts)
+
+    @staticmethod
+    def _camera_presets_json() -> str:
+        import json
+        from agentcad.camera import STANDARD_PRESETS
+        return json.dumps({name: {"eye": list(p.eye), "up": list(p.up)} for name, p in STANDARD_PRESETS.items()})
+
+    @staticmethod
+    def _view_buttons() -> str:
+        from agentcad.camera import STANDARD_PRESETS
+        return " ".join(f'<button onclick="setView(\'{name}\')">{name}</button>' for name in STANDARD_PRESETS)
 
     def build(self) -> str:
         page_tmpl = Template((_TEMPLATES_DIR / self._template_name).read_text())
@@ -272,4 +321,6 @@ class Page:
             metadata_rows=self._metadata.build(),
             variants_html=variants_html,
             threejs_scripts=self._load_vendor_scripts(),
+            camera_presets_json=self._camera_presets_json(),
+            view_buttons=self._view_buttons(),
         )

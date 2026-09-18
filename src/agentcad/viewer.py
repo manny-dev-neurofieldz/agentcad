@@ -28,15 +28,43 @@ def _relative(base: Path, target: Path) -> str:
         return str(target)
 
 
-def generate_html(project: "DesignProject") -> str:
-    """Generate complete HTML viewer for a design project."""
-    base = project.project_dir
+def _preview_mesh(path: Path, target_bytes: int) -> Optional[Path]:
+    """A decimated copy of ``path`` for display, or None when no decimator is available."""
+    try:
+        import pyvista as pv
+    except ImportError:
+        return None
+    try:
+        mesh = pv.read(str(path))
+        size = path.stat().st_size
+        reduction = max(0.0, min(0.95, 1.0 - target_bytes / max(size, 1)))
+        preview = mesh.decimate_pro(reduction) if reduction > 0 else mesh
+        out = path.with_name(path.stem + "_preview.stl")
+        preview.save(str(out), binary=True)
+        return out
+    except Exception as e:  # any decimation failure means "link it"; the page still loads
+        print(f"agentcad warning: mesh preview not built for {path.name} (linking instead): {e}", file=sys.stderr)
+        return None
 
-    page = Page(project.name)
+
+def generate_html(project: "DesignProject", embed_mb: Optional[float] = None, cdn: bool = False,
+                  embed_only_latest: bool = False) -> str:
+    """Generate complete HTML viewer for a design project.
+
+    Meshes of a variant are embedded inline while their total stays under
+    ``embed_mb`` (the output config's ``viewer_embed_mb`` by default); past
+    it, a decimated preview is embedded when PyVista is available and the
+    full file is linked, else the files are linked beside the page and a
+    badge says so. Either way the page loads.
+    """
+    base = project.project_dir
+    cap = int((embed_mb if embed_mb is not None else getattr(project.config, "viewer_embed_mb", 8.0)) * 1024 * 1024)
+
+    page = Page(project.name, cdn=cdn)
     for key, value in project.metadata.items():
         page.metadata(key, value)
 
-    for v in project.variants:
+    for index, v in enumerate(project.variants):
         vb = page.variant(v.name)
 
         for key, value in v.params.items():
@@ -49,9 +77,28 @@ def generate_html(project: "DesignProject") -> str:
         for view_name, img_path in sorted(v.renders.items()):
             vb.render(view_name, _relative(base, img_path))
 
-        if v.stl_path and v.stl_path.exists():
-            stl_data = v.stl_path.read_bytes()
-            vb.stl(_relative(base, v.stl_path), data=stl_data)
+        meshes = [m for m in v.meshes if m.path.exists()]
+        total = sum(m.path.stat().st_size for m in meshes)
+        if meshes and embed_only_latest and index > 0:
+            # an artifact serves no mesh files, so older versions carry none
+            vb.mesh_note("older version: mesh not included in the artifact (see the renders)")
+        elif meshes and total <= cap:
+            for m in meshes:
+                vb.mesh(m.name, _relative(base, m.path), data=m.path.read_bytes(), quantity=m.quantity)
+        elif meshes:
+            share = cap // max(len(meshes), 1)
+            embedded = 0
+            for m in meshes:
+                preview = _preview_mesh(m.path, share)
+                if preview is not None and preview.stat().st_size <= share:
+                    vb.mesh(m.name, _relative(base, m.path), data=preview.read_bytes(), quantity=m.quantity)
+                    embedded += 1
+                else:
+                    vb.mesh(m.name, _relative(base, m.path), data=None, quantity=m.quantity)
+            mb = total / (1024 * 1024)
+            vb.mesh_note(f"meshes total {mb:.1f} MB, over the {cap / (1024 * 1024):.0f} MB embed cap: "
+                         + (f"{embedded} shown as decimated previews, " if embedded else "")
+                         + "full files linked beside the page")
 
         code = v.source_code
         if not code and v.source_path and v.source_path.exists():
@@ -67,6 +114,59 @@ def generate_html(project: "DesignProject") -> str:
             vb.print_settings(asdict(manifest))
 
     return page.build()
+
+
+_ARTIFACT_STRIP = ('<!DOCTYPE html>', '<html lang="en">', '<head>', '</head>', '<body>', '</body>', '</html>',
+                   '<meta charset="UTF-8">', '<meta name="viewport" content="width=device-width, initial-scale=1.0">')
+_ARTIFACT_CODE_CSS = ('<style>pre code.hljs{display:block;overflow-x:auto;padding:1em;background:#0d1117;color:#c9d1d9}'
+                      '.hljs-keyword,.hljs-built_in{color:#ff7b72}.hljs-string{color:#a5d6ff}.hljs-comment{color:#8b949e}'
+                      '.hljs-number{color:#79c0ff}.hljs-title,.hljs-function{color:#d2a8ff}</style>')
+
+
+def write_artifact(project: "DesignProject", out_dir: Path, title: Optional[str] = None) -> Path:
+    """Write the viewer as a page fragment for publishing on an artifact host that supplies the document shell.
+
+    The artifact host supplies doctype, head and body, blocks external
+    stylesheets, serves supporting files only in web media types (images,
+    scripts, styles, JSON: an STL is refused), and downloads started by the
+    page are inert. So: the page becomes a fragment keeping its <title> and
+    <style>; the highlight stylesheet is replaced by a small inline palette;
+    the latest variant's meshes are embedded inline (base64) and older
+    variants carry none; renders are copied beside the fragment and
+    referenced relatively; download links become plain labels; and
+    ``files.json`` maps every published image to its source so the publisher
+    can pass the map straight through. The vendored scripts stay inline (an
+    inline script is allowed; only external hosts are restricted).
+    """
+    import shutil
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    base = project.project_dir
+    files: Dict[str, str] = {}
+
+    html = generate_html(project, embed_only_latest=True)
+    for tag in _ARTIFACT_STRIP:
+        html = html.replace(tag, "", 1)
+    if title:
+        html = re.sub(r"<title>[^<]*</title>", f"<title>{title}</title>", html, count=1)
+    html = re.sub(r'<link rel="stylesheet" href="https://cdnjs\.cloudflare\.com/ajax/libs/highlight\.js/[^"]+">',
+                  _ARTIFACT_CODE_CSS, html, count=1)
+    # copy the files the page references and rewrite download links to labels
+    for v in project.variants:
+        for view, img in v.renders.items():
+            rel = _relative(base, img)
+            if Path(img).exists():
+                dest = out_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(img, dest)
+                files[rel] = str(img)
+    html = re.sub(r'<a href="([^"]+)" download class="stl-download">([^<]*)</a>',
+                  r'<span class="stl-download" style="opacity:.6">\2: \1</span>', html)
+    page = out_dir / "index.html"
+    page.write_text(html)
+    (out_dir / "files.json").write_text(json.dumps(files, indent=2))
+    return page
 
 
 def version_pattern(extensions: Iterable[str]) -> "re.Pattern[str]":
@@ -120,6 +220,8 @@ def _load_session_notes(state_file: Path) -> Dict[int, List[str]]:
 def regenerate_from_project_dir(
     project_dir: Path,
     cfg: Optional["ProjectConfig"] = None,
+    artifact_dir: Optional[Path] = None,
+    title: Optional[str] = None,
 ) -> Path:
     """Scan a project directory and regenerate index.html from files on disk.
 
@@ -229,4 +331,19 @@ def regenerate_from_project_dir(
                     file=sys.stderr,
                 )
 
+    # An assembly that declares parts shows their latest meshes with toggles
+    if project.variants and cfg.parts:
+        parts = []
+        for folder, part_cfg in cfg.part_projects():
+            exports = sorted((folder / "exports").glob("*_v*.stl"),
+                             key=lambda p: int(re.search(r"_v(\d+)", p.stem).group(1)) if re.search(r"_v(\d+)", p.stem) else 0)
+            if exports:
+                parts.append((folder.name, exports[-1], part_cfg.quantity))
+        if parts:
+            project.variants[0].meshes = []
+            for name, path, quantity in parts:
+                project.variants[0].add_mesh(name, path, quantity=quantity)
+
+    if artifact_dir is not None:
+        return write_artifact(project, artifact_dir, title=title)
     return project.generate_viewer()

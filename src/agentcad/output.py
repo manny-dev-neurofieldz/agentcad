@@ -6,6 +6,7 @@ and applied by the agent, not enforced by code.
 """
 
 import shutil
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -13,8 +14,23 @@ from typing import Any, Dict, List, Optional
 from agentcad.config import OutputConfig
 
 
+@dataclass
+class MeshRef:
+    """One mesh of a variant: a single part, or one body of an assembly."""
+    name: str
+    path: Path
+    quantity: int = 1
+    color: Optional[str] = None
+
+
 class DesignVariant:
-    """A single parametric variant within a project."""
+    """A single parametric variant within a project.
+
+    A variant carries a list of meshes: one for a single part, one per part
+    for an assembly whose parent gathered its subprojects' exports. The
+    ``stl_path`` property keeps the single-mesh API working: reading it
+    gives the first mesh, assigning it replaces the list with one entry.
+    """
 
     def __init__(self, name: str, params: Optional[Dict[str, Any]] = None,
                  source_code: str = "", source_path: Optional[Path] = None):
@@ -23,7 +39,20 @@ class DesignVariant:
         self.source_code = source_code
         self.source_path = source_path
         self.renders: Dict[str, Path] = {}
-        self.stl_path: Optional[Path] = None
+        self.meshes: List[MeshRef] = []
+
+    @property
+    def stl_path(self) -> Optional[Path]:
+        return self.meshes[0].path if self.meshes else None
+
+    @stl_path.setter
+    def stl_path(self, value: Optional[Path]) -> None:
+        self.meshes = [MeshRef(self.name, Path(value))] if value else []
+
+    def add_mesh(self, name: str, path: Path, quantity: int = 1, color: Optional[str] = None) -> MeshRef:
+        ref = MeshRef(name, Path(path), quantity, color)
+        self.meshes.append(ref)
+        return ref
 
 
 class DesignProject:
