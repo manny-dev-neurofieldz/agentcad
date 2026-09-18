@@ -34,10 +34,15 @@ jobs:
       - name: Install agentcad with test dependencies and all three engines
         run: |
           python -m pip install --upgrade pip
-          # VoxelCAD is not on PyPI; the extra pins its public repository.
-          # Cython and numpy first so its kernels compile during the install.
-          python -m pip install cython numpy
-          python -m pip install -e ".[dev,build123d,voxelcad]"
+          python -m pip install cython numpy scipy
+          # VoxelCAD is not on PyPI. Its setup.py compiles the Cython kernels
+          # only on an explicit build_ext, so a plain install from git leaves
+          # the STL export without them: clone, install editable, build in place.
+          git clone --depth 1 https://github.com/cversek/voxelcad.git "$RUNNER_TEMP/voxelcad"
+          python -m pip install -e "$RUNNER_TEMP/voxelcad[viz]"
+          (cd "$RUNNER_TEMP/voxelcad" && python setup.py build_ext --inplace)
+          python -c "import voxelcad._kernels._fused_parallel"
+          python -m pip install -e ".[dev,build123d]"
 
       - name: Engine inventory
         run: agentcad info
