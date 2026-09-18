@@ -66,6 +66,17 @@ and which export formats it supports.
 - Smoothed STL export via SDF + Butterworth pipeline
 - Source contract: `def build(**params)` returning the model (overrides are
   coerced to the types of the defaults), or a module-level `model`
+- The grid is sized from the model: by default the longest side spans
+  `grid` voxels (256), so a 10 mm part and a 100 mm part build at the same
+  cell count; an explicit `voxel_size` overrides that, and a grid past
+  `warn_voxels` (64M) is reported before it is built
+- Every build runs in a subprocess with a configurable timeout, so an
+  oversize grid or an out-of-memory kill is an error result, not a stuck CLI
+- Measured facts (grid resolution, voxel size, bounding box, occupied cells,
+  volume, solid count by connectivity) travel back in `RenderResult.metadata`
+  / `ExportResult.metadata`
+- Install the backend with `pip install -e ".[voxelcad]"` (from the VoxelCAD
+  repository; it is not on PyPI)
 
 ### build123d
 - B-rep modelling (OCCT) with STEP, STL, 3MF and SVG export
@@ -94,7 +105,9 @@ fa = 1.0
 fs = 0.5
 
 [engine.voxelcad]
-voxel_size = 0.2
+grid = 256            # voxels along the longest side (default)
+# voxel_size = 0.05   # or an explicit cell size, which overrides grid
+timeout = 120
 ```
 
 ## Camera Presets
@@ -160,11 +173,14 @@ for formats outside `EXPORT_FORMATS`.
 
 ```bash
 pip install -e ".[dev]"
-pytest              # summary; add --tb=short for failures
+pytest                          # summary; add --tb=short for failures
+pytest --cov=agentcad           # with coverage (workers included; see pyproject)
 ```
 
 Engine tests skip when a backend is not installed, so the suite is green on a
 machine with only one engine and still exercises every engine that is present.
+CI installs all three engines, runs the suite with coverage and fails under
+the floor set in `.github/workflows/tests.yml`.
 
 ## License
 

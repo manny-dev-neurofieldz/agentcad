@@ -23,21 +23,34 @@ jobs:
       # OpenSCAD from the distribution archive: an older release without the
       # --backend flag, which the engine detects and drops. xvfb supplies the
       # GL context headless PNG rendering needs on a runner. build123d comes
-      # from PyPI with the extra below. VoxelCAD is not installed here, so its
-      # contract cases skip; everything else runs for real.
+      # from PyPI and VoxelCAD from its public repository through the extras
+      # below, so the contract cases run for all three engines.
       - name: Install OpenSCAD and a virtual framebuffer
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends openscad xvfb libgl1 libxrender1 libxcursor1 libxft2 libxinerama1
           openscad --version
 
-      - name: Install agentcad with test dependencies
+      - name: Install agentcad with test dependencies and all three engines
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,build123d]"
+          # VoxelCAD is not on PyPI; the extra pins its public repository.
+          # Cython and numpy first so its kernels compile during the install.
+          python -m pip install cython numpy
+          python -m pip install -e ".[dev,build123d,voxelcad]"
 
       - name: Engine inventory
         run: agentcad info
 
-      - name: Run the test suite
-        run: xvfb-run -a python -m pytest --tb=short -q -rs
+      - name: Run the test suite with coverage
+        run: |
+          xvfb-run -a python -m pytest --tb=short -q -rs \
+            --cov=agentcad --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=60
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
