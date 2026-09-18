@@ -645,6 +645,46 @@ def cmd_compare(args):
         sys.exit(1)
 
 
+def cmd_fit(args):
+    """Pose two parts and measure interference, clearance, windows and insertion."""
+    from agentcad import fit as fitmod
+
+    windows = {}
+    for item in args.window or []:
+        name, _, nums = item.partition("=")
+        vals = [float(v) for v in nums.split(",")]
+        if len(vals) != 6:
+            print(f"Error: window {item!r}: expected name=x0,y0,z0,x1,y1,z1", file=sys.stderr)
+            sys.exit(2)
+        windows[name] = vals
+    if args.mates_from:
+        for name, m in fitmod.load_mates(Path(args.mates_from)).items():
+            if isinstance(m, dict) and "window" in m and len(m["window"]) == 6:
+                windows.setdefault(name, [float(v) for v in m["window"]])
+    offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
+    res = fitmod.fit(Path(args.a), Path(args.b),
+                     a_defines=_parse_defines(args.a_define) if args.a_define else None,
+                     b_defines=_parse_defines(args.b_define) if args.b_define else None,
+                     offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
+                     sweep_axis=args.sweep, sweep_travel=args.travel,
+                     out_dir=Path(args.output_dir) if args.output_dir else None)
+    print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
+    for name, w in (res.get("windows") or {}).items():
+        if "min_mm" in w:
+            print(f"  window {name}: min {w['min_mm']:.4g} mm (p05 {w['p05_mm']:.4g})")
+        else:
+            print(f"  window {name}: {w.get('note')}")
+    for row in res.get("insertion") or []:
+        print(f"  insertion at {row['offset_mm']:.3g} mm out: interference {row['interference_mm3']:.4g} mm^3")
+    for name, path in (res.get("renders") or {}).items():
+        print(f"  render {name}: {path}")
+    if args.output_dir:
+        print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
+    if res["interference_mm3"] and res["interference_mm3"] > (args.allow or 0.0):
+        print("fit: INTERFERENCE (the bodies overlap)", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_gallery_build(args):
     """Build a static gallery of project viewers."""
     from agentcad.config import OutputConfig
@@ -787,6 +827,22 @@ def main():
     p_cmp.add_argument("--max-loops", type=int, default=None)
     p_cmp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
+    p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
+    p_fit.add_argument("b", help="Second part, posed by --offset/--spin")
+    p_fit.add_argument("--offset", default=None, metavar="X,Y,Z")
+    p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
+    p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"])
+    p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
+    p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
+    p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
+    p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
+    p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
+    p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
+    p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL")
+    p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL")
+    p_fit.set_defaults(func=cmd_fit)
 
     p_gallery = sub.add_parser("gallery", help="Build or check a static gallery of project viewers")
     sub_gallery = p_gallery.add_subparsers(dest="gallery_cmd", required=True)
