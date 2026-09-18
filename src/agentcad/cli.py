@@ -680,6 +680,18 @@ def cmd_fit(args):
         print(f"  render {name}: {path}")
     if args.output_dir:
         print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
+    if args.record:
+        from agentcad.manifest import PrintManifest
+        manifests = sorted(Path(args.record).glob("exports/*.print.json"))
+        if manifests:
+            m = PrintManifest.load(manifests[0])
+            m.fit = [f for f in m.fit if not (f.get("a") == res["a"] and f.get("b") == res["b"])]
+            m.fit.append({k: res[k] for k in ("a", "b", "pose", "interference_mm3", "clearance_mm") if k in res}
+                         | ({"windows": res["windows"]} if res.get("windows") else {}))
+            m.save(manifests[0])
+            print(f"recorded in {manifests[0]}")
+        else:
+            print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
     if res["interference_mm3"] and res["interference_mm3"] > (args.allow or 0.0):
         print("fit: INTERFERENCE (the bodies overlap)", file=sys.stderr)
         sys.exit(1)
@@ -840,6 +852,7 @@ def main():
     p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
+    p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
     p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL")
     p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL")
     p_fit.set_defaults(func=cmd_fit)

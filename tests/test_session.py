@@ -270,3 +270,19 @@ def test_files_of_an_unrecorded_session_move_aside_instead_of_being_overwritten(
     assert (aside[0] / "widget_v1.fake").read_text() == "volume = 99\n"
     assert (aside[0] / "v1" / "widget_v1_iso.png").read_bytes() == b"old"
     assert "moved to" in capsys.readouterr().err
+
+
+def test_manifest_lists_parts_with_quantities_and_keeps_fit_results(session):
+    from agentcad.manifest import PrintManifest
+    session.iterate("volume = 10\n")
+    session.part_meshes = [("lid", session.project.exports_dir / "lid_v1.stl", 1), ("peg", session.project.exports_dir / "peg_v1.stl", 3)]
+    session.finalize()
+    path = session.project.exports_dir / "widget.print.json"
+    m = PrintManifest.load(path)
+    assert [(p["name"], p["quantity"]) for p in m.parts] == [("lid", 1), ("peg", 3)] and m.part_count() == 4
+    m.fit = [{"a": "lid", "b": "peg", "interference_mm3": 0.0, "clearance_mm": 0.15, "windows": {}}]
+    m.save(path)
+    session.finalize()                                   # a re-finalize keeps the recorded fit
+    assert PrintManifest.load(path).fit[0]["clearance_mm"] == 0.15
+    single = PrintManifest(part_name="solo", project_name="solo", stl_filename="solo_v1.stl")
+    assert single.part_count() == 1
