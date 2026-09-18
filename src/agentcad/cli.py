@@ -637,6 +637,18 @@ def cmd_probe_inventory(args):
         print(f"inventory.json: {probe.write_json(inv, Path(args.output))}")
 
 
+def cmd_probe_fillet(args):
+    """Why a fillet fails: the selected chain on the live part at the step it is applied."""
+    from agentcad import probe
+
+    radii = [float(v) for v in args.radii.split(",")] if args.radii else (1.0, 0.6, 0.4, 0.25)
+    res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
+                             defines=_parse_defines(args.define) if args.define else None)
+    print("\n".join(probe.render_fillet_probe(res)))
+    if args.output:
+        print(f"fillet.json: {probe.write_json(res, Path(args.output))}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -867,6 +879,16 @@ def main():
         pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
         pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
         pp.set_defaults(func=func)
+
+    pf = sub_probe.add_parser("fillet", help="Why a fillet fails: the selected chain on the LIVE part at the call, steps under 0.2 mm, sizes each edge takes")
+    pf.add_argument("source", help="build123d program")
+    pf.add_argument("--at", default="fillet", help="fillet or chamfer (default fillet)")
+    pf.add_argument("--index", type=int, default=0, help="Which call of --at to stop at, counting from 0")
+    pf.add_argument("--radii", default=None, help="Comma-separated sizes to try (default 1.0,0.6,0.4,0.25)")
+    pf.add_argument("--short", type=float, default=0.2, help="Edges and steps shorter than this are flagged (mm)")
+    pf.add_argument("-o", "--output", default=None, help="Write the JSON record here")
+    pf.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    pf.set_defaults(func=cmd_probe_fillet)
 
     p_cmp = sub.add_parser("compare", help="COMPARE: loop counts per plane (a gate), sampled deviation, overlays")
     p_cmp.add_argument("original")

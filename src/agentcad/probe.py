@@ -350,3 +350,169 @@ def write_json(data: Dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=1, default=float))
     return path
+
+
+# --- a fillet on the live part ------------------------------------------------
+
+class _Captured(BaseException):
+    """Raised inside the source at the call under study; a BaseException so a source's own
+    ``except Exception`` around a fillet cannot swallow it."""
+
+    def __init__(self, op: str, objects, size, kwargs):
+        super().__init__(op)
+        self.op, self.objects, self.size, self.kwargs = op, list(objects), size, dict(kwargs)
+
+
+def capture_call(source: Path, at: str = "fillet", index: int = 0, defines: Optional[Dict[str, str]] = None) -> _Captured:
+    """Run ``source`` until its ``index``-th call of ``at`` (``fillet`` or ``chamfer``) and return that
+    call's edge selection and size, with the live part still attached to the edges.
+
+    The source is never modified: build123d's ``fillet``/``chamfer`` are replaced for the run so
+    the program's own ``from build123d import fillet`` binds the wrapper, and restored after.
+    Later cuts remove the edges a fillet selects, which is why the probe stops here instead of
+    inspecting the finished part.
+    """
+    import build123d as b3d_mod
+    from agentcad.engines.build123d_worker import _execute, _harvest
+
+    op = at.strip().rstrip("(")
+    if op not in ("fillet", "chamfer"):
+        raise ValueError(f"--at must be fillet or chamfer, not {at!r}")
+    originals = {name: getattr(b3d_mod, name) for name in ("fillet", "chamfer")}
+    seen = {"n": 0}
+
+    def wrap(name):
+        real = originals[name]
+
+        def wrapper(objects, *args, **kwargs):
+            if name == op:
+                k = seen["n"]
+                seen["n"] += 1
+                if k == index:
+                    size = args[0] if args else kwargs.get("radius", kwargs.get("length"))
+                    objs = list(objects) if not hasattr(objects, "geom_type") else [objects]
+                    raise _Captured(name, objs, size, kwargs)
+            return real(objects, *args, **kwargs)
+        return wrapper
+
+    for name in originals:
+        setattr(b3d_mod, name, wrap(name))
+    try:
+        namespace = _execute(str(Path(source).resolve()))
+        _harvest(_b3d(), namespace, dict(defines or {}), [])
+    except _Captured as cap:
+        return cap
+    finally:
+        for name, real in originals.items():
+            setattr(b3d_mod, name, real)
+    raise LookupError(f"{source}: no {op} call number {index} (saw {seen['n']})")
+
+
+def _live_part(edges):
+    """The solid the selected edges belong to (an edge from shape.edges() knows its parent; one
+    from a face's edges() knows the face, whose parent is the shape)."""
+    for e in edges:
+        p = getattr(e, "topo_parent", None)
+        for _ in range(3):
+            if p is None:
+                break
+            if p.solids():
+                return p
+            p = getattr(p, "topo_parent", None)
+    return None
+
+
+def fillet_probe(source: Path, at: str = "fillet", index: int = 0, radii: Sequence[float] = (1.0, 0.6, 0.4, 0.25),
+                 short_mm: float = 0.2, defines: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Why does this fillet fail: the selected chain on the live part, the sub-``short_mm`` edges
+    and steps touching it, the sizes the whole selection and each edge alone will take, and
+    whether the live part is watertight.
+    """
+    b3d = _b3d()
+    cap = capture_call(source, at, index, defines)
+    op = getattr(b3d, cap.op)
+    live = _live_part(cap.objects)
+    out: Dict[str, Any] = {"source": str(source), "op": cap.op, "index": index, "size_in_source": cap.size,
+                           "n_selected": len(cap.objects), "live_part": None, "chain": [], "steps": [],
+                           "whole": {}, "each": [], "watertight": None}
+    if live is None:
+        out["error"] = "the selected edges carry no parent shape; select from part.edges() or part.faces()[i].edges()"
+        return out
+    out["live_part"] = {"volume": float(live.volume), "solids": len(live.solids()), "faces": len(live.faces()),
+                        "edges": len(live.edges()), "is_valid": bool(live.is_valid)}
+
+    def vkey(v):
+        return (round(v.X, 4), round(v.Y, 4), round(v.Z, 4))
+
+    sel_keys = set()
+    for i, e in enumerate(cap.objects):
+        rec = _edge_record(b3d, e)
+        m = e.position_at(0.5)
+        rec.update({"i": i, "midpoint": [m.X, m.Y, m.Z], "short": float(e.length) < short_mm})
+        out["chain"].append(rec)
+        sel_keys.add((vkey(e.position_at(0.5)), round(float(e.length), 4)))
+    sel_verts = {vkey(v) for e in cap.objects for v in (e.position_at(0), e.position_at(1))}
+    for e in live.edges():
+        key = (vkey(e.position_at(0.5)), round(float(e.length), 4))
+        if key in sel_keys or float(e.length) >= short_mm:
+            continue
+        ends = {vkey(e.position_at(0)), vkey(e.position_at(1))}
+        if ends & sel_verts:
+            m = e.position_at(0.5)
+            out["steps"].append({"type": _edge_record(b3d, e)["type"], "length": float(e.length), "midpoint": [m.X, m.Y, m.Z],
+                                 "touches": sorted(i for i, s in enumerate(cap.objects)
+                                                   if ends & {vkey(s.position_at(0)), vkey(s.position_at(1))})})
+
+    def attempt(edges, size):
+        try:
+            r = op(edges, size)
+            return "ok" if r.is_valid else "built but not valid"
+        except Exception as e:  # noqa: BLE001 - the error's name is the finding
+            return f"{type(e).__name__}: {str(e).splitlines()[0][:120]}"
+
+    for r in radii:
+        out["whole"][str(r)] = attempt(cap.objects, r)
+    for i, e in enumerate(cap.objects):
+        row = {"i": i, "takes": None, "results": {}}
+        for r in sorted(radii, reverse=True):
+            res = attempt([e], r)
+            row["results"][str(r)] = res
+            if res == "ok" and row["takes"] is None:
+                row["takes"] = r
+        out["each"].append(row)
+
+    try:
+        import numpy as np
+        import pyvista as pv
+        verts, tris = live.tessellate(tolerance=0.05, angular_tolerance=0.2)
+        V = np.array([[v.X, v.Y, v.Z] for v in verts]); F = np.array(tris)
+        mesh = pv.PolyData(V, np.hstack([np.full((len(F), 1), 3), F]).ravel()).clean(tolerance=1e-6)   # faces tessellate apart; merge their shared vertices
+        boundary = mesh.extract_feature_edges(boundary_edges=True, feature_edges=False, manifold_edges=False, non_manifold_edges=False)
+        out["watertight"] = {"boundary_edges": int(boundary.n_cells), "ok": int(boundary.n_cells) == 0}
+    except ImportError as e:
+        out["watertight"] = {"error": f"pyvista unavailable: {e}"}
+    return out
+
+
+def render_fillet_probe(res: Dict[str, Any]) -> List[str]:
+    lines = [f"{res['op']} call {res['index']} in {res['source']}: {res['n_selected']} edge(s) selected, size {res['size_in_source']}"]
+    if res.get("error"):
+        return lines + [f"  {res['error']}"]
+    lp = res["live_part"]
+    lines.append(f"  live part: volume {lp['volume']:.4g}, {lp['solids']} solid(s), {lp['faces']} faces, {lp['edges']} edges, valid {lp['is_valid']}")
+    for e in res["chain"]:
+        m = e["midpoint"]
+        flag = "  SHORT" if e["short"] else ""
+        lines.append(f"  edge {e['i']}: {e['type']} {e['length']:.3f} mm at ({m[0]:.3f}, {m[1]:.3f}, {m[2]:.3f}){flag}")
+    for s in res["steps"]:
+        m = s["midpoint"]
+        lines.append(f"  STEP {s['length']:.3f} mm ({s['type']}) at ({m[0]:.3f}, {m[1]:.3f}, {m[2]:.3f}) touching edge(s) {s['touches']}")
+    for r, v in res["whole"].items():
+        lines.append(f"  whole selection at {r}: {v}")
+    for row in res["each"]:
+        takes = f"takes {row['takes']}" if row["takes"] is not None else "takes none of " + ", ".join(row["results"])
+        lines.append(f"  edge {row['i']} alone: {takes}")
+    w = res.get("watertight")
+    if w:
+        lines.append(f"  watertight: {'yes' if w.get('ok') else 'NO'}" + (f" ({w['boundary_edges']} boundary edges)" if "boundary_edges" in w else f" ({w.get('error')})"))
+    return lines

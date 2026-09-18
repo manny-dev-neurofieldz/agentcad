@@ -95,3 +95,59 @@ def test_loops_json_round_trips(plate, tmp_path):
     back = json.loads(path.read_text())
     assert back["planes"][0]["loops"][0]["edges"][0]["type"] == "line"
     assert len(back["planes"][0]["loops"]) == 3
+
+
+# --- probe fillet ---------------------------------------------------------------
+
+FILLET_BOX = "from build123d import *\n\npart = Box(20, 20, 20)\nmodel = fillet(part.edges().filter_by(Axis.Z), 1.0)\n"
+FILLET_STEP = ("from build123d import *\n\n"
+               "part = Box(20, 20, 10) + Pos(0, 5, 5.05) * Box(20, 10, 0.1)   # a 0.1 mm step on half the top\n"
+               "model = fillet(part.edges().filter_by(Axis.X).filter_by(lambda e: e.center().Z > 4.9), 1.0)\n")
+TWO_CALLS = ("from build123d import *\n\n"
+             "part = Box(20, 20, 20)\n"
+             "part = fillet(part.edges().filter_by(Axis.Z), 1.0)\n"
+             "model = chamfer(part.edges().filter_by(Axis.X), 0.5)\n"
+             "model = fillet(model.edges().filter_by(Axis.Y), 0.3)\n")
+
+
+def test_probe_fillet_on_a_box_takes_every_radius(tmp_path):
+    from agentcad import probe
+    p = tmp_path / "box.py"
+    p.write_text(FILLET_BOX)
+    res = probe.fillet_probe(p, radii=(2.0, 1.0, 0.5))
+    assert res["n_selected"] == 4 and res["size_in_source"] == 1.0
+    assert res["live_part"]["volume"] == pytest.approx(8000.0)   # the part BEFORE the fillet
+    assert all(v == "ok" for v in res["whole"].values())
+    assert all(row["takes"] == 2.0 for row in res["each"])
+    assert res["steps"] == [] and not any(e["short"] for e in res["chain"])
+    assert res["watertight"] and res["watertight"]["ok"]
+    lines = probe.render_fillet_probe(res)
+    assert any("whole selection at 2.0: ok" in line for line in lines)
+
+
+def test_probe_fillet_across_a_step_refuses_and_names_the_step(tmp_path):
+    from agentcad import probe
+    p = tmp_path / "step.py"
+    p.write_text(FILLET_STEP)
+    res = probe.fillet_probe(p, radii=(1.0, 0.25))
+    assert res["whole"]["1.0"] != "ok"                            # the chain will not take the radius
+    assert res["steps"] and all(s["length"] == pytest.approx(0.1, abs=1e-6) for s in res["steps"])
+    assert any(s["touches"] for s in res["steps"])                  # and the step names the edges it touches
+    assert any(row["takes"] is not None for row in res["each"])     # the edges away from the step do take it
+    assert any("STEP 0.100 mm" in line for line in probe.render_fillet_probe(res))
+
+
+def test_probe_fillet_captures_the_call_by_index_and_leaves_build123d_intact(tmp_path):
+    import build123d
+    from agentcad import probe
+    real = build123d.fillet
+    p = tmp_path / "two.py"
+    p.write_text(TWO_CALLS)
+    first = probe.capture_call(p, "fillet", 0)
+    second = probe.capture_call(p, "fillet", 1)
+    cham = probe.capture_call(p, "chamfer", 0)
+    assert (first.size, second.size, cham.size) == (1.0, 0.3, 0.5)
+    assert len(first.objects) == 4 and len(second.objects) > 4     # the second call sees a chamfered part
+    with pytest.raises(LookupError):
+        probe.capture_call(p, "fillet", 2)
+    assert build123d.fillet is real                                 # restored after every run
