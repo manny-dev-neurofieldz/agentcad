@@ -108,3 +108,16 @@ def test_session_lifecycle_through_the_cli(monkeypatch, capsys, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
     _run(monkeypatch, ["viewer", str(project), "--tag", "draft1"])
     assert (project / "tags" / "draft1" / "index.html").exists()
+
+
+def test_export_variants_writes_one_file_per_value(monkeypatch, capsys, tmp_path):
+    engine = get_engine("openscad")
+    if not engine.available():
+        pytest.skip("OpenSCAD not available")
+    src = tmp_path / "cube.scad"
+    src.write_text("size = 10;\ncube(size);\n")
+    _run(monkeypatch, ["export", str(src), "-e", "openscad", "-o", str(tmp_path / "cube.stl"), "--variants", "size=8,10.5"])
+    out = capsys.readouterr().out
+    assert (tmp_path / "cube_size-8.stl").stat().st_size > 0
+    assert (tmp_path / "cube_size-10p5.stl").stat().st_size > 0
+    assert "size=8" in out and "size=10.5" in out

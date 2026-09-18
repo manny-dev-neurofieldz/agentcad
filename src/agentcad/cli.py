@@ -93,8 +93,33 @@ def cmd_export(args):
     fmt = args.format.lower()
     output = Path(args.output) if args.output else source.with_suffix(f".{fmt}")
 
-    defines = _parse_defines(args.define) if args.define else None
-    result = engine.export(source, output, fmt=fmt, defines=defines)
+    defines = _parse_defines(args.define) if args.define else {}
+    if getattr(args, "variants", None):
+        # One knob, several values, one file each with the value in its name:
+        # a print plate that measures the material's clearance tax in one go.
+        knob, _, values = args.variants.partition("=")
+        values = [v for v in values.split(",") if v]
+        if not knob or not values:
+            print("Error: --variants expects KNOB=v1,v2,...", file=sys.stderr)
+            sys.exit(2)
+        failed = False
+        for value in values:
+            per = dict(defines); per[knob] = value
+            out = output.with_name(f"{output.stem}_{knob}-{value.replace('.', 'p')}{output.suffix}")
+            result = engine.export(source, out, fmt=fmt, defines=per)
+            for warn in result.warnings:
+                print(f"Warning: {warn}", file=sys.stderr)
+            if result.success:
+                vol = result.metadata.get("volume")
+                print(f"Exported: {result.output_path} ({knob}={value}" + (f", volume {vol:.4g}" if vol else "") + ")")
+            else:
+                failed = True
+                for err in result.errors:
+                    print(f"Error ({knob}={value}): {err}", file=sys.stderr)
+        if failed:
+            sys.exit(1)
+        return
+    result = engine.export(source, output, fmt=fmt, defines=defines or None)
     for warn in result.warnings:
         print(f"Warning: {warn}", file=sys.stderr)
     if result.success:
@@ -775,6 +800,8 @@ def main():
                           help="Export format (default: stl; see `agentcad info` for each engine's list)")
     p_export.add_argument("-e", "--engine", default=None,
                           help="CAD engine (default: the project's agentcad.toml, else openscad)")
+    p_export.add_argument("--variants", metavar="KNOB=v1,v2,...", default=None,
+                          help="Export one file per value of KNOB, the value in each filename (a clearance plate)")
     p_export.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
                           help="Override a model parameter (repeatable)")
     p_export.set_defaults(func=cmd_export)
