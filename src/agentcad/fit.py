@@ -98,12 +98,29 @@ def insertion_sweep(a, b, axis: str = "z", travel: float = 10.0, steps: int = 10
     return rows
 
 
+def _assembly_frame(source: Path, defines):
+    """A build123d program whose build() takes print_orient gets it False unless the caller set it:
+    parts are compared in the assembly frame, not oriented for a print bed."""
+    import inspect
+    defines = dict(defines or {})
+    if Path(source).suffix.lower() == ".py" and "print_orient" not in defines:
+        try:
+            from agentcad.engines.build123d_worker import _execute
+            build = _execute(str(Path(source).resolve())).get("build")
+            if callable(build) and "print_orient" in inspect.signature(build).parameters:
+                defines["print_orient"] = "false"
+        except Exception as e:  # a source that will not import fails later, with its own message
+            print(f"agentcad fit: could not inspect {source} for print_orient ({e})", file=sys.stderr)
+    return defines
+
+
 def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
         offset=(0, 0, 0), spin_deg=0.0, spin_axis="z", windows: Optional[Dict[str, Sequence[float]]] = None,
         sweep_axis: Optional[str] = None, sweep_travel: float = 10.0,
         out_dir: Optional[Path] = None) -> Dict[str, Any]:
     from agentcad.probe import load_shape
 
+    a_defines, b_defines = _assembly_frame(a_source, a_defines), _assembly_frame(b_source, b_defines)
     a = load_shape(Path(a_source), a_defines)
     b = pose(load_shape(Path(b_source), b_defines), offset, spin_deg, spin_axis)
     result: Dict[str, Any] = {

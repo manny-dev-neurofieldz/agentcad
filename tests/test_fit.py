@@ -45,3 +45,15 @@ def test_insertion_sweep_goes_from_clear_to_full_overlap(box):
     assert rows[0]["offset_mm"] == 10.0 and rows[0]["interference_mm3"] == pytest.approx(0.0, abs=1e-6)
     assert rows[-1]["offset_mm"] == 0.0 and rows[-1]["interference_mm3"] == pytest.approx(1000.0, rel=1e-6)
     assert all(rows[i]["interference_mm3"] <= rows[i + 1]["interference_mm3"] + 1e-9 for i in range(len(rows) - 1))
+
+
+def test_build123d_sources_are_fitted_in_the_assembly_frame_by_default(tmp_path):
+    """A build() that takes print_orient gets False unless the caller says otherwise."""
+    from agentcad import fit
+    src = tmp_path / "oriented.py"
+    src.write_text("from build123d import *\n\ndef build(size=10.0, print_orient=True):\n"
+                   "    p = Box(size, size, size)\n    return Pos(0, 0, 100) * p if print_orient else p\n")
+    res = fit.fit(src, src, offset=(10, 0, 0))
+    assert res["clearance_mm"] == pytest.approx(0.0, abs=1e-6)         # both in the assembly frame
+    lifted = fit.fit(src, src, offset=(10, 0, 0), b_defines={"print_orient": "true"})
+    assert lifted["clearance_mm"] > 50                                 # the caller's choice is kept
