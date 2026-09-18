@@ -9,3 +9,8 @@ part and the peg's quantity (3).
 
 What it exercises: one source for several parts, a shared mate parameter
 with a clearance, a `Compound` assembly, and the parts workflow.
+
+The project declares its mate (`[mates.middle_peg]`, the middle peg in the
+middle hole with a 0.05 mm nominal gap); `agentcad fit` reads it with
+`--mates-from examples/peg_plate` and records the result in the print
+manifest with `--record`.

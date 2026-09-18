@@ -10,3 +10,10 @@ base_dir = ".."
 sub_dir = "."
 image_size = 512
 default_views = ["iso", "front", "top", "right"]
+
+# Mates: the middle peg in the middle hole. hole_d 5.0 minus clearance 0.1 = peg 4.9,
+# so the nominal gap is 0.05 per side; the window boxes the hole through the plate.
+[mates.middle_peg]
+window = [-3.0, -3.0, -3.5, 3.0, 3.0, 3.5]
+nominal_mm = 0.05
+counterpart = "peg"
