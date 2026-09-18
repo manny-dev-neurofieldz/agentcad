@@ -109,6 +109,20 @@ clean checkout, attaches the built site to the run, and on `main` deploys
 it as this repository's GitHub Page. An example that stops building fails
 the check: the gallery is a test of the tool on every engine.
 
+## Probe and compare
+
+```bash
+agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
+agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
+agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
+```
+
+`loops.json` (loops of typed edges per plane) and `points.json` (sampled
+surface points) are the two exchange formats; every probe writes them and
+`compare` reads them. A cap an instrument applies is printed with its
+value. A cylindrical face reports its axis, never its centroid. Meshes are
+compared in the sampled compartment only, and the output says so.
+
 ## Configuration
 
 Each project folder carries an `agentcad.toml`. Engine tuning lives in a
