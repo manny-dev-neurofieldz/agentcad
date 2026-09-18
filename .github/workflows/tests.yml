@@ -34,7 +34,7 @@ jobs:
       - name: Install agentcad with test dependencies and all three engines
         run: |
           python -m pip install --upgrade pip
-          python -m pip install cython numpy scipy
+          python -m pip install setuptools wheel cython numpy scipy
           # VoxelCAD is not on PyPI. Its setup.py compiles the Cython kernels
           # only on an explicit build_ext, so a plain install from git leaves
           # the STL export without them: clone, install editable, build in place.
