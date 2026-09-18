@@ -125,6 +125,7 @@ def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
     b = pose(load_shape(Path(b_source), b_defines), offset, spin_deg, spin_axis)
     result: Dict[str, Any] = {
         "a": str(a_source), "b": str(b_source),
+        "a_defines": dict(a_defines or {}), "b_defines": dict(b_defines or {}),
         "pose": {"offset": list(offset), "spin_deg": spin_deg, "spin_axis": spin_axis},
         "interference_mm3": interference(a, b),
         "clearance_mm": clearance(a, b),
@@ -177,7 +178,8 @@ def _render_pair(a, b, out_dir: Path) -> Dict[str, str]:
 
 
 def load_mates(project_dir: Path) -> Dict[str, Any]:
-    """The [mates] table of a project's agentcad.toml: name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm}."""
+    """The [mates] table of a project's agentcad.toml, job.toml or part.toml (or a file path):
+    name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, counterpart}."""
     try:
         import tomllib
     except ImportError:
@@ -185,8 +187,11 @@ def load_mates(project_dir: Path) -> Dict[str, Any]:
             import tomli as tomllib  # type: ignore
         except ImportError:
             return {}
-    path = Path(project_dir) / "agentcad.toml"
-    if not path.exists():
+    given = Path(project_dir)
+    candidates = [given] if given.is_file() else [given / n for n in ("agentcad.toml", "job.toml", "part.toml")]
+    path = next((c for c in candidates if c.exists()), None)
+    if path is None:
+        print(f"agentcad fit: no agentcad.toml, job.toml or part.toml under {given}; no mates read", file=sys.stderr)
         return {}
     with open(path, "rb") as f:
         data = tomllib.load(f)

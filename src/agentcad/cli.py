@@ -710,8 +710,10 @@ def cmd_fit(args):
         manifests = sorted(Path(args.record).glob("exports/*.print.json"))
         if manifests:
             m = PrintManifest.load(manifests[0])
-            m.fit = [f for f in m.fit if not (f.get("a") == res["a"] and f.get("b") == res["b"])]
-            m.fit.append({k: res[k] for k in ("a", "b", "pose", "interference_mm3", "clearance_mm") if k in res}
+            key = (res["a"], res["b"], json.dumps(res["a_defines"], sort_keys=True), json.dumps(res["b_defines"], sort_keys=True))
+            m.fit = [f for f in m.fit if (f.get("a"), f.get("b"), json.dumps(f.get("a_defines") or {}, sort_keys=True),
+                                          json.dumps(f.get("b_defines") or {}, sort_keys=True)) != key]
+            m.fit.append({k: res[k] for k in ("a", "b", "a_defines", "b_defines", "pose", "interference_mm3", "clearance_mm") if k in res}
                          | ({"windows": res["windows"]} if res.get("windows") else {}))
             m.save(manifests[0])
             print(f"recorded in {manifests[0]}")
