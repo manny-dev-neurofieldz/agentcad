@@ -20,3 +20,7 @@ examples/*/parts/*/index.html
 site/
 examples/*/source/*_v[0-9]*.*
 examples/*/parts/*/source/*_v[0-9]*.*
+
+# coverage data
+.coverage
+.coverage.*
