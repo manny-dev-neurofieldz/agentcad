@@ -57,3 +57,36 @@ def test_build123d_sources_are_fitted_in_the_assembly_frame_by_default(tmp_path)
     assert res["clearance_mm"] == pytest.approx(0.0, abs=1e-6)         # both in the assembly frame
     lifted = fit.fit(src, src, offset=(10, 0, 0), b_defines={"print_orient": "true"})
     assert lifted["clearance_mm"] > 50                                 # the caller's choice is kept
+
+
+PLATE = "from build123d import *\n\ndef build():\n    return Box(100.0, 100.0, 2.0)\n"
+
+
+def test_a_window_in_the_middle_of_a_flat_face_still_sees_surface(tmp_path):
+    """Tessellation puts a plane's vertices at its corners; a window in the middle of two
+    facing plates must still read the gap (the FS-4DA ears window read empty on one side)."""
+    from agentcad import fit
+    p = tmp_path / "plate.py"
+    p.write_text(PLATE)
+    res = fit.fit(p, p, offset=(0, 0, 3.0), windows={"mid": [-5, -5, -2, 5, 5, 5]})
+    assert res["windows"]["mid"]["min_mm"] == pytest.approx(1.0, abs=0.02)
+    assert res["windows"]["mid"]["n_a"] > 4 and res["windows"]["mid"]["n_b"] > 4
+
+
+def test_mates_are_checked_only_for_their_counterpart(tmp_path, monkeypatch, capsys):
+    """A [mates] table lists every pair of a project; fit on one pair reads only that pair's windows."""
+    from agentcad import cli
+    p = tmp_path / "plate.py"
+    p.write_text("from build123d import *\n\ndef build(part='base'):\n    return Box(100.0, 100.0, 2.0)\n")
+    (tmp_path / "agentcad.toml").write_text(
+        '[mates.lid_on_base]\nwindow = [-5, -5, -2, 5, 5, 5]\nparts = ["base", "lid"]\n'
+        '[mates.foot_on_base]\nwindow = [-5, -5, -2, 5, 5, 5]\ncounterpart = "foot"\n'
+        '[mates.lid_on_foot]\nwindow = [-5, -5, -2, 5, 5, 5]\nparts = ["foot", "lid"]\n')
+    monkeypatch.setattr("sys.argv", ["agentcad", "fit", str(p), str(p), "--offset", "0,0,3",
+                                     "--a-define", "part=base", "--b-define", "part=lid", "--mates-from", str(tmp_path)])
+    try:
+        cli.main()
+    except SystemExit as e:
+        assert e.code in (0, None)
+    out = capsys.readouterr().out
+    assert "lid_on_base" in out and "foot_on_base" not in out and "lid_on_foot" not in out

@@ -56,10 +56,37 @@ def clearance(a, b) -> float:
         return float("nan")
 
 
-def _points(shape, tol: float):
+def _points(shape, tol: float, step: Optional[float] = None):
+    """Points ON the surface, not just its tessellation vertices.
+
+    A planar face tessellates to a few large triangles whose vertices sit at its corners, so a
+    window in the middle of a flat lip would see no points at all and a nearest-vertex distance
+    overstates the true gap. Every triangle is covered by a barycentric lattice whose spacing is
+    ``step`` (default: the tessellation tolerance times 20), so flat faces are sampled as densely
+    as curved ones.
+    """
     import numpy as np
-    verts, _ = shape.tessellate(tolerance=tol, angular_tolerance=0.1)
-    return np.array([[v.X, v.Y, v.Z] for v in verts])
+    verts, tris = shape.tessellate(tolerance=tol, angular_tolerance=0.1)
+    V = np.array([[v.X, v.Y, v.Z] for v in verts], dtype=float)
+    if len(tris) == 0:
+        return V
+    step = step or tol * 20.0
+    T = np.array(tris, dtype=int)
+    A, B, C = V[T[:, 0]], V[T[:, 1]], V[T[:, 2]]
+    longest = np.maximum.reduce([np.linalg.norm(B - A, axis=1), np.linalg.norm(C - B, axis=1), np.linalg.norm(A - C, axis=1)])
+    out = [V]
+    n_per = np.clip(np.ceil(longest / step).astype(int), 1, 64)
+    for n in np.unique(n_per):
+        if n < 2:
+            continue
+        sel = n_per == n
+        i, j = np.meshgrid(np.arange(n + 1), np.arange(n + 1), indexing="ij")
+        keep = (i + j) <= n
+        u, v = i[keep] / n, j[keep] / n           # barycentric lattice on each selected triangle
+        w = 1.0 - u - v
+        pts = (w[None, :, None] * A[sel][:, None, :] + u[None, :, None] * B[sel][:, None, :] + v[None, :, None] * C[sel][:, None, :])
+        out.append(pts.reshape(-1, 3))
+    return np.concatenate(out)
 
 
 def window_clearances(a, b, windows: Dict[str, Sequence[float]], tol: Optional[float] = None) -> Dict[str, Any]:
@@ -70,7 +97,7 @@ def window_clearances(a, b, windows: Dict[str, Sequence[float]], tol: Optional[f
     bb = a.bounding_box()
     diag = math.sqrt(bb.size.X ** 2 + bb.size.Y ** 2 + bb.size.Z ** 2)
     tol = tol or diag / 2000.0
-    A, B = _points(a, tol), _points(b, tol)
+    A, B = _points(a, tol), _points(b, tol)   # surface lattices, both bodies
     out: Dict[str, Any] = {}
     for name, box in windows.items():
         lo, hi = np.array(box[:3], dtype=float), np.array(box[3:], dtype=float)
@@ -179,7 +206,10 @@ def _render_pair(a, b, out_dir: Path) -> Dict[str, str]:
 
 def load_mates(project_dir: Path) -> Dict[str, Any]:
     """The [mates] table of a project's agentcad.toml, job.toml or part.toml (or a file path):
-    name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, counterpart}."""
+    name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, parts: [a, b] or counterpart}.
+
+    ``parts`` names both bodies of the mate (a job toml lists every pair of an assembly);
+    ``counterpart`` alone is enough in a part.toml, where the owner is the part itself."""
     try:
         import tomllib
     except ImportError:

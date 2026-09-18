@@ -682,14 +682,23 @@ def cmd_fit(args):
             print(f"Error: window {item!r}: expected name=x0,y0,z0,x1,y1,z1", file=sys.stderr)
             sys.exit(2)
         windows[name] = vals
+    a_defs = _parse_defines(args.a_define) if args.a_define else {}
+    b_defs = _parse_defines(args.b_define) if args.b_define else {}
     if args.mates_from:
+        sides = {str(a_defs.get("part", "")), str(b_defs.get("part", ""))} - {""}
         for name, m in fitmod.load_mates(Path(args.mates_from)).items():
-            if isinstance(m, dict) and "window" in m and len(m["window"]) == 6:
-                windows.setdefault(name, [float(v) for v in m["window"]])
+            if not (isinstance(m, dict) and "window" in m and len(m["window"]) == 6):
+                continue
+            # a mate that names its parts (or its counterpart) is checked only on that pair;
+            # a window for another pair would just read empty and say nothing
+            pair = {str(x) for x in (m.get("parts") or [])}
+            cp = str(m.get("counterpart", "") or "")
+            if sides and ((pair and pair != sides) or (not pair and cp and cp not in sides)):
+                continue
+            windows.setdefault(name, [float(v) for v in m["window"]])
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
     res = fitmod.fit(Path(args.a), Path(args.b),
-                     a_defines=_parse_defines(args.a_define) if args.a_define else None,
-                     b_defines=_parse_defines(args.b_define) if args.b_define else None,
+                     a_defines=a_defs or None, b_defines=b_defs or None,
                      offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
                      sweep_axis=args.sweep, sweep_travel=args.travel,
                      out_dir=Path(args.output_dir) if args.output_dir else None)
