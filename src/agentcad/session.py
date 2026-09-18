@@ -23,6 +23,7 @@ Usage:
 
 import hashlib
 import json
+import shutil
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -161,14 +162,19 @@ class DesignSession:
     def current(self) -> Optional[Iteration]:
         return self.iterations[-1] if self.iterations else None
 
-    def iterate(self, source_code: str) -> Iteration:
+    def iterate(self, source_code: str, defines: Optional[Dict[str, str]] = None) -> Iteration:
         """Submit new source code, render it, and record the iteration.
 
+        ``defines`` are per-iteration overrides layered on the session's own;
+        they are recorded on the iteration and do not change the session's.
         Returns the Iteration with render results and image paths.
-        Raises RuntimeError if max_iterations exceeded.
+        Raises RuntimeError if the session is finalized (``reopen()`` first)
+        or max_iterations is exceeded.
         """
         if self._finalized:
-            raise RuntimeError("Session already finalized")
+            raise RuntimeError("Session already finalized; `agentcad session reopen` to continue it")
+        effective = dict(self.defines)
+        effective.update(defines or {})
 
         n = self.iteration_count + 1
         if n > self.max_iterations:
@@ -177,18 +183,26 @@ class DesignSession:
                 f"Call session.finalize() or increase max_iterations."
             )
 
-        # Save source to work dir
+        # Save source to work dir. Files already carrying this number belong
+        # to a session the record does not know about (a restart before
+        # archiving existed); they move aside rather than being overwritten,
+        # so no export can later be mistaken for this iteration's.
         src_path = self._work_dir / f"{self.name}_v{n}{self.engine.file_extension}"
-        src_path.write_text(source_code)
-
-        # Render
         render_dir = self._work_dir / f"v{n}"
+        stale = [p for p in self._work_dir.glob(f"{self.name}_v{n}.*")] + ([render_dir] if render_dir.exists() else [])
+        if stale:
+            aside = self._work_dir / f"stale_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            aside.mkdir(exist_ok=True)
+            for item in stale:
+                shutil.move(str(item), str(aside / item.name))
+            print(f"agentcad warning: v{n} files from an unrecorded session moved to {aside}", file=sys.stderr)
+        src_path.write_text(source_code)
         render_dir.mkdir(exist_ok=True)
         render_result = self.engine.render(
             src_path, render_dir,
             views=self.views,
             image_size=self.config.output.image_size,
-            defines=self.defines or None,
+            defines=effective or None,
         )
 
         metadata = dict(render_result.metadata)
@@ -197,7 +211,7 @@ class DesignSession:
             # through its CLI) still measures through the mesh it exports.
             measured = self.engine.export(
                 src_path, render_dir / f"{self.name}_v{n}_measure.stl", fmt="stl",
-                defines=self.defines or None,
+                defines=effective or None,
             )
             if measured.success:
                 for key, value in measured.metadata.items():
@@ -221,12 +235,133 @@ class DesignSession:
             source_path=src_path,
             render_result=render_result,
             metadata=metadata,
-            defines=dict(self.defines),
+            defines=effective,
             source_hash=digest,
             report=report,
         )
         self.iterations.append(iteration)
         return iteration
+
+    def reopen(self) -> None:
+        """Continue a finalized session: numbering carries on, nothing is reset."""
+        self._finalized = False
+        self.project.metadata["reopened"] = datetime.now().isoformat()
+
+    # --- tags ---------------------------------------------------------------
+
+    @property
+    def tags_dir(self) -> Path:
+        return self.project.project_dir / "tags"
+
+    @property
+    def tags(self) -> Dict[str, Dict[str, Any]]:
+        """Frozen iterations under ``tags/``: name -> TAG.json contents.
+
+        Read from the folders every time rather than cached in the record,
+        so a record written before a tag (or archived after one) never
+        disagrees with what is on disk.
+        """
+        found: Dict[str, Dict[str, Any]] = {}
+        if not self.tags_dir.exists():
+            return found
+        for tag_file in sorted(self.tags_dir.glob("*/TAG.json")):
+            try:
+                found[tag_file.parent.name] = json.loads(tag_file.read_text())
+            except (OSError, json.JSONDecodeError) as e:
+                print(f"agentcad warning: tag record unreadable, skipped: {tag_file}: {e}", file=sys.stderr)
+        return found
+
+    def tag(self, name: str, note: Optional[str] = None) -> Path:
+        """Freeze the latest iteration under ``tags/<name>/`` for a review round.
+
+        Copies its source, renders, metadata and any export into a folder laid
+        out like a project (source/, renders/, exports/) so the viewer can be
+        regenerated over it, and writes TAG.json. Refuses to overwrite an
+        existing tag: a reviewer's reference must not move under them.
+        """
+        if not self.iterations:
+            raise RuntimeError("No iteration to tag - call iterate() first")
+        if not name or "/" in name or name.startswith("."):
+            raise ValueError(f"tag name {name!r} must be a plain folder name")
+        it = self.iterations[-1]
+        dest = self.tags_dir / name
+        if dest.exists():
+            raise FileExistsError(f"tag {name!r} already exists at {dest}; tags are frozen")
+        (dest / "source").mkdir(parents=True)
+        (dest / "renders").mkdir()
+        (dest / "exports").mkdir()
+        stem = f"{self.name}_v{it.number}"
+        (dest / "source" / f"{stem}{self.engine.file_extension}").write_text(it.source_code)
+        for view, img in it.image_paths.items():
+            if Path(img).exists():
+                shutil.copy2(img, dest / "renders" / f"{stem}_{view}.png")
+        exported = []
+        for candidate in list(self.project.exports_dir.glob(f"{stem}.*")) + list(self._work_dir.glob(f"{stem}.*")):
+            if candidate.suffix.lower() in (".stl", ".step", ".3mf", ".svg", ".off", ".amf"):
+                target = dest / "exports" / candidate.name
+                if not target.exists():
+                    shutil.copy2(candidate, target)
+                    exported.append(candidate.name)
+        if not exported and "stl" in self.engine.supported_export_formats and it.source_path:
+            result = self.engine.export(it.source_path, dest / "exports" / f"{stem}.stl", fmt="stl",
+                                        defines=it.defines or None)
+            if result.success:
+                exported.append(f"{stem}.stl")
+            else:
+                print(f"agentcad warning: tag {name!r} has no mesh: {'; '.join(result.errors)}", file=sys.stderr)
+        record = {
+            "tag": name,
+            "iteration": it.number,
+            "timestamp": datetime.now().isoformat(),
+            "source_hash": it.source_hash,
+            "defines": dict(it.defines),
+            "metadata": dict(it.metadata),
+            "exports": exported,
+            "note": note or "",
+        }
+        (dest / "TAG.json").write_text(json.dumps(record, indent=2, default=str))
+        (dest / "agentcad.toml").write_text(
+            f'[project]\nname = "{self.name}"\nengine = "{self.config.engine}"\n'
+            f'description = "tag {name} of {self.name}: iteration {it.number}"\n'
+        )
+        return dest
+
+    # --- archive --------------------------------------------------------------
+
+    @classmethod
+    def archive_previous(cls, project_name: str, config: Optional[ProjectConfig] = None,
+                         reason: str = "") -> Optional[Path]:
+        """Move an existing session record and its working files out of the way.
+
+        ``session start -f`` used to overwrite session.json and restart
+        numbering at v1, clobbering the earlier v1 files. Now the record and
+        every ``_work/v*`` folder and ``_work/<name>_v*`` file move to
+        ``_work/archive_<timestamp>/`` with a NOTE naming the reason. Returns
+        the archive folder, or None when there was nothing to archive.
+        """
+        config = config or ProjectConfig()
+        work = config.output.designs_dir / project_name / "_work"
+        state = work / SESSION_STATE_FILE
+        if not state.exists():
+            return None
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive = work / f"archive_{stamp}"
+        n = 1
+        while archive.exists():
+            n += 1
+            archive = work / f"archive_{stamp}_{n}"
+        archive.mkdir(parents=True)
+        shutil.move(str(state), str(archive / SESSION_STATE_FILE))
+        for item in sorted(work.iterdir()):
+            if item.name.startswith("archive_") or item == archive:
+                continue
+            if (item.is_dir() and item.name.startswith("v")) or item.name.startswith(f"{project_name}_v"):
+                shutil.move(str(item), str(archive / item.name))
+        (archive / "NOTE.txt").write_text(
+            f"Archived {datetime.now().isoformat()} before a new session start.\n"
+            f"Reason: {reason or 'session start --force'}\n"
+        )
+        return archive
 
     def note(self, text: str) -> None:
         """Add an analysis note to the current iteration."""
@@ -234,15 +369,19 @@ class DesignSession:
             raise RuntimeError("No iteration to annotate - call iterate() first")
         self.iterations[-1].notes.append(text)
 
-    def finalize(self) -> Path:
+    def finalize(self, export_all: bool = False) -> Path:
         """Export all iterations as variants, generate HTML viewer with version history.
 
-        Returns path to the generated index.html.
+        Idempotent: a second call rebuilds the variant list from the
+        iterations rather than duplicating it, and exports only iterations
+        that have no export yet unless ``export_all``. Returns the path to
+        the generated index.html.
         """
         if not self.iterations:
             raise RuntimeError("No iterations to finalize")
 
         self._finalized = True
+        self.project.variants.clear()
 
         # Register EVERY iteration as a variant (latest first)
         for it in reversed(self.iterations):
@@ -273,10 +412,17 @@ class DesignSession:
                     filename=f"{self.name}_v{it.number}_{view}.png",
                 )
 
-            # Export STL for each iteration (the viewer's 3D tab reads STL)
+            # Export STL for each iteration (the viewer's 3D tab reads STL);
+            # an export already on disk is reused unless export_all.
             stl_path = self._work_dir / f"{self.name}_v{it.number}.stl"
+            existing = self.project.exports_dir / f"{self.name}_v{it.number}.stl"
+            src_mtime = it.source_path.stat().st_mtime if it.source_path and it.source_path.exists() else 0.0
+            if existing.exists() and not export_all and existing.stat().st_mtime >= src_mtime:
+                # an export at least as new as its source is the same geometry
+                variant.stl_path = existing
+                continue
             stl_result = self.engine.export(
-                it.source_path, stl_path, fmt="stl", defines=self.defines or None,
+                it.source_path, stl_path, fmt="stl", defines=it.defines or self.defines or None,
             )
             if stl_result.success:
                 self.project.register_stl(
@@ -348,6 +494,7 @@ class DesignSession:
             "defines": dict(self.defines),
             "finalized": self._finalized,
             "project_metadata": dict(self.project.metadata),
+            "tags": dict(self.tags),
             "iterations": [it.to_dict() for it in self.iterations],
         }
 

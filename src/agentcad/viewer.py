@@ -177,6 +177,10 @@ def regenerate_from_project_dir(
         project_dir.name, cfg.output,
         source_extension=source_ext, syntax_language=engine.syntax_language,
     )
+    # The scanned folder is the authority for where the page goes: a tag
+    # folder or a project whose config points elsewhere must not have its
+    # page written into designs_dir/<folder name>.
+    project._project_dir = project_dir
     project.metadata["regenerated"] = datetime.now().isoformat()
     project.metadata["engine"] = engine.name
     project.metadata["regenerated_from"] = str(project_dir)

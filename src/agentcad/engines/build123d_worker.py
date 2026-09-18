@@ -237,12 +237,21 @@ def _face_census(b3d, shape) -> Dict[str, int]:
 
 def _twisted_faces(b3d, shape, samples: int = 5, max_turn_deg: float = 60.0) -> List[Dict[str, Any]]:
     """Free-form faces whose normal turns more than ``max_turn_deg`` between
-    neighbouring samples on a grid. A smooth loft or sweep turns gently; a
-    twisted one (sections rotated against each other) turns sharply along a
-    ruling and renders crumpled even though the B-rep is valid."""
+    neighbouring samples on a grid, with each face's share of the part's area.
+
+    A smooth loft turns gently; a twisted one (sections rotated against each
+    other) turns sharply along a ruling and renders crumpled even though the
+    B-rep is valid. A thread's helicoid turns just as sharply and is not a
+    defect, so the measurement is reported for every such face and the
+    report layer warns only about faces large enough to be a body of the
+    part (``area_frac``), not the slivers of a thread."""
     import numpy as np
 
     found = []
+    try:
+        total_area = float(shape.area)
+    except Exception:  # unmeasurable area: fractions are reported as None
+        total_area = 0.0
     for f in shape.faces():
         name = str(f.geom_type).split(".")[-1].upper()
         if name not in ("BSPLINE", "BEZIER", "OTHER", "EXTRUSION", "REVOLUTION", "OFFSET"):
@@ -266,8 +275,10 @@ def _twisted_faces(b3d, shape, samples: int = 5, max_turn_deg: float = 60.0) -> 
                         worst = max(worst, math.degrees(math.acos(c)))
         if worst > max_turn_deg:
             c = f.center()
-            found.append({"type": name.lower(), "center": [c.X, c.Y, c.Z],
-                          "area": float(f.area), "max_turn_deg": round(worst, 1)})
+            area = float(f.area)
+            found.append({"type": name.lower(), "center": [c.X, c.Y, c.Z], "area": area,
+                          "area_frac": round(area / total_area, 4) if total_area else None,
+                          "max_turn_deg": round(worst, 1)})
     return found
 
 
