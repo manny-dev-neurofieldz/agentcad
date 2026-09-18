@@ -5,6 +5,8 @@ backend is absent. A new engine that registers itself is covered here
 without any test changes.
 """
 
+from pathlib import Path
+
 import pytest
 
 from agentcad.camera import MULTI_VIEW_DEFAULT
@@ -110,3 +112,32 @@ def test_metadata_keys_are_documented(engine, source_file, tmp_path):
     render = engine.render(source_file, tmp_path / "r", views=["iso"], image_size=64)
     undocumented = [k for k in render.metadata if k not in METADATA_KEYS and not k.endswith("_error")]
     assert not undocumented, undocumented
+
+
+def test_a_relative_source_path_renders(engine, source_file, tmp_path, monkeypatch):
+    """The CLI is run from anywhere; a worker-hosted engine must not open the
+    source relative to its own working directory."""
+    monkeypatch.chdir(source_file.parent)
+    result = engine.render(Path(source_file.name), Path("rel_out"), views=["iso"], image_size=64)
+    assert result.success, result.errors
+    assert (source_file.parent / "rel_out" / f"{source_file.stem}_iso.png").exists()
+
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples"
+
+
+@pytest.mark.parametrize("example", ["hex_tray", "j_hook"])
+def test_repository_examples_render_through_their_engine(example, tmp_path):
+    """Two of the shipped examples are contract fixtures: real designs, not toy sources."""
+    from agentcad.config import find_project
+
+    folder = EXAMPLES / example
+    cfg = find_project(folder)
+    assert cfg is not None, folder
+    engine = get_engine(cfg.engine, settings=cfg.engine_settings(cfg.engine))
+    if not engine.available():
+        pytest.skip(f"{engine.name} not available")
+    source = next(p for p in (folder / "source").iterdir() if p.suffix == engine.file_extension)
+    result = engine.render(source, tmp_path / "out", views=["iso"], image_size=96)
+    assert result.success, result.errors
+    assert result.metadata.get("volume", 1.0) > 0

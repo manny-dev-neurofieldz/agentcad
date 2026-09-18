@@ -551,6 +551,39 @@ def cmd_viewer(args):
         print(f"Regenerated: {html_path}")
 
 
+def cmd_gallery_build(args):
+    """Build a static gallery of project viewers."""
+    from agentcad.config import OutputConfig
+    from agentcad.gallery import build
+
+    folders = []
+    if args.projects:
+        import glob as _glob
+        for pattern in args.projects:
+            folders += [Path(p) for p in sorted(_glob.glob(pattern)) if (Path(p) / "agentcad.toml").exists()]
+    else:
+        designs = Path(args.designs_dir) if args.designs_dir else OutputConfig().designs_dir
+        folders = [p for p in sorted(designs.iterdir()) if (p / "agentcad.toml").exists()] if designs.exists() else []
+    if not folders:
+        print("Error: no projects found", file=sys.stderr)
+        sys.exit(1)
+    page = build(folders, Path(args.output), title=args.title, copy=not args.no_copy, max_mb=args.max_mb)
+    print(f"Gallery: {page} ({len(folders)} project(s))")
+
+
+def cmd_gallery_check(args):
+    """Verify a built gallery's links and images."""
+    from agentcad.gallery import check
+
+    problems = check(Path(args.gallery_dir))
+    if problems:
+        for p in problems:
+            print(f"  {p}", file=sys.stderr)
+        print(f"Gallery check: {len(problems)} problem(s)", file=sys.stderr)
+        sys.exit(1)
+    print("Gallery check: clean")
+
+
 def cmd_check(args):
     """Check an HTML viewer page for JS console errors."""
     from agentcad.webdebug import check_html
@@ -638,6 +671,20 @@ def main():
     p_cshow.set_defaults(func=cmd_config_show)
 
     # viewer (regenerate HTML from existing files)
+    p_gallery = sub.add_parser("gallery", help="Build or check a static gallery of project viewers")
+    sub_gallery = p_gallery.add_subparsers(dest="gallery_cmd", required=True)
+    p_gb = sub_gallery.add_parser("build", help="Build the gallery page and copy the viewers under it")
+    p_gb.add_argument("-o", "--output", default="site", help="Gallery folder (default: site)")
+    p_gb.add_argument("--projects", nargs="*", default=None, help="Project folder globs (default: every project under designs_dir)")
+    p_gb.add_argument("--designs-dir", default=None, help="Designs directory to scan when --projects is not given")
+    p_gb.add_argument("--title", default="agentcad gallery")
+    p_gb.add_argument("--no-copy", action="store_true", help="Link the viewers in place instead of copying them")
+    p_gb.add_argument("--max-mb", type=float, default=200.0, help="Size budget for copied viewers (default 200)")
+    p_gb.set_defaults(func=cmd_gallery_build)
+    p_gc = sub_gallery.add_parser("check", help="Verify every link and thumbnail of a built gallery")
+    p_gc.add_argument("gallery_dir")
+    p_gc.set_defaults(func=cmd_gallery_check)
+
     p_viewer = sub.add_parser("viewer", help="Regenerate HTML viewer from project files")
     p_viewer.add_argument("project", help="Project name (folder under designs_dir) or path")
     p_viewer.add_argument("--tag", default=None, help="Regenerate the viewer of a frozen tag (tags/<tag>/index.html)")

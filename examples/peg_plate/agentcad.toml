@@ -1,0 +1,12 @@
+[project]
+name = "peg_plate"
+engine = "build123d"
+description = "A plate with a row of holes and the peg that presses into them: a two-part assembly the viewer shows with toggles"
+parts = ["parts/*"]
+[engine.build123d]
+expected_solids = 4
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

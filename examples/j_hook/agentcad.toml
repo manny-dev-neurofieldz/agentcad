@@ -1,0 +1,9 @@
+[project]
+name = "j_hook"
+engine = "build123d"
+description = "A pegboard J-hook: a round section swept along a filleted path, with a peg that plugs the board"
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

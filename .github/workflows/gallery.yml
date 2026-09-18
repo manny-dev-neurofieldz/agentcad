@@ -1,0 +1,78 @@
+name: gallery
+
+# The repository dogfoods its own tool: every example under examples/ is run
+# through a design session from a clean checkout, the gallery is built from
+# the results and checked, and the built site is attached to the run. On a
+# pull request that is a required check (an example that no longer builds,
+# or a gallery that no longer links, fails the PR before review). On a push
+# to main the same site is deployed as the repository's GitHub Page.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: gallery-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install OpenSCAD, BOSL2 and a virtual framebuffer
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends openscad xvfb libgl1 libxrender1 libxcursor1 libxft2 libxinerama1
+          sudo mkdir -p /opt/openscad-libraries
+          sudo git clone --depth 1 https://github.com/BelfrySCAD/BOSL2.git /opt/openscad-libraries/BOSL2
+          openscad --version
+
+      - name: Install agentcad with all three engines
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install cython numpy
+          python -m pip install -e ".[dev,build123d,voxelcad]"
+          agentcad info
+
+      - name: Build every example from scratch
+        run: xvfb-run -a python examples/build_examples.py
+
+      - name: Build and check the gallery
+        run: |
+          agentcad gallery build -o site --projects "examples/*" --title "agentcad examples"
+          agentcad gallery check site
+
+      - name: Attach the built gallery to the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: gallery
+          path: site
+
+      - name: Prepare the Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

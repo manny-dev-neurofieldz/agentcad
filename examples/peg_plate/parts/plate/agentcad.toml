@@ -1,0 +1,9 @@
+[project]
+name = "plate"
+engine = "build123d"
+description = "the plate of peg_plate"
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

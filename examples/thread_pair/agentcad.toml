@@ -1,0 +1,11 @@
+[project]
+name = "thread_pair"
+engine = "build123d"
+description = "An M6 bolt and its nut with printed ISO threads, side by side: two bodies by design"
+[engine.build123d]
+expected_solids = 2
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

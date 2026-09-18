@@ -181,6 +181,11 @@ class ProjectConfig:
         for k in ("base_dir", "sub_dir", "image_size", "viewer_embed_mb"):
             if k in out:
                 setattr(config.output, k, out[k])
+        # A relative base_dir is relative to the config file, not to the
+        # process's working directory, so a project that keeps its output
+        # beside itself (base_dir = "..", sub_dir = ".") works from anywhere.
+        if "base_dir" in out and not Path(out["base_dir"]).is_absolute():
+            config.output.base_dir = (path.parent / out["base_dir"]).resolve()
         if "default_views" in out:
             config.output.default_views = out["default_views"]
 
