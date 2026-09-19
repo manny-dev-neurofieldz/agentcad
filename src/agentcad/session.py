@@ -21,6 +21,7 @@ Usage:
     result = session.finalize()              # STL + HTML viewer
 """
 
+import hashlib
 import json
 import sys
 from dataclasses import dataclass, field
@@ -31,8 +32,14 @@ from typing import Any, Dict, List, Optional
 from agentcad.config import OutputConfig, ProjectConfig
 from agentcad.engine import CADEngine, RenderResult
 from agentcad.output import DesignProject
+from agentcad.report import Report, feature_effect
 
 SESSION_STATE_FILE = "session.json"
+#: Session record schema. 1: iterations carried paths and notes only.
+#: 2: each iteration also keeps the measured metadata it was rendered with,
+#: the defines in force, a hash of its source, and the feature-effect report
+#: against the previous iteration. A v1 file loads with those fields absent.
+SESSION_SCHEMA = 2
 
 
 @dataclass
@@ -44,6 +51,16 @@ class Iteration:
     source_path: Optional[Path] = None
     render_result: Optional[RenderResult] = None
     notes: List[str] = field(default_factory=list)
+    #: Measured facts the engine reported for this iteration (METADATA_KEYS).
+    #: Persisted so the record, not a re-render, answers what each iteration
+    #: measured; ``feature_effect`` compares consecutive records.
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    #: Parameter overrides in force for this iteration.
+    defines: Dict[str, str] = field(default_factory=dict)
+    #: sha256 of the source text, to tell "the source changed" from "it did not".
+    source_hash: str = ""
+    #: The feature-effect report against the previous iteration.
+    report: Optional[Report] = None
     _saved_image_paths: Dict[str, Path] = field(default_factory=dict)
 
     @property
@@ -59,20 +76,35 @@ class Iteration:
             "source_path": str(self.source_path) if self.source_path else None,
             "image_paths": {k: str(v) for k, v in self.image_paths.items()},
             "notes": list(self.notes),
+            "metadata": dict(self.metadata),
+            "defines": dict(self.defines),
+            "source_hash": self.source_hash,
+            "report": self.report.to_dict() if self.report else None,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Iteration":
         src = Path(data["source_path"]) if data.get("source_path") else None
         code = src.read_text() if src and src.exists() else ""
+        rep_data = data.get("report")
+        report = Report(lines=list(rep_data.get("lines", [])), warnings=list(rep_data.get("warnings", [])),
+                        deltas=dict(rep_data.get("deltas", {})), changed=rep_data.get("changed")) if rep_data else None
         return cls(
             number=data["number"],
             timestamp=data["timestamp"],
             source_code=code,
             source_path=src,
             notes=list(data.get("notes", [])),
+            metadata=dict(data.get("metadata") or {}),
+            defines=dict(data.get("defines") or {}),
+            source_hash=data.get("source_hash") or (source_hash(code) if code else ""),
+            report=report,
             _saved_image_paths={k: Path(v) for k, v in (data.get("image_paths") or {}).items()},
         )
+
+
+def source_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 class DesignSession:
@@ -159,12 +191,39 @@ class DesignSession:
             defines=self.defines or None,
         )
 
+        metadata = dict(render_result.metadata)
+        if "volume" not in metadata and "stl" in self.engine.supported_export_formats:
+            # An engine whose render carries no geometry (OpenSCAD renders
+            # through its CLI) still measures through the mesh it exports.
+            measured = self.engine.export(
+                src_path, render_dir / f"{self.name}_v{n}_measure.stl", fmt="stl",
+                defines=self.defines or None,
+            )
+            if measured.success:
+                for key, value in measured.metadata.items():
+                    metadata.setdefault(key, value)
+            else:
+                metadata["measure_error"] = "; ".join(measured.errors) or "STL export for measurement failed"
+
+        previous = self.current
+        digest = source_hash(source_code)
+        report = feature_effect(
+            previous.metadata if previous else None, metadata,
+            source_changed=(digest != previous.source_hash) if previous and previous.source_hash else None,
+            expected_solids=int(self.engine.setting("expected_solids")),
+            short_edge_mm=float(self.engine.setting("short_edge_mm")),
+        )
+
         iteration = Iteration(
             number=n,
             timestamp=datetime.now().isoformat(),
             source_code=source_code,
             source_path=src_path,
             render_result=render_result,
+            metadata=metadata,
+            defines=dict(self.defines),
+            source_hash=digest,
+            report=report,
         )
         self.iterations.append(iteration)
         return iteration
@@ -280,6 +339,7 @@ class DesignSession:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
+            "schema": SESSION_SCHEMA,
             "name": self.name,
             "engine_name": self.engine.name,
             "max_iterations": self.max_iterations,

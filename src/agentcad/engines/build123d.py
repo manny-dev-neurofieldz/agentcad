@@ -84,6 +84,8 @@ class Build123dEngine(CADEngine):
             "defines": dict(defines or {}),
             "tolerance": self.setting("tolerance", _DEFAULTS["tolerance"]),
             "angular_tolerance": self.setting("angular_tolerance", _DEFAULTS["angular_tolerance"]),
+            "short_edge_mm": self.setting("short_edge_mm"),
+            "expected_solids": self.setting("expected_solids"),
         }
 
     def _run_worker(self, job: Dict[str, Any], timeout: float, cwd: Optional[Path] = None) -> Dict[str, Any]:

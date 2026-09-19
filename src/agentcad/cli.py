@@ -61,8 +61,17 @@ def cmd_render(args):
 
     for view_name, img_path in result.images.items():
         print(f"  {view_name}: {img_path}")
-    for key, value in result.metadata.items():
-        print(f"  {key}: {value}")
+    if getattr(args, "report", False):
+        from agentcad.report import feature_effect, render_lines
+        rep = feature_effect(None, result.metadata,
+                             expected_solids=int(engine.setting("expected_solids")),
+                             short_edge_mm=float(engine.setting("short_edge_mm")))
+        print("Report:")
+        for line in render_lines(rep):
+            print(line, file=sys.stderr if line.lstrip().startswith("warning:") else sys.stdout)
+    else:
+        for key, value in result.metadata.items():
+            print(f"  {key}: {value}")
 
     if result.success:
         print(f"\nRendered {len(result.images)} view(s) in {result.render_time_ms:.0f}ms")
@@ -328,8 +337,11 @@ def cmd_session_iterate(args):
         print(f"  Rendered {len(it.image_paths)} view(s) in {it.render_result.render_time_ms:.0f}ms")
         for view, path in it.image_paths.items():
             print(f"    {view}: {path}")
-        for key, value in it.render_result.metadata.items():
-            print(f"    {key}: {value}")
+        if it.report:
+            from agentcad.report import render_lines
+            print(f"  Report v{it.number}" + (f" vs v{it.number - 1}" if it.number > 1 else "") + ":")
+            for line in render_lines(it.report, indent="    "):
+                print(line, file=sys.stderr if line.lstrip().startswith("warning:") else sys.stdout)
     else:
         errors = it.render_result.errors if it.render_result else ["no render result"]
         for err in errors:
@@ -439,6 +451,8 @@ def main():
     p_render.add_argument("-s", "--size", type=int, default=1024, help="Image size (default: 1024)")
     p_render.add_argument("-e", "--engine", default=None,
                           help="CAD engine (default: the project's agentcad.toml, else openscad)")
+    p_render.add_argument("--report", action="store_true",
+                          help="Print the measured report (the tray) instead of raw metadata")
     p_render.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
                           help="Override a model parameter (repeatable)")
     p_render.set_defaults(func=cmd_render)

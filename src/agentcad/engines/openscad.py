@@ -283,6 +283,13 @@ class OpenSCADEngine(CADEngine):
         produced = output_path.exists() and output_path.stat().st_size > 0
         if not produced:
             errors.append(f"OpenSCAD produced no {fmt} file")
+        metadata: Dict[str, Any] = {"facet_count": facets} if facets else {}
+        if produced and fmt == "stl":
+            # OpenSCAD exposes no geometry through its CLI; the mesh it wrote
+            # carries the bounding box, the volume and the body count.
+            from agentcad.meshmeasure import measure_stl
+            metadata.update(measure_stl(output_path))
+            metadata["expected_solids"] = int(self.setting("expected_solids"))
         return ExportResult(
             output_path=output_path if produced else None,
             format=fmt,
@@ -291,7 +298,7 @@ class OpenSCADEngine(CADEngine):
             warnings=warnings,
             facet_count=facets,
             render_time_ms=elapsed_ms,
-            metadata={"facet_count": facets} if facets else {},
+            metadata=metadata,
         )
 
     def validate_syntax(self, code: str) -> ValidationResult:
