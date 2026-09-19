@@ -90,6 +90,25 @@ and which export formats it supports.
   travel back in `RenderResult.metadata` / `ExportResult.metadata`
 - Install the backend with `pip install -e ".[build123d]"`
 
+## Examples and the gallery
+
+`examples/` holds one project per design across the three engines: a
+gyroid lattice mold (VoxelCAD), a pegboard J-hook, a printed M6 thread
+pair and a peg-and-plate assembly with part subprojects (build123d), and a
+BOSL2 L-bracket and a hex pocket tray (OpenSCAD). Each is a plain agentcad
+project (`agentcad.toml`, `source/`, a README saying what it exercises).
+
+```bash
+python examples/build_examples.py          # every example through a session, from scratch
+agentcad gallery build -o site --projects "examples/*"
+agentcad gallery check site                # every link and thumbnail resolves
+```
+
+The `gallery` workflow does exactly that on every pull request from a
+clean checkout, attaches the built site to the run, and on `main` deploys
+it as this repository's GitHub Page. An example that stops building fails
+the check: the gallery is a test of the tool on every engine.
+
 ## Configuration
 
 Each project folder carries an `agentcad.toml`. Engine tuning lives in a

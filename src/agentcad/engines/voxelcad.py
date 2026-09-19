@@ -120,8 +120,8 @@ class VoxelCADEngine(CADEngine):
         image_size: int = 1024,
         defines: Defines = None,
     ) -> RenderResult:
-        source_path = Path(source_path)
-        output_dir = Path(output_dir)
+        source_path = Path(source_path).resolve()  # the worker runs elsewhere
+        output_dir = Path(output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         if views is None:
             views = MULTI_VIEW_DEFAULT
@@ -159,8 +159,8 @@ class VoxelCADEngine(CADEngine):
         fmt = fmt.lower()
         if fmt not in self.supported_export_formats:
             return self._unsupported_format(fmt)
-        source_path = Path(source_path)
-        output_path = Path(output_path)
+        source_path = Path(source_path).resolve()  # the worker runs elsewhere
+        output_path = Path(output_path).resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         t0 = time.monotonic()

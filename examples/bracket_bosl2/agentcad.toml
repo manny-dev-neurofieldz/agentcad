@@ -1,0 +1,12 @@
+[project]
+name = "bracket_bosl2"
+engine = "openscad"
+description = "An L-bracket with rounded edges, a gusset and countersunk screw holes, built with BOSL2"
+[engine.openscad]
+fa = 2
+fs = 0.4
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

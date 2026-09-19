@@ -141,3 +141,54 @@ def test_bottom_and_left_presets_look_where_they_say():
     assert STANDARD_PRESETS["left"].eye[0] < -0.99
     assert STANDARD_PRESETS["top"].eye[2] > 0.99
     assert OutputConfig().default_views == MULTI_VIEW_DEFAULT
+
+
+# --- the gallery ---
+
+def _example_project(root: Path, name: str, engine: str = "openscad", with_render: bool = True) -> Path:
+    d = root / name
+    (d / "renders").mkdir(parents=True)
+    (d / "_work").mkdir()
+    (d / "agentcad.toml").write_text(f'[project]\nname = "{name}"\nengine = "{engine}"\ndescription = "a {name}"\n')
+    (d / "index.html").write_text(f'<html><body><img src="renders/{name}_v1_iso.png"></body></html>')
+    if with_render:
+        (d / "renders" / f"{name}_v1_iso.png").write_bytes(b"\x89PNG")
+    (d / "_work" / "session.json").write_text(json.dumps({
+        "schema": 2, "iterations": [{"number": 1, "timestamp": "t", "metadata": {"volume": 12.5, "counts": {"solids": 1}}}],
+        "project_metadata": {"finalized": "2026-09-18T16:00:00"}}))
+    return d
+
+
+def test_gallery_build_copies_viewers_and_check_passes(tmp_path):
+    from agentcad.gallery import build, check
+    a = _example_project(tmp_path / "ex", "alpha")
+    b = _example_project(tmp_path / "ex", "beta", engine="build123d")
+    page = build([a, b], tmp_path / "site", title="test gallery")
+    html = page.read_text()
+    assert html.count('<div class="card">') == 2
+    assert 'href="alpha/index.html"' in html and "volume 12.5" in html and "solids 1" in html
+    assert (tmp_path / "site" / "beta" / "renders" / "beta_v1_iso.png").exists()
+    assert check(tmp_path / "site") == []
+
+
+def test_gallery_check_names_a_missing_thumbnail_and_an_absolute_link(tmp_path):
+    from agentcad.gallery import build, check
+    a = _example_project(tmp_path / "ex", "alpha")
+    build([a], tmp_path / "site")
+    (tmp_path / "site" / "alpha" / "renders" / "alpha_v1_iso.png").unlink()
+    problems = check(tmp_path / "site")
+    assert any("missing" in p for p in problems), problems
+    page = tmp_path / "site" / "index.html"
+    page.write_text(page.read_text().replace('href="alpha/index.html"', 'href="/abs/alpha/index.html"', 1))
+    assert any("absolute" in p for p in check(tmp_path / "site"))
+
+
+def test_gallery_budget_skips_a_project_that_does_not_fit(tmp_path):
+    from agentcad.gallery import build
+    big = _example_project(tmp_path / "ex", "big")
+    (big / "renders" / "big_v1_iso.png").write_bytes(b"\x00" * 3_000_000)
+    small = _example_project(tmp_path / "ex", "small")
+    page = build([big, small], tmp_path / "site", max_mb=1.0)
+    html = page.read_text()
+    assert "not copied" in html and 'href="small/index.html"' in html
+    assert not (tmp_path / "site" / "big").exists()

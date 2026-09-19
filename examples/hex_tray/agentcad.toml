@@ -1,0 +1,9 @@
+[project]
+name = "hex_tray"
+engine = "openscad"
+description = "A tray of hexagonal pockets for small parts: plain CSG, loops and a chamfered rim, no libraries"
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

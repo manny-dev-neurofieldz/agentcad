@@ -1,0 +1,14 @@
+[project]
+name = "gyroid_mold"
+engine = "voxelcad"
+description = "A gyroid lattice bottle with a solid base and neck, and the mold around it: intersection, union, difference and a thin skin"
+[engine.voxelcad]
+grid = 192
+# the windows in the skin free one lattice sliver; the report counts it
+# rather than hiding it, and closing it is the example's exercise
+expected_solids = 2
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]
