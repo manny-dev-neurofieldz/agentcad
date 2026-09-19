@@ -63,7 +63,12 @@ and which export formats it supports.
 ### VoxelCAD
 - Python-native voxel-based solid modeling
 - Cython streaming kernels for fast geometry evaluation
-- Smoothed STL export via SDF + Butterworth pipeline
+- Smoothed STL export through the fused streaming pipeline (packed bits,
+  Butterworth low-pass, marching cubes, straight to STL with no intermediate
+  volumes); `[engine.voxelcad] surface_method`, `lowpass_cutoff`,
+  `lowpass_order`, `mc_stride` and `only_largest_component` tune it for the
+  renders and the export alike, and the metadata's `surface` block records
+  which pipeline ran with its triangle count and time
 - Source contract: `def build(**params)` returning the model (overrides are
   coerced to the types of the defaults), or a module-level `model`
 - The grid is sized from the model: by default the longest side spans
@@ -93,8 +98,8 @@ and which export formats it supports.
 ## Examples and the gallery
 
 `examples/` holds one project per design across the three engines: a
-gyroid lattice mold (VoxelCAD), a pegboard J-hook, a printed M6 thread
-pair and a peg-and-plate assembly with part subprojects (build123d), and a
+gyroid electrode support plug (VoxelCAD), a pegboard J-hook, a printed M6
+thread pair and a peg-and-plate assembly with part subprojects (build123d), and a
 BOSL2 L-bracket and a hex pocket tray (OpenSCAD). Each is a plain agentcad
 project (`agentcad.toml`, `source/`, a README saying what it exercises).
 

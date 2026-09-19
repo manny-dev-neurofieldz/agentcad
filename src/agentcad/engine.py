@@ -44,7 +44,7 @@ METADATA_KEYS = frozenset({
     "bbox_min", "bbox_size", "bbox", "volume", "area", "center_of_mass", "counts",
     "is_valid", "face_census", "short_edges", "min_edge_mm", "expected_solids",
     "twisted_faces", "twisted_faces_detail",
-    "grid_resolution", "voxel_size", "grid_target", "occupied_voxels",
+    "grid_resolution", "voxel_size", "grid_target", "occupied_voxels", "surface",
     "kind", "runtime_s", "facet_count",
     # engine identity lines
     "build123d_version", "openscad_version", "voxelcad_version",

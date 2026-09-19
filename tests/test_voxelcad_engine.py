@@ -131,3 +131,23 @@ def test_module_level_model_is_harvested_and_overrides_are_reported(engine, tmp_
     with_defines = engine.render(src, tmp_path / "out", views=["iso"], image_size=64,
                                  defines={"r": "9"})
     assert any("ignored" in w for w in with_defines.warnings), with_defines.warnings
+
+
+def test_surface_pipeline_settings_reach_export_and_are_recorded(cube_source, tmp_path):
+    """The export records which surface pipeline ran; the stride setting changes the triangle count;
+    a render carries the same record, so the picture and the file come from one pipeline."""
+    from agentcad.engines.voxelcad import VoxelCADEngine
+    fine = VoxelCADEngine(settings={"grid": 64, "mc_stride": 1}).export(cube_source, tmp_path / "s1.stl")
+    coarse = VoxelCADEngine(settings={"grid": 64, "mc_stride": 2}).export(cube_source, tmp_path / "s2.stl")
+    assert fine.success and coarse.success, (fine.errors, coarse.errors)
+    for r, stride in ((fine, 1), (coarse, 2)):
+        rec = r.metadata["surface"]
+        assert rec["mc_stride"] == stride and rec["method"] in ("fast_smooth", "cdt")
+        assert rec["triangles"] == r.facet_count and rec["seconds"] >= 0
+        assert rec["streaming"] == (rec["kernels"] and rec["method"] == "fast_smooth")
+    assert fine.facet_count > 2 * coarse.facet_count
+    render = VoxelCADEngine(settings={"grid": 64, "mc_stride": 2}).render(cube_source, tmp_path / "r", views=["iso"])
+    assert render.success, render.errors
+    assert render.metadata["surface"]["mc_stride"] == 2 and render.metadata["surface"]["triangles"] > 0
+    cdt = VoxelCADEngine(settings={"grid": 64, "surface_method": "cdt"}).export(cube_source, tmp_path / "s3.stl")
+    assert cdt.success and cdt.metadata["surface"]["method"] == "cdt" and cdt.metadata["surface"]["streaming"] is False

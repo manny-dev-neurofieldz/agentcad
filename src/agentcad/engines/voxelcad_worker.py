@@ -14,6 +14,8 @@ The job is a dict with:
     defines:      {name: str} overrides
     result_path:  where to write the result JSON
     resolution:   {voxel_size: float|None, grid: int, warn_voxels: int}
+    surface:      {method, lowpass_cutoff, lowpass_order, mc_stride, only_largest_component}
+                  the surface pipeline for renders and export alike
                   voxel_size None means "size the grid from the model's extent
                   so its longest side spans `grid` voxels"
     render:       {output_dir, stem, image_size, views: [{name, eye, up,
@@ -203,7 +205,9 @@ def _render(model, job: Dict[str, Any], out: Dict[str, Any]) -> None:
     os.makedirs(output_dir, exist_ok=True)
     size = int(spec.get("image_size", 1024))
 
-    mesh = model.render_surface_mesh()
+    t0 = time.time()
+    mesh = model.render_surface_mesh(**_surface_kwargs(job))
+    out["metadata"]["surface"] = _surface_record(job, model, triangles=int(mesh.n_cells), seconds=round(time.time() - t0, 3))
     xmin, xmax, ymin, ymax, zmin, zmax = mesh.bounds
     center = ((xmin + xmax) / 2, (ymin + ymax) / 2, (zmin + zmax) / 2)
     radius = max(0.5 * math.sqrt((xmax - xmin) ** 2 + (ymax - ymin) ** 2 + (zmax - zmin) ** 2), 1e-9)
@@ -230,6 +234,44 @@ def _render(model, job: Dict[str, Any], out: Dict[str, Any]) -> None:
             out["errors"].append(f"{name}: screenshot produced no file")
 
 
+# --- the surface pipeline -------------------------------------------------------
+
+def _surface_kwargs(job: Dict[str, Any]) -> Dict[str, Any]:
+    """Keyword arguments for render_surface_mesh() and export() from the job's surface settings,
+    so the picture and the file come from the same pipeline."""
+    spec = job.get("surface") or {}
+    kw: Dict[str, Any] = {}
+    if spec.get("method"):
+        kw["method"] = spec["method"]
+    for key in ("lowpass_cutoff", "lowpass_order", "mc_stride", "only_largest_component"):
+        if key in spec:
+            kw[key] = spec[key]
+    return kw
+
+
+def _surface_record(job: Dict[str, Any], model, **extra) -> Dict[str, Any]:
+    """Which pipeline actually ran. VoxelCAD's export() takes the fused streaming path (packed bits
+    to STL, no intermediate volumes) when the Cython kernel exists, the method is auto or
+    fast_smooth, the isovalue is zero and only_largest_component is off; otherwise it builds the
+    surface mesh (fast_smooth or cdt) and saves it. The decision is reproduced here so the record
+    says what happened rather than what was asked for."""
+    spec = job.get("surface") or {}
+    method = spec.get("method", "auto")
+    try:
+        from voxelcad._kernels import fused_stl_export
+        fused = fused_stl_export is not None
+    except Exception:  # noqa: BLE001 - an absent kernel is a fact about the pipeline, recorded below
+        fused = False
+    if method == "auto":
+        method = "fast_smooth" if fused else "cdt"
+    streaming = fused and method == "fast_smooth" and not spec.get("only_largest_component", False)
+    rec = {"method": method, "streaming": streaming, "kernels": fused,
+           "lowpass_cutoff": spec.get("lowpass_cutoff", 0.25), "lowpass_order": spec.get("lowpass_order", 4),
+           "mc_stride": spec.get("mc_stride", 2), "only_largest_component": bool(spec.get("only_largest_component", False))}
+    rec.update(extra)
+    return rec
+
+
 # --- export -------------------------------------------------------------------
 
 def _stl_facets(path: str) -> int:
@@ -251,10 +293,12 @@ def _export(model, job: Dict[str, Any], out: Dict[str, Any]) -> None:
     if fmt != "stl":
         raise ValueError(f"unsupported format {fmt!r}")
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    model.export(path)
+    t0 = time.time()
+    model.export(path, **_surface_kwargs(job))
     if os.path.exists(path) and os.path.getsize(path) > 0:
         out["output_path"] = path
         out["facet_count"] = _stl_facets(path)
+        out["metadata"]["surface"] = _surface_record(job, model, triangles=out["facet_count"], seconds=round(time.time() - t0, 3))
     else:
         out["errors"].append("VoxelCAD produced no STL file")
 
