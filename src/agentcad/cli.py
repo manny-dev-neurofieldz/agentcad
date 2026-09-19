@@ -93,8 +93,33 @@ def cmd_export(args):
     fmt = args.format.lower()
     output = Path(args.output) if args.output else source.with_suffix(f".{fmt}")
 
-    defines = _parse_defines(args.define) if args.define else None
-    result = engine.export(source, output, fmt=fmt, defines=defines)
+    defines = _parse_defines(args.define) if args.define else {}
+    if getattr(args, "variants", None):
+        # One knob, several values, one file each with the value in its name:
+        # a print plate that measures the material's clearance tax in one go.
+        knob, _, values = args.variants.partition("=")
+        values = [v for v in values.split(",") if v]
+        if not knob or not values:
+            print("Error: --variants expects KNOB=v1,v2,...", file=sys.stderr)
+            sys.exit(2)
+        failed = False
+        for value in values:
+            per = dict(defines); per[knob] = value
+            out = output.with_name(f"{output.stem}_{knob}-{value.replace('.', 'p')}{output.suffix}")
+            result = engine.export(source, out, fmt=fmt, defines=per)
+            for warn in result.warnings:
+                print(f"Warning: {warn}", file=sys.stderr)
+            if result.success:
+                vol = result.metadata.get("volume")
+                print(f"Exported: {result.output_path} ({knob}={value}" + (f", volume {vol:.4g}" if vol else "") + ")")
+            else:
+                failed = True
+                for err in result.errors:
+                    print(f"Error ({knob}={value}): {err}", file=sys.stderr)
+        if failed:
+            sys.exit(1)
+        return
+    result = engine.export(source, output, fmt=fmt, defines=defines or None)
     for warn in result.warnings:
         print(f"Warning: {warn}", file=sys.stderr)
     if result.success:
@@ -612,6 +637,18 @@ def cmd_probe_inventory(args):
         print(f"inventory.json: {probe.write_json(inv, Path(args.output))}")
 
 
+def cmd_probe_fillet(args):
+    """Why a fillet fails: the selected chain on the live part at the step it is applied."""
+    from agentcad import probe
+
+    radii = [float(v) for v in args.radii.split(",")] if args.radii else (1.0, 0.6, 0.4, 0.25)
+    res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
+                             defines=_parse_defines(args.define) if args.define else None)
+    print("\n".join(probe.render_fillet_probe(res)))
+    if args.output:
+        print(f"fillet.json: {probe.write_json(res, Path(args.output))}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -642,6 +679,69 @@ def cmd_compare(args):
         print(f"compare.json: {probe.write_json(res, Path(args.output_dir) / 'compare.json')}")
     if res.get("gate") is False:
         print("loop-count gate: FAILED (a plane's loop counts differ)", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_fit(args):
+    """Pose two parts and measure interference, clearance, windows and insertion."""
+    from agentcad import fit as fitmod
+
+    windows = {}
+    for item in args.window or []:
+        name, _, nums = item.partition("=")
+        vals = [float(v) for v in nums.split(",")]
+        if len(vals) != 6:
+            print(f"Error: window {item!r}: expected name=x0,y0,z0,x1,y1,z1", file=sys.stderr)
+            sys.exit(2)
+        windows[name] = vals
+    a_defs = _parse_defines(args.a_define) if args.a_define else {}
+    b_defs = _parse_defines(args.b_define) if args.b_define else {}
+    if args.mates_from:
+        sides = {str(a_defs.get("part", "")), str(b_defs.get("part", ""))} - {""}
+        for name, m in fitmod.load_mates(Path(args.mates_from)).items():
+            if not (isinstance(m, dict) and "window" in m and len(m["window"]) == 6):
+                continue
+            # a mate that names its parts (or its counterpart) is checked only on that pair;
+            # a window for another pair would just read empty and say nothing
+            pair = {str(x) for x in (m.get("parts") or [])}
+            cp = str(m.get("counterpart", "") or "")
+            if sides and ((pair and pair != sides) or (not pair and cp and cp not in sides)):
+                continue
+            windows.setdefault(name, [float(v) for v in m["window"]])
+    offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
+    res = fitmod.fit(Path(args.a), Path(args.b),
+                     a_defines=a_defs or None, b_defines=b_defs or None,
+                     offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
+                     sweep_axis=args.sweep, sweep_travel=args.travel,
+                     out_dir=Path(args.output_dir) if args.output_dir else None)
+    print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
+    for name, w in (res.get("windows") or {}).items():
+        if "min_mm" in w:
+            print(f"  window {name}: min {w['min_mm']:.4g} mm (p05 {w['p05_mm']:.4g})")
+        else:
+            print(f"  window {name}: {w.get('note')}")
+    for row in res.get("insertion") or []:
+        print(f"  insertion at {row['offset_mm']:.3g} mm out: interference {row['interference_mm3']:.4g} mm^3")
+    for name, path in (res.get("renders") or {}).items():
+        print(f"  render {name}: {path}")
+    if args.output_dir:
+        print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
+    if args.record:
+        from agentcad.manifest import PrintManifest
+        manifests = sorted(Path(args.record).glob("exports/*.print.json"))
+        if manifests:
+            m = PrintManifest.load(manifests[0])
+            key = (res["a"], res["b"], json.dumps(res["a_defines"], sort_keys=True), json.dumps(res["b_defines"], sort_keys=True))
+            m.fit = [f for f in m.fit if (f.get("a"), f.get("b"), json.dumps(f.get("a_defines") or {}, sort_keys=True),
+                                          json.dumps(f.get("b_defines") or {}, sort_keys=True)) != key]
+            m.fit.append({k: res[k] for k in ("a", "b", "a_defines", "b_defines", "pose", "interference_mm3", "clearance_mm") if k in res}
+                         | ({"windows": res["windows"]} if res.get("windows") else {}))
+            m.save(manifests[0])
+            print(f"recorded in {manifests[0]}")
+        else:
+            print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
+    if res["interference_mm3"] and res["interference_mm3"] > (args.allow or 0.0):
+        print("fit: INTERFERENCE (the bodies overlap)", file=sys.stderr)
         sys.exit(1)
 
 
@@ -723,6 +823,8 @@ def main():
                           help="Export format (default: stl; see `agentcad info` for each engine's list)")
     p_export.add_argument("-e", "--engine", default=None,
                           help="CAD engine (default: the project's agentcad.toml, else openscad)")
+    p_export.add_argument("--variants", metavar="KNOB=v1,v2,...", default=None,
+                          help="Export one file per value of KNOB, the value in each filename (a clearance plate)")
     p_export.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
                           help="Override a model parameter (repeatable)")
     p_export.set_defaults(func=cmd_export)
@@ -778,6 +880,16 @@ def main():
         pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
         pp.set_defaults(func=func)
 
+    pf = sub_probe.add_parser("fillet", help="Why a fillet fails: the selected chain on the LIVE part at the call, steps under 0.2 mm, sizes each edge takes")
+    pf.add_argument("source", help="build123d program")
+    pf.add_argument("--at", default="fillet", help="fillet or chamfer (default fillet)")
+    pf.add_argument("--index", type=int, default=0, help="Which call of --at to stop at, counting from 0")
+    pf.add_argument("--radii", default=None, help="Comma-separated sizes to try (default 1.0,0.6,0.4,0.25)")
+    pf.add_argument("--short", type=float, default=0.2, help="Edges and steps shorter than this are flagged (mm)")
+    pf.add_argument("-o", "--output", default=None, help="Write the JSON record here")
+    pf.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    pf.set_defaults(func=cmd_probe_fillet)
+
     p_cmp = sub.add_parser("compare", help="COMPARE: loop counts per plane (a gate), sampled deviation, overlays")
     p_cmp.add_argument("original")
     p_cmp.add_argument("candidate")
@@ -787,6 +899,23 @@ def main():
     p_cmp.add_argument("--max-loops", type=int, default=None)
     p_cmp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
     p_cmp.set_defaults(func=cmd_compare)
+
+    p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
+    p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
+    p_fit.add_argument("b", help="Second part, posed by --offset/--spin")
+    p_fit.add_argument("--offset", default=None, metavar="X,Y,Z")
+    p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
+    p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"])
+    p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
+    p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
+    p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
+    p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
+    p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
+    p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
+    p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
+    p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL")
+    p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL")
+    p_fit.set_defaults(func=cmd_fit)
 
     p_gallery = sub.add_parser("gallery", help="Build or check a static gallery of project viewers")
     sub_gallery = p_gallery.add_subparsers(dest="gallery_cmd", required=True)

@@ -233,7 +233,7 @@ class VariantBuilder:
         print_html = "<p>No print settings available</p>"
         if self._print_manifest:
             pt = Table(["Setting", "Value"], css_class="print-table")
-            skip = {"custom", "agent_notes", "stl_filename", "created"}
+            skip = {"custom", "agent_notes", "stl_filename", "created", "parts", "fit"}
             for k, v in self._print_manifest.items():
                 if k in skip or not v:
                     continue
@@ -241,6 +241,19 @@ class VariantBuilder:
                 val = str(v)
                 pt.row(label, val)
             print_html = pt.build()
+            parts = self._print_manifest.get("parts") or []
+            if parts:
+                ptable = Table(["Part", "Quantity", "Mesh"], css_class="print-table")
+                for p in parts:
+                    ptable.row(p.get("name", ""), p.get("quantity", 1), p.get("stl_filename", ""))
+                print_html += "<h3>Parts</h3>" + ptable.build()
+            fits = self._print_manifest.get("fit") or []
+            if fits:
+                ft = Table(["Pair", "Interference mm^3", "Clearance mm", "Windows"], css_class="print-table")
+                for f in fits:
+                    wins = ", ".join(f"{k} {v.get('min_mm', 'n/a')}" for k, v in (f.get("windows") or {}).items() if isinstance(v, dict))
+                    ft.row(f"{f.get('a', '?')} / {f.get('b', '?')}", f"{f.get('interference_mm3', 'n/a')}", f"{f.get('clearance_mm', 'n/a')}", wins)
+                print_html += "<h3>Fit</h3>" + ft.build()
 
         return variant_template.substitute(
             variant_id=self._id,

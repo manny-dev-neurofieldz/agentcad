@@ -123,6 +123,34 @@ surface points) are the two exchange formats; every probe writes them and
 value. A cylindrical face reports its axis, never its centroid. Meshes are
 compared in the sampled compartment only, and the output says so.
 
+## Fit and mates
+
+```bash
+agentcad fit bar.py chute.py --mates-from job/ --record project/   # interference, clearance, windows, renders
+```
+
+A `[mates]` table in `agentcad.toml`, `job.toml` or `part.toml` declares each
+mate's window (`[x0, y0, z0, x1, y1, z1]`), its `parts = [a, b]` (or a
+`counterpart` in a part's own toml) and a `nominal_mm`. Windows are sampled on
+both surfaces with a lattice, so a window in the middle of a flat face still
+reads the gap; a mate is checked only on its own pair. The result is recorded
+in the project's print manifest keyed by the two parts' defines.
+
+## Program-side helpers (build123d)
+
+```python
+from agentcad.helpers import soften
+part, report = soften(part, fillet_r=1.0, chamfer_c=0.4, exclude=[[x0, y0, z0, x1, y1, z1]])
+print("\n".join(agentcad.report.render_lines(report)))
+```
+
+`soften` fillets the concave joints and chamfers the convex edges of a
+build123d part, trying the size then half of it and bisecting the selection
+so one edge that refuses costs only itself. Every refused edge is listed
+with its length, midpoint and the error; edges a neighbour's feature made
+unfindable are counted as lost, never dropped, so applied + refused + lost
+equals the candidates. `exclude` keeps a coin path or a thread sharp.
+
 ## Configuration
 
 Each project folder carries an `agentcad.toml`. Engine tuning lives in a

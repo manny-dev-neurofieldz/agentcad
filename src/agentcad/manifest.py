@@ -52,6 +52,15 @@ class PrintManifest:
 
     # Custom overrides
     custom: Dict[str, Any] = field(default_factory=dict)
+    #: An assembly's parts: [{name, quantity, stl_filename}] gathered from
+    #: part subprojects at finalize --all; a single part lists itself once.
+    parts: List[Dict[str, Any]] = field(default_factory=list)
+    #: Fit checks recorded against this manifest: [{a, b, interference_mm3,
+    #: clearance_mm, windows}] from `agentcad fit`.
+    fit: List[Dict[str, Any]] = field(default_factory=list)
+
+    def part_count(self) -> int:
+        return sum(int(p.get("quantity", 1)) for p in self.parts) if self.parts else 1
 
     def save(self, path: Path) -> Path:
         """Write manifest as JSON alongside the STL."""

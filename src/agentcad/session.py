@@ -455,8 +455,16 @@ class DesignSession:
                    "print_orientation", "printer_profile"):
             if k in self.params:
                 setattr(manifest, k, self.params[k])
-
+        manifest.parts = ([{"name": name, "quantity": int(quantity), "stl_filename": Path(path).name}
+                           for name, path, quantity in self.part_meshes]
+                          or [{"name": self.name, "quantity": 1, "stl_filename": manifest.stl_filename}])
         manifest_path = self.project.exports_dir / f"{self.name}.print.json"
+        if manifest_path.exists():
+            try:
+                manifest.fit = PrintManifest.load(manifest_path).fit   # fit results recorded earlier survive a re-finalize
+            except (OSError, ValueError, TypeError, KeyError):
+                pass
+
         manifest.save(manifest_path)
         self.project.metadata["manifest"] = str(manifest_path.name)
 
