@@ -21,9 +21,9 @@ classifiers = [
 
 [project.optional-dependencies]
 openscad = []  # OpenSCAD binary required externally
-voxelcad = ["voxelcad"]
+voxelcad = ["voxelcad[viz] @ git+https://github.com/cversek/voxelcad.git", "scipy", "psutil"]  # kernels need build_ext in that checkout; psutil is imported but undeclared upstream
 build123d = ["build123d", "pyvista", "bd_warehouse"]
-dev = ["pytest"]
+dev = ["pytest", "pytest-cov"]
 
 [project.scripts]
 agentcad = "agentcad.cli:main"
@@ -33,3 +33,16 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["agentcad"]
+omit = ["*/templates/*"]
+# The build123d and VoxelCAD engines execute sources in worker subprocesses;
+# without this patch their coverage would read as zero while the suite
+# exercises them on every contract case.
+patch = ["subprocess"]
+parallel = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true

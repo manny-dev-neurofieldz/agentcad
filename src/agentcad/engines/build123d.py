@@ -22,11 +22,6 @@ Settings (``[engine.build123d]``):
 
 import importlib.metadata
 import importlib.util
-import json
-import os
-import subprocess
-import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -35,6 +30,7 @@ from agentcad.camera import MULTI_VIEW_DEFAULT
 from agentcad.engine import (
     CADEngine, Defines, RenderResult, ExportResult, ValidationResult,
 )
+from agentcad.engines.subprocess_worker import run_worker
 
 _WORKER_MODULE = "agentcad.engines.build123d_worker"
 _VALIDATE_TIMEOUT = 30
@@ -92,28 +88,7 @@ class Build123dEngine(CADEngine):
 
     def _run_worker(self, job: Dict[str, Any], timeout: float, cwd: Optional[Path] = None) -> Dict[str, Any]:
         """Run the worker on ``job``; always returns a result dict (errors filled on failure)."""
-        with tempfile.TemporaryDirectory(prefix="agentcad_b3d_") as tmp:
-            job_path = Path(tmp) / "job.json"
-            result_path = Path(tmp) / "result.json"
-            job["result_path"] = str(result_path)
-            job_path.write_text(json.dumps(job))
-            cmd = [sys.executable, "-m", _WORKER_MODULE, str(job_path)]
-            try:
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=timeout,
-                    cwd=str(cwd) if cwd else None, env=os.environ.copy(),
-                )
-            except subprocess.TimeoutExpired:
-                return {"errors": [f"build123d worker timed out after {timeout:g}s"],
-                        "warnings": [], "images": {}, "output_path": None, "facet_count": 0, "metadata": {}}
-            if result_path.exists():
-                try:
-                    return json.loads(result_path.read_text())
-                except json.JSONDecodeError as e:
-                    return _failed(f"worker result unreadable: {e}")
-            tail = (proc.stderr or "").strip().splitlines()
-            detail = tail[-1] if tail else f"exit status {proc.returncode}"
-            return _failed(f"build123d worker produced no result: {detail}")
+        return run_worker(_WORKER_MODULE, job, timeout, label="build123d", cwd=cwd)
 
     # --- contract ---------------------------------------------------------------
 
@@ -211,7 +186,3 @@ class Build123dEngine(CADEngine):
         errors.extend(res.get("errors", []))
         return ValidationResult(valid=not errors, errors=errors, warnings=list(res.get("warnings", [])))
 
-
-def _failed(message: str) -> Dict[str, Any]:
-    return {"errors": [message], "warnings": [], "images": {}, "output_path": None,
-            "facet_count": 0, "metadata": {}}
