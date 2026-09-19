@@ -163,7 +163,10 @@ def cmd_projects(args):
     print(f"{'Project':<30} {'Engine':<12} {'Description'}")
     print("-" * 70)
     for cfg in projects:
-        print(f"{cfg.name or cfg.project_dir.name:<30} {cfg.engine:<12} {cfg.description[:40]}")
+        label = cfg.name or cfg.project_dir.name
+        if cfg.parent_name:
+            label = f"  \u2514 {label}"
+        print(f"{label:<30} {cfg.engine:<12} {cfg.description[:40]}")
 
 
 def cmd_status(args):
@@ -250,6 +253,16 @@ def _resolve_project(project_arg):
     if not project_path.exists():
         project_path = Path(project_arg)
     if not project_path.exists():
+        # a part subproject named on its own: look under every parent's parts
+        for parent in sorted(designs.iterdir()) if designs.exists() else []:
+            parent_cfg = find_project(parent) if parent.is_dir() else None
+            for folder, _ in (parent_cfg.part_projects() if parent_cfg else []):
+                if folder.name == project_arg:
+                    project_path = folder
+                    break
+            if project_path.exists():
+                break
+    if not project_path.exists():
         print(f"Error: project not found: {project_arg}", file=sys.stderr)
         sys.exit(1)
 
@@ -279,19 +292,34 @@ def cmd_session_start(args):
         defines=_parse_defines(args.define) if args.define else None,
     )
 
-    # Refuse to overwrite an active (non-finalized) session unless --force.
-    if session.state_file.exists() and not args.force:
+    # An existing record is never overwritten. Without --force an active
+    # session refuses the start; with it the record and its working files
+    # move to _work/archive_<stamp>/ (or are discarded with --no-archive).
+    if session.state_file.exists():
         try:
             prior = json.loads(session.state_file.read_text())
         except (OSError, json.JSONDecodeError) as e:
-            print(f"Warning: existing session state unreadable, starting fresh: {e}", file=sys.stderr)
+            print(f"Warning: existing session state unreadable: {e}", file=sys.stderr)
             prior = {}
-        if not prior.get("finalized", False) and prior.get("iterations"):
+        active = not prior.get("finalized", False) and prior.get("iterations")
+        if active and not args.force:
             print(f"Error: active session exists at {session.state_file} "
                   f"with {len(prior['iterations'])} iteration(s). "
-                  f"Use --force to overwrite or `agentcad session finalize` first.",
+                  f"Use --force to archive it and start over, `agentcad session finalize` "
+                  f"to close it, or `agentcad session reopen` to continue it.",
                   file=sys.stderr)
             sys.exit(1)
+        if getattr(args, "no_archive", False):
+            print(f"Warning: --no-archive: discarding the previous session record at {session.state_file}",
+                  file=sys.stderr)
+            session.state_file.unlink()
+        else:
+            archive = DesignSession.archive_previous(
+                project_name, config=cfg,
+                reason=f"session start{' --force' if args.force else ''} with {len(prior.get('iterations', []))} prior iteration(s)",
+            )
+            if archive:
+                print(f"  Archived previous session to {archive}")
 
     state_path = session.save_state()
     print(f"Session started for project '{project_name}' (engine: {engine.name})")
@@ -322,8 +350,10 @@ def cmd_session_iterate(args):
         sys.exit(1)
 
     code = source.read_text()
+    if getattr(args, "all", False):
+        _iterate_parts(cfg, source, code, args)
     try:
-        it = session.iterate(code)
+        it = session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -347,6 +377,81 @@ def cmd_session_iterate(args):
         for err in errors:
             print(f"  Render error: {err}", file=sys.stderr)
         sys.exit(1)
+
+
+def _iterate_parts(cfg, source, code, args):
+    """Run the iteration in every declared part subproject with the same source."""
+    from agentcad.session import DesignSession
+    from agentcad.report import render_lines
+
+    parts = cfg.part_projects()
+    if not parts:
+        print("Warning: --all given but the project declares no parts ([project] parts = [...])", file=sys.stderr)
+        return
+    for folder, part_cfg in parts:
+        engine = _engine_for(None, part_cfg)
+        try:
+            part_session = DesignSession.load_state(folder.name, engine=engine, config=part_cfg)
+        except (FileNotFoundError, ValueError) as e:
+            print(f"  part {folder.name}: skipped ({e})", file=sys.stderr)
+            continue
+        if part_session._finalized:
+            # the parent is being iterated, so its parts continue too
+            part_session.reopen()
+        try:
+            it = part_session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None)
+        except RuntimeError as e:
+            print(f"  part {folder.name}: {e}", file=sys.stderr)
+            continue
+        part_session.save_state()
+        ok = it.render_result is not None and it.render_result.success
+        line = f"  part {folder.name}: v{it.number} {'rendered' if ok else 'FAILED'}"
+        if it.report:
+            counts = it.metadata.get("counts") or {}
+            line += f"; volume {it.metadata.get('volume', 'n/a')}, solids {counts.get('solids', 'n/a')}"
+        print(line)
+        if it.report:
+            for w in it.report.warnings:
+                print(f"    warning: {w}", file=sys.stderr)
+
+
+def cmd_session_reopen(args):
+    """Continue a finalized session."""
+    from agentcad.session import DesignSession
+
+    cfg, _, project_name = _resolve_project(args.project)
+    engine = _engine_for(None, cfg)
+    try:
+        session = DesignSession.load_state(project_name, engine=engine, config=cfg)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not session._finalized:
+        print(f"Session for '{project_name}' is already open ({session.iteration_count} iteration(s)).")
+        return
+    session.reopen()
+    session.save_state()
+    print(f"Session reopened for '{project_name}'; the next iteration is v{session.iteration_count + 1}.")
+
+
+def cmd_session_tag(args):
+    """Freeze the latest iteration under tags/<name>/ for a review round."""
+    from agentcad.session import DesignSession
+
+    cfg, _, project_name = _resolve_project(args.project)
+    engine = _engine_for(None, cfg)
+    try:
+        session = DesignSession.load_state(project_name, engine=engine, config=cfg)
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    try:
+        dest = session.tag(args.tag, note=args.note)
+    except (RuntimeError, ValueError, FileExistsError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+    session.save_state()
+    print(f"Tagged v{session.current.number} as '{args.tag}': {dest}")
 
 
 def cmd_session_note(args):
@@ -381,13 +486,21 @@ def cmd_session_finalize(args):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    if session._finalized:
-        print(f"Session already finalized. Project: {session.project.project_dir}")
-        return
+    if getattr(args, "all", False):
+        for folder, part_cfg in cfg.part_projects():
+            part_engine = _engine_for(None, part_cfg)
+            try:
+                part_session = DesignSession.load_state(folder.name, engine=part_engine, config=part_cfg)
+                part_html = part_session.finalize(export_all=getattr(args, "export_all", False))
+                part_session.save_state()
+                print(f"  part {folder.name}: finalized ({part_session.iteration_count} iteration(s)) {part_html}")
+            except (FileNotFoundError, ValueError, RuntimeError) as e:
+                print(f"  part {folder.name}: {e}", file=sys.stderr)
 
-    html_path = session.finalize()
+    already = session._finalized
+    html_path = session.finalize(export_all=getattr(args, "export_all", False))
     session.save_state()
-    print(f"Session finalized.")
+    print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
     print(f"  HTML viewer: {html_path}")
     print(f"  Iterations:  {session.iteration_count}")
 
@@ -412,6 +525,12 @@ def cmd_viewer(args):
     from agentcad.viewer import regenerate_from_project_dir
 
     cfg, project_dir, _ = _resolve_project(args.project)
+    if getattr(args, "tag", None):
+        tag_dir = project_dir / "tags" / args.tag
+        if not (tag_dir / "TAG.json").exists():
+            print(f"Error: no tag '{args.tag}' under {project_dir / 'tags'}", file=sys.stderr)
+            sys.exit(1)
+        project_dir = tag_dir
     try:
         html_path = regenerate_from_project_dir(project_dir, cfg=cfg)
     except RuntimeError as e:
@@ -509,6 +628,7 @@ def main():
     # viewer (regenerate HTML from existing files)
     p_viewer = sub.add_parser("viewer", help="Regenerate HTML viewer from project files")
     p_viewer.add_argument("project", help="Project name (folder under designs_dir) or path")
+    p_viewer.add_argument("--tag", default=None, help="Regenerate the viewer of a frozen tag (tags/<tag>/index.html)")
     p_viewer.set_defaults(func=cmd_viewer)
 
     # check
@@ -527,6 +647,8 @@ def main():
     p_ss.add_argument("--max-iter", type=int, default=10, help="Max iterations (default: 10)")
     p_ss.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
                       help="Model parameter override applied to every iteration (repeatable)")
+    p_ss.add_argument("--no-archive", action="store_true",
+                      help="With --force: discard the previous record instead of archiving it")
     p_ss.add_argument("-f", "--force", action="store_true",
                       help="Overwrite an existing un-finalized session")
     p_ss.set_defaults(func=cmd_session_start)
@@ -534,7 +656,21 @@ def main():
     p_si = sub_session.add_parser("iterate", help="Add iteration: render source file, record")
     p_si.add_argument("project", help="Project name or path")
     p_si.add_argument("source_file", help="Path to CAD source file for this iteration")
+    p_si.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
+                      help="Override a model parameter for this iteration only (repeatable)")
+    p_si.add_argument("--all", action="store_true",
+                      help="Also iterate every part subproject the project declares, with the same source")
     p_si.set_defaults(func=cmd_session_iterate)
+
+    p_sr = sub_session.add_parser("reopen", help="Continue a finalized session (numbering carries on)")
+    p_sr.add_argument("project", help="Project name or path")
+    p_sr.set_defaults(func=cmd_session_reopen)
+
+    p_st = sub_session.add_parser("tag", help="Freeze the latest iteration under tags/<name>/ for a review")
+    p_st.add_argument("project", help="Project name or path")
+    p_st.add_argument("tag", help="Tag name (a plain folder name, e.g. draft1)")
+    p_st.add_argument("--note", default=None, help="What the tag is for")
+    p_st.set_defaults(func=cmd_session_tag)
 
     p_sn = sub_session.add_parser("note", help="Add analysis note to current iteration")
     p_sn.add_argument("project", help="Project name or path")
@@ -543,6 +679,9 @@ def main():
 
     p_sf = sub_session.add_parser("finalize", help="Finalize session: STL exports + HTML viewer")
     p_sf.add_argument("project", help="Project name or path")
+    p_sf.add_argument("--all", action="store_true", help="Also finalize every declared part subproject")
+    p_sf.add_argument("--export-all", action="store_true",
+                      help="Re-export every iteration instead of reusing exports already on disk")
     p_sf.set_defaults(func=cmd_session_finalize)
 
     p_sst = sub_session.add_parser("status", help="Show session state")

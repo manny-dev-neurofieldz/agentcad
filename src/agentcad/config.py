@@ -8,7 +8,7 @@ Layered: package defaults -> project agentcad.toml -> env vars -> CLI flags.
 import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Tuple, Any, Dict, List, Optional
 
 try:
     import tomllib
@@ -69,6 +69,13 @@ class ProjectConfig:
     name: str = ""
     engine: str = "openscad"
     description: str = ""
+    #: Globs (relative to the project folder) of part subprojects, each a
+    #: folder with its own agentcad.toml: ``parts = ["parts/*"]``. A parent
+    #: that declares parts can iterate and finalize them all in one call.
+    parts: List[str] = field(default_factory=list)
+    #: Name of the enclosing project when this config was found through a
+    #: parent's ``parts`` globs (set by discovery, never by the file).
+    parent_name: Optional[str] = field(default=None, repr=False)
 
     # Sub-configs
     output: OutputConfig = field(default_factory=OutputConfig)
@@ -88,6 +95,25 @@ class ProjectConfig:
     def engine_settings(self, name: str) -> Dict[str, Any]:
         """Settings table for engine ``name`` (a copy; empty when absent)."""
         return dict(self.engine_configs.get(name, {}))
+
+    def part_projects(self) -> List[Tuple[Path, "ProjectConfig"]]:
+        """The part subprojects this project declares, sorted by path.
+
+        Each entry is the part folder and its loaded config with
+        ``parent_name`` set. A project with no ``parts`` yields nothing.
+        """
+        found: List[Tuple[Path, "ProjectConfig"]] = []
+        if not self.parts or self._project_dir is None:
+            return found
+        for pattern in self.parts:
+            for folder in sorted(Path(self._project_dir).glob(pattern)):
+                if not folder.is_dir() or folder.resolve() == Path(self._project_dir).resolve():
+                    continue
+                cfg = find_project(folder)
+                if cfg is not None:
+                    cfg.parent_name = self.name or Path(self._project_dir).name
+                    found.append((folder, cfg))
+        return found
 
     def get_openscad_config(self) -> OpenSCADConfig:
         """OpenSCAD settings as the legacy dataclass (known keys only)."""
@@ -138,6 +164,9 @@ class ProjectConfig:
         for k in ("name", "engine", "description"):
             if k in proj:
                 setattr(config, k, proj[k])
+        if "parts" in proj:
+            parts = proj["parts"]
+            config.parts = [parts] if isinstance(parts, str) else list(parts)
 
         # Output section
         out = data.get("output", {})
@@ -258,4 +287,7 @@ def list_projects(designs_dir: Optional[Path] = None) -> List[ProjectConfig]:
                 cfg = find_project(d)
                 if cfg:
                     projects.append(cfg)
+                    # declared part subprojects follow their parent
+                    for _, part in cfg.part_projects():
+                        projects.append(part)
     return projects

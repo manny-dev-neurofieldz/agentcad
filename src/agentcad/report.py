@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 _CENSUS_ORDER = ("plane", "cylinder", "cone", "sphere", "torus", "bspline", "other")
 _COUNT_ORDER = ("solids", "faces", "edges", "vertices")
 _ZERO_CHANGE_REL = 1e-9
+_TWIST_AREA_FRAC = 0.02   # a twisted face smaller than this share of the part is a thread flank, not a loft
 
 
 @dataclass
@@ -159,9 +160,13 @@ def feature_effect(prev: Optional[Dict[str, Any]], cur: Dict[str, Any], *,
     if cur.get("is_valid") is False:
         rep.warnings.append("kernel reports the shape invalid")
     if cur.get("twisted_faces"):
-        detail = cur.get("twisted_faces_detail") or []
-        where = "; ".join(f"{d.get('type')} at {_fmt(d.get('center'))} turns {d.get('max_turn_deg')} deg" for d in detail[:3])
-        rep.warnings.append(f"{cur['twisted_faces']} twisted free-form face(s): {where}")
+        # warn about faces that are a body of the part, not thread slivers
+        detail = [d for d in (cur.get("twisted_faces_detail") or [])
+                  if d.get("area_frac") is None or d["area_frac"] >= _TWIST_AREA_FRAC]
+        if detail:
+            where = "; ".join(f"{d.get('type')} at {_fmt(d.get('center'))} turns {d.get('max_turn_deg')} deg "
+                              f"({100 * (d.get('area_frac') or 0):.0f}% of the area)" for d in detail[:3])
+            rep.warnings.append(f"{len(detail)} twisted free-form face(s): {where}")
     for key in sorted(cur):
         if key.endswith("_error"):
             rep.warnings.append(f"{key[:-6]} not measured: {cur[key]}")
