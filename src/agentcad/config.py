@@ -10,6 +10,8 @@ from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Tuple, Any, Dict, List, Optional
 
+from agentcad.camera import MULTI_VIEW_DEFAULT
+
 try:
     import tomllib
 except ImportError:
@@ -52,9 +54,11 @@ class OutputConfig:
     base_dir: str = _DEFAULT_DROPBOX
     sub_dir: str = "mechanical_designs"
     image_size: int = 1024
-    default_views: List[str] = field(
-        default_factory=lambda: ["iso", "front", "top", "right", "back"]
-    )
+    default_views: List[str] = field(default_factory=lambda: list(MULTI_VIEW_DEFAULT))
+    #: Meshes of one variant are embedded in the page up to this many MB;
+    #: beyond it they are linked beside the page (or a decimated preview is
+    #: embedded when a decimator is available), so the page always loads.
+    viewer_embed_mb: float = 8.0
 
     @property
     def designs_dir(self) -> Path:
@@ -73,6 +77,8 @@ class ProjectConfig:
     #: folder with its own agentcad.toml: ``parts = ["parts/*"]``. A parent
     #: that declares parts can iterate and finalize them all in one call.
     parts: List[str] = field(default_factory=list)
+    #: How many of this part an assembly uses (``[project] quantity``).
+    quantity: int = 1
     #: Name of the enclosing project when this config was found through a
     #: parent's ``parts`` globs (set by discovery, never by the file).
     parent_name: Optional[str] = field(default=None, repr=False)
@@ -167,10 +173,12 @@ class ProjectConfig:
         if "parts" in proj:
             parts = proj["parts"]
             config.parts = [parts] if isinstance(parts, str) else list(parts)
+        if "quantity" in proj:
+            config.quantity = int(proj["quantity"])
 
         # Output section
         out = data.get("output", {})
-        for k in ("base_dir", "sub_dir", "image_size"):
+        for k in ("base_dir", "sub_dir", "image_size", "viewer_embed_mb"):
             if k in out:
                 setattr(config.output, k, out[k])
         if "default_views" in out:

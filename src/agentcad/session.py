@@ -139,6 +139,10 @@ class DesignSession:
         self.defines: Dict[str, str] = dict(defines or {})
         self.iterations: List[Iteration] = []
         self._finalized = False
+        #: Meshes of part subprojects gathered by ``finalize --all``:
+        #: (name, path, quantity), attached to the latest variant so the
+        #: viewer shows the assembly with one toggle per part.
+        self.part_meshes: List[tuple] = []
 
         # Set up project
         self.project = DesignProject(
@@ -420,6 +424,7 @@ class DesignSession:
             if existing.exists() and not export_all and existing.stat().st_mtime >= src_mtime:
                 # an export at least as new as its source is the same geometry
                 variant.stl_path = existing
+                self._attach_part_meshes(variant, it)
                 continue
             stl_result = self.engine.export(
                 it.source_path, stl_path, fmt="stl", defines=it.defines or self.defines or None,
@@ -429,6 +434,7 @@ class DesignSession:
                     variant, stl_result.output_path,
                     filename=f"{self.name}_v{it.number}.stl",
                 )
+                self._attach_part_meshes(variant, it)
             else:
                 for err in stl_result.errors:
                     print(f"agentcad warning: v{it.number} STL export failed (viewer without mesh): {err}",
@@ -463,6 +469,14 @@ class DesignSession:
 
         # Generate HTML viewer
         return self.project.generate_viewer()
+
+    def _attach_part_meshes(self, variant, it: Iteration) -> None:
+        """On the latest variant, replace the assembly's own mesh with the parts' meshes."""
+        if not self.part_meshes or it is not self.iterations[-1]:
+            return
+        variant.meshes = []
+        for name, path, quantity in self.part_meshes:
+            variant.add_mesh(name, Path(path), quantity=quantity)
 
     def summary(self) -> str:
         """Human-readable session summary."""

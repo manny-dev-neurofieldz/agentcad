@@ -121,6 +121,12 @@ STANDARD_PRESETS: Dict[str, CameraPreset] = {
     "top": CameraPreset.from_rotation("top", 0, 0, up=(0.0, 1.0, 0.0), orthographic=True),
     "right": CameraPreset.from_rotation("right", 90, 90, orthographic=True),
     "back": CameraPreset.from_rotation("back", 90, 180, orthographic=True),
+    "left": CameraPreset.from_rotation("left", 90, 270, orthographic=True),
+    # Looking up at the underside: counterbores and chamfers cut from below
+    # are invisible in every other preset.
+    "bottom": CameraPreset.from_rotation("bottom", 180, 0, up=(0.0, -1.0, 0.0), orthographic=True),
 }
 
+#: The views a render or session produces when none are named. The output
+#: config's default is this same list, so the two cannot drift apart.
 MULTI_VIEW_DEFAULT = ["iso", "front", "top", "right"]

@@ -1,5 +1,6 @@
 """Viewer plumbing is engine-neutral: extensions and languages come from the engine."""
 
+import json
 import re
 from pathlib import Path
 
@@ -76,3 +77,67 @@ def test_no_scad_literal_outside_the_openscad_engine():
             if re.search(r"\.scad\b", line):
                 offenders.append(f"{path.relative_to(root)}:{lineno}: {line.strip()}")
     assert not offenders, "\n".join(offenders)
+
+
+# --- assembly meshes, the embed cap, the artifact fragment, camera presets ---
+
+def _project_with_meshes(tmp_path, sizes):
+    from agentcad.config import OutputConfig
+    from agentcad.output import DesignProject
+    proj = DesignProject("asm", OutputConfig(base_dir=tmp_path, sub_dir="designs"))
+    proj.setup()
+    v = proj.add_variant("v1 (latest)")
+    for i, size in enumerate(sizes):
+        p = proj.exports_dir / f"part{i}_v1.stl"
+        p.write_bytes(b"\x00" * 84 + b"\x00" * size)
+        v.add_mesh(f"part{i}", p, quantity=i + 1)
+    (proj.renders_dir / "asm_v1_iso.png").write_bytes(b"\x89PNG")
+    v.renders["iso"] = proj.renders_dir / "asm_v1_iso.png"
+    return proj
+
+
+def test_a_variant_with_several_meshes_gets_one_block_per_part(tmp_path):
+    from agentcad.viewer import generate_html
+    html = generate_html(_project_with_meshes(tmp_path, [50, 50, 50]))
+    assert html.count('class="mesh-data"') == 3
+    assert 'data-name="part1"' in html and "Download part2 x3" in html
+    assert "loadVariantMeshes(" in html and "mesh-tree" in html
+    assert "cycleSpin" in html and "setView('bottom')" in html
+
+
+def test_meshes_over_the_embed_cap_are_linked_with_a_badge(tmp_path):
+    from agentcad.viewer import generate_html
+    proj = _project_with_meshes(tmp_path, [4000, 4000])
+    small = generate_html(proj, embed_mb=1.0)
+    assert 'class="mesh-badge"' not in small and small.count("data-src=") == 0
+    capped = generate_html(proj, embed_mb=0.005)          # 5 kB cap, 8 kB of meshes
+    assert "over the 0 MB embed cap" in capped or "embed cap" in capped
+    # each mesh is either a decimated inline preview or a link; never dropped
+    assert capped.count('class="mesh-data"') == 2
+
+
+def test_artifact_fragment_has_no_document_shell_and_inlines_every_mesh(tmp_path):
+    from agentcad.viewer import write_artifact
+    proj = _project_with_meshes(tmp_path, [50])
+    older = proj.add_variant("v0")
+    older.add_mesh("old", proj.exports_dir / "part0_v1.stl")
+    out = write_artifact(proj, tmp_path / "art", title="Asm rev z")
+    html = out.read_text()
+    for tag in ("<!DOCTYPE", "<html", "<head>", "<body>"):
+        assert tag not in html
+    assert "<title>Asm rev z</title>" in html and "<style>" in html
+    assert "data-src=" not in html                       # no mesh is served as a file
+    assert "not included in the artifact" in html         # the older variant says so
+    assert 'href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js' not in html
+    files = json.loads((tmp_path / "art" / "files.json").read_text())
+    assert files and all(k.endswith(".png") for k in files)
+    assert (tmp_path / "art" / "renders" / "asm_v1_iso.png").exists()
+
+
+def test_bottom_and_left_presets_look_where_they_say():
+    from agentcad.camera import MULTI_VIEW_DEFAULT, STANDARD_PRESETS
+    from agentcad.config import OutputConfig
+    assert STANDARD_PRESETS["bottom"].eye[2] < -0.99 and STANDARD_PRESETS["bottom"].orthographic
+    assert STANDARD_PRESETS["left"].eye[0] < -0.99
+    assert STANDARD_PRESETS["top"].eye[2] > 0.99
+    assert OutputConfig().default_views == MULTI_VIEW_DEFAULT

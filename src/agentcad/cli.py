@@ -487,6 +487,7 @@ def cmd_session_finalize(args):
         sys.exit(1)
 
     if getattr(args, "all", False):
+        gathered = []
         for folder, part_cfg in cfg.part_projects():
             part_engine = _engine_for(None, part_cfg)
             try:
@@ -494,8 +495,14 @@ def cmd_session_finalize(args):
                 part_html = part_session.finalize(export_all=getattr(args, "export_all", False))
                 part_session.save_state()
                 print(f"  part {folder.name}: finalized ({part_session.iteration_count} iteration(s)) {part_html}")
+                latest = part_session.project.variants[0] if part_session.project.variants else None
+                if latest is not None and latest.stl_path and latest.stl_path.exists():
+                    gathered.append((folder.name, latest.stl_path, part_cfg.quantity))
             except (FileNotFoundError, ValueError, RuntimeError) as e:
                 print(f"  part {folder.name}: {e}", file=sys.stderr)
+        session.part_meshes = gathered
+        if gathered:
+            print(f"  assembly viewer: {len(gathered)} part mesh(es) gathered")
 
     already = session._finalized
     html_path = session.finalize(export_all=getattr(args, "export_all", False))
@@ -532,11 +539,16 @@ def cmd_viewer(args):
             sys.exit(1)
         project_dir = tag_dir
     try:
-        html_path = regenerate_from_project_dir(project_dir, cfg=cfg)
+        html_path = regenerate_from_project_dir(project_dir, cfg=cfg,
+                                                artifact_dir=Path(args.artifact) if getattr(args, "artifact", None) else None,
+                                                title=getattr(args, "title", None))
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
-    print(f"Regenerated: {html_path}")
+    if getattr(args, "artifact", None):
+        print(f"Artifact fragment: {html_path} (files map: {html_path.parent / 'files.json'})")
+    else:
+        print(f"Regenerated: {html_path}")
 
 
 def cmd_check(args):
@@ -629,6 +641,9 @@ def main():
     p_viewer = sub.add_parser("viewer", help="Regenerate HTML viewer from project files")
     p_viewer.add_argument("project", help="Project name (folder under designs_dir) or path")
     p_viewer.add_argument("--tag", default=None, help="Regenerate the viewer of a frozen tag (tags/<tag>/index.html)")
+    p_viewer.add_argument("--artifact", metavar="DIR", default=None,
+                          help="Write a page fragment plus its files and files.json into DIR for an artifact host that supplies the document shell")
+    p_viewer.add_argument("--title", default=None, help="Artifact title (default: the project name)")
     p_viewer.set_defaults(func=cmd_viewer)
 
     # check
