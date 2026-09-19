@@ -551,6 +551,100 @@ def cmd_viewer(args):
         print(f"Regenerated: {html_path}")
 
 
+def _windows_arg(items):
+    out = {}
+    for item in items or []:
+        name, _, nums = item.partition("=")
+        vals = [float(v) for v in nums.split(",")]
+        if len(vals) != 4:
+            print(f"Error: window {item!r}: expected name=x0,y0,x1,y1", file=sys.stderr)
+            sys.exit(2)
+        out[name] = vals
+    return out
+
+
+def cmd_probe_section(args):
+    """Section loops of a shape on named planes, as loops.json."""
+    from agentcad import probe
+
+    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    planes = args.planes or ["z=mid"]
+    data = {"source": str(args.source), "planes": []}
+    for spec in planes:
+        plane, coord = probe.parse_plane(spec, shape)
+        loops = probe.section_loops(shape, plane, max_loops=args.max_loops)
+        for L in loops:
+            L["fit"] = probe.fit_polyline_loop(L)
+        total = loops[0]["total_on_plane"] if loops else 0
+        print(f"{spec} (at {coord:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""))
+        for i, L in enumerate(loops[: args.show]):
+            kinds = {}
+            for e in L["edges"]:
+                kinds[e["type"]] = kinds.get(e["type"], 0) + 1
+            desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
+            fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
+            print(f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}")
+        data["planes"].append({"plane": spec, "coordinate": coord, "n_loops": total, "loops": loops})
+    if args.output:
+        print(f"loops.json: {probe.write_json(data, Path(args.output))}")
+
+
+def cmd_probe_inventory(args):
+    """bbox, volume, census, cylinder axes and section loops of a shape."""
+    from agentcad import probe
+
+    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    inv = probe.inventory(shape, planes=args.planes or [], max_loops=args.max_loops)
+    print(f"bbox_min {inv.get('bbox_min')}  bbox_size {inv.get('bbox_size')}")
+    print(f"volume {inv.get('volume')}  area {inv.get('area')}  counts {inv.get('counts')}  valid {inv.get('is_valid')}")
+    print(f"census {inv.get('face_census')}")
+    cyl = inv.get("cylinders") or []
+    print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
+    for c in cyl[: args.show]:
+        if "axis_direction" in c:
+            o, d = c["axis_origin"], c["axis_direction"]
+            print(f"  {c['type']} r {c.get('radius')}: axis through ({o[0]:.4g}, {o[1]:.4g}, {o[2]:.4g}) along ({d[0]:.3g}, {d[1]:.3g}, {d[2]:.3g})")
+        else:
+            print(f"  {c['type']}: no axis ({c.get('axis_error')})")
+    for p in inv.get("planes") or []:
+        print(f"{p['plane']}: {p['n_loops']} loop(s)")
+    if args.output:
+        print(f"inventory.json: {probe.write_json(inv, Path(args.output))}")
+
+
+def cmd_compare(args):
+    """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
+    from agentcad import probe
+
+    res = probe.compare(Path(args.original), Path(args.candidate), planes=args.planes or [],
+                        windows=_windows_arg(args.window) or None,
+                        out_dir=Path(args.output_dir) if args.output_dir else None,
+                        defines=_parse_defines(args.define) if args.define else None, max_loops=args.max_loops)
+    for p in res.get("planes", []):
+        mark = "ok" if p["equal"] else "DIFFERENT"
+        print(f"{p['plane']}: loops {p['loops_original']} vs {p['loops_candidate']} {mark}")
+        for name, w in (p.get("windows") or {}).items():
+            if "p95" in w:
+                print(f"  window {name}: p95 {w['p95']:.4g}, max {w['max']:.4g}")
+            else:
+                print(f"  window {name}: {w.get('note')}")
+        if p.get("overlay"):
+            print(f"  overlay: {p['overlay']}")
+    if res.get("planes_note"):
+        print(f"note: {res['planes_note']}")
+    dev = res.get("deviation")
+    if dev:
+        a, b = dev["candidate_to_original"], dev["original_to_candidate"]
+        print(f"deviation candidate->original p95 {a['p95']:.4g} max {a['max']:.4g}; original->candidate p95 {b['p95']:.4g} max {b['max']:.4g}")
+    elif res.get("deviation_error"):
+        print(f"deviation: {res['deviation_error']}", file=sys.stderr)
+    if args.output_dir:
+        print(f"compare.json: {probe.write_json(res, Path(args.output_dir) / 'compare.json')}")
+    if res.get("gate") is False:
+        print("loop-count gate: FAILED (a plane's loop counts differ)", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_gallery_build(args):
     """Build a static gallery of project viewers."""
     from agentcad.config import OutputConfig
@@ -671,6 +765,29 @@ def main():
     p_cshow.set_defaults(func=cmd_config_show)
 
     # viewer (regenerate HTML from existing files)
+    p_probe = sub.add_parser("probe", help="RECOVER: section loops, arc fits and an inventory of a STEP or build123d source")
+    sub_probe = p_probe.add_subparsers(dest="probe_cmd", required=True)
+    for name, func, hlp in (("section", cmd_probe_section, "Closed loops of exact edges on named planes (loops.json)"),
+                            ("inventory", cmd_probe_inventory, "bbox, volume, census, cylinder axes, loops on planes")):
+        pp = sub_probe.add_parser(name, help=hlp)
+        pp.add_argument("source", help="STEP file or build123d program")
+        pp.add_argument("--planes", nargs="*", default=None, help="x=|y=|z= followed by a number or mid")
+        pp.add_argument("--max-loops", type=int, default=None, help="Keep at most N loops per plane (printed when applied; default none)")
+        pp.add_argument("--show", type=int, default=12, help="Lines to print per plane or face list (default 12)")
+        pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
+        pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+        pp.set_defaults(func=func)
+
+    p_cmp = sub.add_parser("compare", help="COMPARE: loop counts per plane (a gate), sampled deviation, overlays")
+    p_cmp.add_argument("original")
+    p_cmp.add_argument("candidate")
+    p_cmp.add_argument("--planes", nargs="*", default=None)
+    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane (repeatable)")
+    p_cmp.add_argument("-o", "--output-dir", default=None, help="Overlay PNGs and compare.json go here")
+    p_cmp.add_argument("--max-loops", type=int, default=None)
+    p_cmp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    p_cmp.set_defaults(func=cmd_compare)
+
     p_gallery = sub.add_parser("gallery", help="Build or check a static gallery of project viewers")
     sub_gallery = p_gallery.add_subparsers(dest="gallery_cmd", required=True)
     p_gb = sub_gallery.add_parser("build", help="Build the gallery page and copy the viewers under it")
