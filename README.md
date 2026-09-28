@@ -59,6 +59,9 @@ and which export formats it supports.
 - Manifold backend for fast CSG operations (dropped automatically when the binary lacks it)
 - Native EGL headless rendering (no display server needed)
 - Exports STL, 3MF, OFF, AMF; `-D name=value` overrides go straight to OpenSCAD
+- `[engine.openscad] binary` (or `AGENTCAD_OPENSCAD`) names the executable when the first
+  `openscad` on PATH is not the one to use; a binary that will not run reports the engine as
+  unavailable in `agentcad info` rather than failing mid-render
 
 ### VoxelCAD
 - Python-native voxel-based solid modeling

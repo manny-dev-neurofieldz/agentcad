@@ -38,6 +38,7 @@ _DEFAULTS: Dict[str, Any] = {
     "backend": "Manifold",
     "colorscheme": "Cornfield",
     "library_path": _DEFAULT_OPENSCADPATH,
+    "binary": None,
 }
 
 
@@ -58,16 +59,30 @@ def _backend_flag_supported(binary: str) -> bool:
 
 
 class OpenSCADEngine(CADEngine):
-    """OpenSCAD rendering engine with BOSL2 and Manifold support."""
+    """OpenSCAD rendering engine with BOSL2 and Manifold support.
 
-    known_settings = ("fa", "fs", "backend", "colorscheme", "library_path")
+    ``[engine.openscad] binary`` (or ``AGENTCAD_OPENSCAD``) names the executable when PATH would
+    find the wrong one; without it the engine takes the first ``openscad`` on PATH. ``agentcad
+    info`` reports the engine as unavailable when the chosen binary will not run, so a broken
+    install reads as absent rather than failing mid-render."""
+
+    known_settings = ("fa", "fs", "backend", "colorscheme", "library_path", "binary")
     FILE_EXTENSION = ".scad"
     EXPORT_FORMATS = tuple(_EXPORT_FORMAT_FLAGS)
 
     def __init__(self, settings=None, **overrides):
         """Initialize from a settings table (dict or OpenSCADConfig) plus overrides."""
         super().__init__(settings, **overrides)
-        self._binary = shutil.which("openscad") or "openscad"
+        # Which OpenSCAD: the project's setting, then AGENTCAD_OPENSCAD, then PATH. A machine can
+        # carry two installs and the one PATH finds first can be the broken one (a build whose Qt or
+        # allocator libraries went missing shadows a working older binary), so the choice is
+        # configurable rather than discovered only.
+        self._binary = str(
+            self.setting("binary", _DEFAULTS["binary"])
+            or os.environ.get("AGENTCAD_OPENSCAD")
+            or shutil.which("openscad")
+            or "openscad"
+        )
         self._library_path = os.environ.get(
             "OPENSCADPATH", self.setting("library_path", _DEFAULTS["library_path"])
         )
