@@ -516,3 +516,73 @@ def render_fillet_probe(res: Dict[str, Any]) -> List[str]:
     if w:
         lines.append(f"  watertight: {'yes' if w.get('ok') else 'NO'}" + (f" ({w['boundary_edges']} boundary edges)" if "boundary_edges" in w else f" ({w.get('error')})"))
     return lines
+
+
+# --- draft: will the part leave its mold --------------------------------------------------------
+
+def draft_analysis(shape, pull: Sequence[float] = (0.0, 0.0, 1.0), samples: int = 7,
+                   perpendicular_deg: float = 1.0) -> Dict[str, Any]:
+    """Face-by-face draft against a pull direction.
+
+    The draft at a point is asin(n . d), with n the face's outward normal and d the unit pull, in
+    degrees: positive means the face leans so it releases (the rule is the same for a pocket and a
+    boss), zero is a vertical wall that drags, negative is an undercut that locks. Each face is sampled
+    on a samples x samples grid of (u, v) inside it, so a curved face reports its range. A face whose
+    normal is within ``perpendicular_deg`` of the pull everywhere (a floor, a top, a parting face) is
+    reported as perpendicular and NOT given a draft: the analysis says what it cannot judge instead of
+    folding it into a number.
+    """
+    b3d = _b3d()
+    d = b3d.Vector(*pull).normalized()
+    limit = math.cos(math.radians(perpendicular_deg))
+    faces: List[Dict[str, Any]] = []
+    for i, f in enumerate(shape.faces()):
+        dots = []
+        for a in range(samples):
+            for b in range(samples):
+                try:
+                    dots.append(f.normal_at((a + 0.5) / samples, (b + 0.5) / samples).dot(d))
+                except Exception as e:  # a degenerate patch has no normal; say so on the row
+                    dots.append(float("nan"))
+        c = f.center()
+        row: Dict[str, Any] = {"index": i, "type": str(f.geom_type).split(".")[-1].lower(),
+                               "center": [c.X, c.Y, c.Z], "area": float(f.area)}
+        finite = [x for x in dots if x == x]
+        if not finite:
+            row.update({"class": "unmeasured"})
+        elif all(abs(x) > limit for x in finite):
+            row.update({"class": "perpendicular"})
+        else:
+            degs = [math.degrees(math.asin(max(-1.0, min(1.0, x)))) for x in finite]
+            row.update({"class": "side", "min_deg": min(degs), "max_deg": max(degs)})
+        faces.append(row)
+    sides = [r for r in faces if r["class"] == "side"]
+    return {"pull": [d.X, d.Y, d.Z], "samples": samples, "perpendicular_deg": perpendicular_deg,
+            "faces": faces,
+            "summary": {"side_faces": len(sides),
+                        "perpendicular_faces": sum(1 for r in faces if r["class"] == "perpendicular"),
+                        "unmeasured_faces": sum(1 for r in faces if r["class"] == "unmeasured"),
+                        "min_deg": min((r["min_deg"] for r in sides), default=None),
+                        "max_deg": max((r["max_deg"] for r in sides), default=None)}}
+
+
+def draft_failures(res: Dict[str, Any], min_draft_deg: float) -> List[Dict[str, Any]]:
+    """Side faces whose smallest draft is below ``min_draft_deg`` (undercuts are the negative ones)."""
+    return [r for r in res["faces"] if r["class"] == "side" and r["min_deg"] < min_draft_deg - 1e-9]
+
+
+def render_draft(res: Dict[str, Any], min_draft_deg: Optional[float] = None, show: int = 12) -> List[str]:
+    s = res["summary"]
+    rng = "n/a" if s["min_deg"] is None else f"{s['min_deg']:+.3f} .. {s['max_deg']:+.3f} deg"
+    lines = [f"pull {tuple(round(v, 4) for v in res['pull'])}: {s['side_faces']} side face(s), draft {rng}; "
+             f"{s['perpendicular_faces']} perpendicular to the pull (not judged)"
+             + (f"; {s['unmeasured_faces']} unmeasured" if s["unmeasured_faces"] else "")]
+    if min_draft_deg is not None:
+        bad = draft_failures(res, min_draft_deg)
+        lines.append(f"minimum draft {min_draft_deg:g} deg: " + ("PASS" if not bad else f"{len(bad)} face(s) below it"))
+        for r in sorted(bad, key=lambda r: r["min_deg"])[:show]:
+            c = r["center"]
+            kind = "UNDERCUT" if r["min_deg"] < -1e-9 else ("no draft" if abs(r["max_deg"]) < 1e-6 else "too little")
+            lines.append(f"  face {r['index']} {r['type']} at ({c[0]:.3g}, {c[1]:.3g}, {c[2]:.3g}): "
+                         f"{r['min_deg']:+.3f} .. {r['max_deg']:+.3f} deg  {kind}")
+    return lines
