@@ -777,6 +777,34 @@ def cmd_gcode_check(args):
     return 1 if any(f.severity == "error" for f in findings) else 0
 
 
+def _supports_png(out, bands, placement, meshes, stl_root):
+    """Parts (translucent, placed on the bed) with contact cells: green on an outer surface, red in a cavity."""
+    import numpy as np
+    import pyvista as pv
+    from agentcad.gcode import supports
+
+    pl = pv.Plotter(off_screen=True, window_size=(1000, 800))
+    placed = set()
+    for b in bands:
+        p = placement.get(b.object or "")
+        cells = np.array(b.cells or [], float)
+        if not len(cells):
+            continue
+        colour = "seagreen"
+        if p and stl_root is not None and (stl_root / p["stl"]).exists():
+            mesh = meshes.setdefault(str(stl_root / p["stl"]), pv.read(str(stl_root / p["stl"])))
+            if b.object not in placed:
+                pl.add_mesh(mesh.translate(p["bed_offset"], inplace=False), color="lightsteelblue", opacity=0.35)
+                placed.add(b.object)
+            votes = supports.band_enclosure(b, placement, mesh) or {}
+            if votes and max(votes, key=votes.get) == "cavity":
+                colour = "red"
+        pl.add_points(cells, color=colour, point_size=6, render_points_as_spheres=True)
+    pl.add_axes()
+    pl.camera_position = "iso"
+    pl.screenshot(str(out))
+
+
 def cmd_gcode_supports(args):
     """Where supports touch each object, as contact bands in the bed frame."""
     from agentcad.gcode import bgcode, model, supports
@@ -819,6 +847,10 @@ def cmd_gcode_supports(args):
                     print(f"      on an outer surface. Votes {votes}")
             elif o:
                 print(f"      (STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root)")
+    if args.png:
+        _supports_png(Path(args.png), bands, placement, meshes, Path(args.stl_root or Path(args.placement).parent)
+                      if args.placement else None)
+        print(f"render: {args.png}")
     if in_cavity:
         return 1
 
@@ -1102,6 +1134,7 @@ def main():
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
     pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1): bands in each STL's frame")
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
+    pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     pg.set_defaults(func=cmd_gcode_supports)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
