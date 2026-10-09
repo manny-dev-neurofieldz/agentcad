@@ -861,7 +861,22 @@ def cmd_gcode_view(args):
 
     path = Path(args.file)
     out = Path(args.output) if args.output else path.with_suffix(".toolpaths.html")
-    view.write_page(model.parse(bgcode.gcode_text(path)), out, title=path.stem, budget_mb=args.budget_mb)
+    m = model.parse(bgcode.gcode_text(path))
+    contacts = []
+    if args.placement:
+        import pyvista as pv
+        from agentcad.gcode import supports
+        from agentcad.gcode.check import embedded_config
+        cd = float(embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
+        placement = supports.load_placement(Path(args.placement))
+        root = Path(args.stl_root or Path(args.placement).parent)
+        for b in supports.find_contacts(m, contact_distance=cd):
+            p = placement.get(b.object or "")
+            stl = root / p["stl"] if p and p.get("stl") else None
+            votes = supports.band_enclosure(b, placement, pv.read(str(stl))) if stl is not None and stl.exists() else None
+            kind = "cavity" if votes and max(votes, key=votes.get) == "cavity" else "outside"
+            contacts += [(x, y, z, kind) for x, y, z in (b.cells or [])]
+    view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts)
     print(f"toolpaths: {out}")
 
 
@@ -1151,6 +1166,8 @@ def main():
     pg.add_argument("file")
     pg.add_argument("-o", "--output", default=None, help="Page path (default: <file>.toolpaths.html)")
     pg.add_argument("--budget-mb", type=float, default=8.0, help="Embedded toolpath budget; over it, every Nth layer")
+    pg.add_argument("--placement", default=None, help="Placement sidecar: mark support contact cells (red in a cavity)")
+    pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to")
     pg.set_defaults(func=cmd_gcode_view)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")
