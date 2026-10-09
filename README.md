@@ -207,6 +207,14 @@ bed. With it, each band is located in its object's own frame and checked against
 or walled in on every side (a bore or pocket), which is an error (exit status 1): such supports are hard to
 remove and foul the fit.
 
+`gcode view` writes a standalone page of the toolpaths, offline (three.js inlined): lines coloured by
+feature with a toggle per feature and a layer-range slider. Toolpaths are embedded within a budget
+(`--budget-mb`, default 8); over it, every Nth layer is kept, first and last always, and the page says so.
+
+```bash
+agentcad gcode view plate.bgcode -o plate.toolpaths.html
+```
+
 Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
 its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
 compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code encodings (none, MeatPack,
