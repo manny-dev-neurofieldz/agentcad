@@ -799,12 +799,28 @@ def cmd_gcode_supports(args):
         return
     print(f"{path.name}: {len(bands)} contact band(s), about {sum(b.area_mm2 for b in bands):.0f} mm2 in all "
           f"(contact distance {cd} mm; bed frame)")
+    meshes, in_cavity = {}, 0
     for b in sorted(bands, key=lambda b: -b.area_mm2):
         print(f"  {b.sentence()}")
         if args.placement:
             o = supports.in_object_frame(b, placement)
             print("      in its STL frame: " + (f"x {o['x'][0]:.1f}..{o['x'][1]:.1f}, y {o['y'][0]:.1f}..{o['y'][1]:.1f}, "
                                                  f"z {o['z'][0]:.1f}..{o['z'][1]:.1f}" if o else "placement unknown"))
+            stl = Path(args.stl_root or Path(args.placement).parent) / o["stl"] if o and o.get("stl") else None
+            if stl is not None and stl.exists():
+                import pyvista as pv
+                votes = supports.band_enclosure(b, placement, meshes.setdefault(str(stl), pv.read(str(stl))))
+                where = max(votes, key=votes.get) if votes else None
+                if where == "cavity":
+                    in_cavity += 1
+                    print(f"      ERROR: walled in on every side (a bore or pocket): supports here are hard to remove "
+                          f"and foul the fit; block them (a support blocker volume) or re-orient. Votes {votes}")
+                elif where:
+                    print(f"      on an outer surface. Votes {votes}")
+            elif o:
+                print(f"      (STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root)")
+    if in_cavity:
+        return 1
 
 
 def cmd_compare(args):
@@ -1085,6 +1101,7 @@ def main():
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
     pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1): bands in each STL's frame")
+    pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     pg.set_defaults(func=cmd_gcode_supports)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
