@@ -876,7 +876,15 @@ def cmd_gcode_view(args):
             votes = supports.band_enclosure(b, placement, pv.read(str(stl))) if stl is not None and stl.exists() else None
             kind = "cavity" if votes and max(votes, key=votes.get) == "cavity" else "outside"
             contacts += [(x, y, z, kind) for x, y, z in (b.cells or [])]
-    view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts)
+    meshes = []
+    if args.placement:
+        import numpy as np
+        for label, p in placement.items():
+            stl = root / p["stl"] if p.get("stl") else None
+            if stl is not None and stl.exists():
+                mesh = pv.read(str(stl)).triangulate()
+                meshes.append((np.asarray(mesh.points) + np.asarray(p["bed_offset"]), mesh.faces.reshape(-1, 4)[:, 1:]))
+    view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts, meshes=meshes)
     print(f"toolpaths: {out}")
 
 
