@@ -35,3 +35,10 @@ def test_page_carries_contact_cells_when_given(tmp_path):
     from agentcad.gcode import view
     p = view.write_page(gm.parse(TEXT), tmp_path / "c.html", contacts=[(1.0, 2.0, 0.2, "cavity")])
     assert '"contacts": [[1.0, 2.0, 0.2, "cavity"]]' in p.read_text()
+
+
+def test_page_embeds_a_placed_mesh(tmp_path):
+    from agentcad.gcode import view
+    tri = ([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)])
+    html = view.write_page(gm.parse(TEXT), tmp_path / "m.html", meshes=[tri]).read_text()
+    assert '"meshes": [{"p": "' in html

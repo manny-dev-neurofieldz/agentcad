@@ -47,6 +47,11 @@ function apply() {{ const lo = +document.getElementById("lo").value, hi = +docum
   layerObjs.forEach(m => m.visible = on[m.userData.feature] && m.userData.layer >= lo && m.userData.layer <= hi);
   document.getElementById("zr").textContent = `z ${{DATA.layers[lo].z}}-${{DATA.layers[hi].z}} mm`; }}
 document.querySelectorAll("input").forEach(i => i.addEventListener("input", apply)); apply();
+(DATA.meshes || []).forEach(M => {{ const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(dec(M.p), 3));
+  const s = atob(M.t); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+  g.setIndex(new THREE.BufferAttribute(new Uint32Array(u.buffer), 1)); g.computeVertexNormals();
+  scene.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({{color: "#9fb4d0", transparent: true, opacity: 0.18}}))); }});
 (DATA.contacts || []).forEach(([x, y, z, k]) => {{ const d = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 4),
   new THREE.MeshBasicMaterial({{color: k === "cavity" ? "#ff2020" : "#20ff60"}})); d.position.set(x, y, z); scene.add(d); }});
 (function loop() {{ requestAnimationFrame(loop); r.render(scene, cam); }})();
@@ -54,9 +59,17 @@ document.querySelectorAll("input").forEach(i => i.addEventListener("input", appl
 
 
 def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb: float = 8.0,
-               contacts=None) -> Path:
-    """``contacts``: optional [(x, y, z, "outside" | "cavity")] support contact cells (bed frame), drawn as dots."""
+               contacts=None, meshes=None) -> Path:
+    """``contacts``: optional [(x, y, z, "outside" | "cavity")] support contact cells (bed frame), drawn as dots.
+    ``meshes``: optional [(points (N, 3) in the bed frame, triangles (M, 3))], drawn translucent under the paths."""
+    import base64
+
+    import numpy as np
+
     data = pack(model, int(budget_mb * 1024 * 1024))
+    data["meshes"] = [{"p": base64.b64encode(np.asarray(pts, np.float32).tobytes()).decode("ascii"),
+                       "t": base64.b64encode(np.asarray(tri, np.uint32).tobytes()).decode("ascii")}
+                      for pts, tri in (meshes or [])]
     data["contacts"] = [[float(x), float(y), float(z), kind] for x, y, z, kind in (contacts or [])]
     note = (f"every {data['stride']}th layer shown (the full print exceeds the {budget_mb:g} MB embed budget)"
             if data["stride"] > 1 else "")
