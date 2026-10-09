@@ -106,3 +106,29 @@ def find_contacts(model: GCodeModel, contact_distance: float = 0.25, cell: float
                           round(sum(hits[c][1] for c in comp) * cell, 1), len(comp)))
     bands.sort(key=lambda b: (b.object or "", b.z[0]))
     return bands
+
+
+def load_placement(path) -> Dict[str, Dict]:
+    """A placement sidecar (schema agentcad.placement/1) as {slicer label: {"bed_offset", "stl", "print_pose"}}.
+    bed point = STL point + bed_offset, for the STL exactly as it was placed (already in its print pose)."""
+    import json
+
+    data = json.loads(open(path).read())
+    out = {}
+    for obj in data.get("objects", []):
+        for inst in obj.get("instances", []):
+            out[inst["label"]] = {"bed_offset": inst["bed_offset"], "stl": obj.get("stl"),
+                                  "print_pose": obj.get("print_pose")}
+    return out
+
+
+def in_object_frame(band: "Band", placement: Dict[str, Dict]) -> Optional[Dict]:
+    """The band's extent in its object's STL frame (the print-pose STL), or None when the object has no
+    placement: never guessed."""
+    p = placement.get(band.object or "")
+    if not p:
+        return None
+    ox, oy, oz = p["bed_offset"]
+    return {"stl": p["stl"], "x": (band.xy_min[0] - ox, band.xy_max[0] - ox),
+            "y": (band.xy_min[1] - oy, band.xy_max[1] - oy), "z": (band.z[0] - oz, band.z[1] - oz),
+            "print_pose": p.get("print_pose")}

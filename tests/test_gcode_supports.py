@@ -48,3 +48,15 @@ def test_cli_reads_the_contact_distance_from_the_file(tmp_path):
     r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0", "--min-area", "0"],
                        capture_output=True, text=True)
     assert "no support touches a part" in r.stdout
+
+
+def test_bands_map_into_the_object_frame_only_with_a_placement(tmp_path):
+    import json
+    p = tmp_path / "plate.placement.json"
+    p.write_text(json.dumps({"schema": "agentcad.placement/1", "objects": [
+        {"name": "ledge.stl", "stl": "ledge.stl", "instances": [{"label": "ledge.stl", "bed_offset": [100, 50, 0]}]}]}))
+    placement = sp.load_placement(p)
+    band = sp.Band("ledge.stl", (1, 1), (0.3, 0.3), (101.0, 52.0), (105.0, 53.0), 2.0, 4)
+    o = sp.in_object_frame(band, placement)
+    assert o["x"] == (1.0, 5.0) and o["y"] == (2.0, 3.0) and o["z"] == (0.3, 0.3)
+    assert sp.in_object_frame(sp.Band("other.stl", (1, 1), (0, 0), (0, 0), (1, 1), 1.0, 1), placement) is None
