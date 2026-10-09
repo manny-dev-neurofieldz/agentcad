@@ -90,3 +90,25 @@ def test_enclosure_tells_a_bore_from_an_outer_surface():
     assert sp.enclosure((0.31, 0.17, 0.0), tube) == "cavity"        # in the bore (off the mesh's symmetry lines)
     assert sp.enclosure((8.31, 0.17, 0.0), tube) == "outside"       # beside the tube
     assert sp.enclosure((0.31, 0.17, 15.0), tube) == "outside"      # above the open end
+
+
+def test_cli_reports_a_cavity_contact_as_an_error(tmp_path):
+    import json
+    import subprocess
+    import sys
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    tube = pv.Cylinder(center=(10.0, 1.0, 0.0), radius=6.0, height=4, direction=(0, 0, 1), capping=False,
+                       resolution=48) + pv.Cylinder(center=(10.0, 1.0, 0.0), radius=4.0, height=4,
+                                                    direction=(0, 0, 1), capping=False, resolution=48)
+    tube.save(str(tmp_path / "ledge.stl"))
+    f = tmp_path / "ledge.gcode"
+    f.write_text(TEXT)
+    p = tmp_path / "plate.placement.json"
+    p.write_text(json.dumps({"schema": "agentcad.placement/1", "objects": [
+        {"name": "ledge.stl", "stl": "ledge.stl", "instances": [{"label": "ledge.stl", "bed_offset": [0, 0, 0]}]}]}))
+    run = [sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())"]
+    r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0.25", "--min-area", "0",
+                              "--placement", str(p)], capture_output=True, text=True)
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert "ERROR: walled in on every side" in r.stdout
