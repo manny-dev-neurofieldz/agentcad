@@ -151,3 +151,49 @@ def test_probe_fillet_captures_the_call_by_index_and_leaves_build123d_intact(tmp
     with pytest.raises(LookupError):
         probe.capture_call(p, "fillet", 2)
     assert build123d.fillet is real                                 # restored after every run
+
+
+# --- probe draft ---------------------------------------------------------------------------------
+
+POCKET = ("from build123d import *\n\n"
+          "def build(angle=0.0):\n"
+          "    part = Box(40, 30, 20) - Pos(0, 0, 6) * Box(20, 12, 8)\n"
+          "    if angle == 0.0:\n"
+          "        return part\n"
+          "    sides = part.faces().filter_by(lambda f: abs(f.normal_at().Z) < 1e-6 and 1.9 < f.center().Z < 9.9\n"
+          "                                   and abs(f.center().X) < 10.5 and abs(f.center().Y) < 6.5)\n"
+          "    return draft(sides, Plane.XY.offset(10), angle)\n")
+
+
+def _pocket_sides(res):
+    return [r for r in res["faces"] if r["class"] == "side" and abs(r["center"][0]) < 10.6 and abs(r["center"][1]) < 6.6
+            and 1.9 < r["center"][2] < 10.1]
+
+
+def test_probe_draft_controls_read_zero_and_the_drafted_angle(tmp_path):
+    """The instrument first: an undrafted pocket reads exactly 0 and a +2 draft exactly +2 on every wall."""
+    from agentcad import probe
+    p = tmp_path / "pocket.py"
+    p.write_text(POCKET)
+    flat = probe.draft_analysis(probe.load_shape(p))
+    walls = _pocket_sides(flat)
+    assert len(walls) == 4 and all(abs(r["min_deg"]) < 1e-6 and abs(r["max_deg"]) < 1e-6 for r in walls)
+    drafted = probe.draft_analysis(probe.load_shape(p, {"angle": "2.0"}))
+    walls = _pocket_sides(drafted)
+    assert len(walls) == 4 and all(abs(r["min_deg"] - 2.0) < 1e-6 and abs(r["max_deg"] - 2.0) < 1e-6 for r in walls)
+    assert not [r for r in probe.draft_failures(drafted, 1.0) if r in walls]
+
+
+def test_probe_draft_flags_an_undercut_and_does_not_judge_faces_along_the_pull(tmp_path):
+    from agentcad import probe
+    p = tmp_path / "pocket.py"
+    p.write_text(POCKET)
+    res = probe.draft_analysis(probe.load_shape(p, {"angle": "-2.0"}))
+    walls = _pocket_sides(res)
+    assert all(abs(r["min_deg"] + 2.0) < 1e-6 for r in walls)
+    bad = probe.draft_failures(res, 1.0)
+    assert all(r in bad for r in walls)
+    assert any("UNDERCUT" in line for line in probe.render_draft(res, 1.0))
+    # the pocket floor and the block's top and bottom are perpendicular to the pull: counted, never given a draft
+    perp = [r for r in res["faces"] if r["class"] == "perpendicular"]
+    assert len(perp) == 3 and all("min_deg" not in r for r in perp)

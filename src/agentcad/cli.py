@@ -637,6 +637,20 @@ def cmd_probe_inventory(args):
         print(f"inventory.json: {probe.write_json(inv, Path(args.output))}")
 
 
+def cmd_probe_draft(args):
+    """Will the part leave its mold: draft per face against a pull direction, with an optional gate."""
+    from agentcad import probe
+
+    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    pull = [float(v) for v in args.pull.split(",")] if args.pull else [0.0, 0.0, 1.0]
+    res = probe.draft_analysis(shape, pull=pull, samples=args.samples)
+    print("\n".join(probe.render_draft(res, args.min_draft, show=args.show)))
+    if args.output:
+        print(f"draft.json: {probe.write_json(res, Path(args.output))}")
+    if args.min_draft is not None and probe.draft_failures(res, args.min_draft):
+        sys.exit(1)
+
+
 def cmd_probe_fillet(args):
     """Why a fillet fails: the selected chain on the live part at the step it is applied."""
     from agentcad import probe
@@ -889,6 +903,16 @@ def main():
     pf.add_argument("-o", "--output", default=None, help="Write the JSON record here")
     pf.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
     pf.set_defaults(func=cmd_probe_fillet)
+
+    pd = sub_probe.add_parser("draft", help="Draft per face against a pull direction: release, drag, undercut; faces along the pull reported, not judged")
+    pd.add_argument("source", help="STEP file or build123d program")
+    pd.add_argument("--pull", default=None, help="Pull direction x,y,z (default 0,0,1)")
+    pd.add_argument("--min-draft", type=float, default=None, help="Fail (exit 1) when a side face has less draft than this, in degrees")
+    pd.add_argument("--samples", type=int, default=7, help="Grid samples per face side (default 7)")
+    pd.add_argument("--show", type=int, default=12, help="Failing faces to list (default 12)")
+    pd.add_argument("-o", "--output", default=None, help="Write draft.json here")
+    pd.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    pd.set_defaults(func=cmd_probe_draft)
 
     p_cmp = sub.add_parser("compare", help="COMPARE: loop counts per plane (a gate), sampled deviation, overlays")
     p_cmp.add_argument("original")
