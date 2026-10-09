@@ -1,0 +1,18 @@
+[project]
+name = "gyroid_support_plug"
+engine = "voxelcad"
+description = "A flexible gyroid body, a tapered friction-fit plug and a stem, one voxel union; a real electrode support part, exported through the fused streaming STL pipeline"
+[engine.voxelcad]
+grid = 256
+# the surface pipeline for renders and the STL alike: fast_smooth is the fused
+# streaming path (packed bits -> Butterworth -> marching cubes); the lattice
+# walls are a few voxels wide at this grid, so the cutoff is raised from 0.25
+surface_method = "fast_smooth"
+lowpass_cutoff = 0.35
+mc_stride = 2
+expected_solids = 1
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "front", "top", "right"]

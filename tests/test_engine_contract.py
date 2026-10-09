@@ -141,3 +141,26 @@ def test_repository_examples_render_through_their_engine(example, tmp_path):
     result = engine.render(source, tmp_path / "out", views=["iso"], image_size=96)
     assert result.success, result.errors
     assert result.metadata.get("volume", 1.0) > 0
+
+
+def test_openscad_binary_setting_chooses_the_executable(tmp_path, monkeypatch):
+    """A machine can carry a broken openscad ahead of a working one on PATH; the project says which.
+    Precedence: the setting, then AGENTCAD_OPENSCAD, then PATH."""
+    from agentcad.engines.openscad import OpenSCADEngine
+
+    broken = tmp_path / "broken"
+    broken.write_text("#!/bin/sh\necho 'error while loading shared libraries' >&2\nexit 127\n")
+    broken.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=False)
+    monkeypatch.delenv("AGENTCAD_OPENSCAD", raising=False)
+
+    working = tmp_path / "working"
+    working.write_text("#!/bin/sh\necho 'OpenSCAD version 2021.01'\n")
+    working.chmod(0o755)
+
+    assert OpenSCADEngine(settings={"binary": str(working)}).available() is True
+    assert OpenSCADEngine(settings={"binary": str(broken)}).available() is False
+    monkeypatch.setenv("AGENTCAD_OPENSCAD", str(working))
+    assert OpenSCADEngine().available() is True          # the env var when no setting
+    assert OpenSCADEngine(settings={"binary": str(broken)}).available() is False   # the setting wins
+    assert "binary" in OpenSCADEngine.known_settings     # so a project toml may carry it

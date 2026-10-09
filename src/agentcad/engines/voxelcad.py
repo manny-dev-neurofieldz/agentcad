@@ -15,11 +15,23 @@ Settings (``[engine.voxelcad]``):
                     build at the same cell count
     voxel_size      explicit voxel edge in model units; overrides grid
     warn_voxels     warn when the grid exceeds this many cells (default 64M)
+    surface_method  auto | fast_smooth | cdt: the surface pipeline for renders
+                    AND export; fast_smooth is the fused streaming pipeline
+                    (packed bits -> Butterworth -> marching cubes -> STL, no
+                    intermediate volumes), auto picks it when the kernels exist
+    lowpass_cutoff  Butterworth cutoff in cycles per voxel (0.25; raise to
+                    0.35 on coarse grids whose thin walls are a few voxels)
+    lowpass_order   Butterworth order (4)
+    mc_stride       marching-cubes stride (2: no information lost under the
+                    default cutoff, a quarter of the triangles)
+    only_largest_component  keep only the largest connected component
     timeout         seconds allowed for a render (default 120)
     export_timeout  seconds allowed for an export (default 300)
     color, background   render colours
 
-Measured metadata: grid_resolution, voxel_size, grid_target, bbox_min,
+Measured metadata: grid_resolution, voxel_size, grid_target, surface
+(the pipeline that actually ran: method, cutoff, order, stride, triangles,
+seconds), bbox_min,
 bbox_size, occupied_voxels, volume (occupied cells times the cell volume),
 counts.solids (connected components on the grid), runtime_s. Area, validity
 and a face census have no meaning on a voxel grid and are not reported.
@@ -47,6 +59,15 @@ _DEFAULTS: Dict[str, Any] = {
     "export_timeout": 300,
     "color": "steelblue",
     "background": "white",
+    # the surface pipeline (shared by renders and STL export so the picture is the file):
+    # fast_smooth is VoxelCAD's fused streaming pipeline (packed bits -> Butterworth
+    # low-pass -> marching cubes, no intermediate volumes); cdt is the older
+    # distance-transform path; auto picks fast_smooth when the kernels are present
+    "surface_method": "auto",
+    "lowpass_cutoff": 0.25,
+    "lowpass_order": 4,
+    "mc_stride": 2,
+    "only_largest_component": False,
 }
 
 
@@ -94,6 +115,13 @@ class VoxelCADEngine(CADEngine):
                 "voxel_size": float(voxel) if voxel else None,
                 "grid": int(self.setting("grid", _DEFAULTS["grid"])),
                 "warn_voxels": int(self.setting("warn_voxels", _DEFAULTS["warn_voxels"])),
+            },
+            "surface": {
+                "method": str(self.setting("surface_method", _DEFAULTS["surface_method"])),
+                "lowpass_cutoff": float(self.setting("lowpass_cutoff", _DEFAULTS["lowpass_cutoff"])),
+                "lowpass_order": int(self.setting("lowpass_order", _DEFAULTS["lowpass_order"])),
+                "mc_stride": int(self.setting("mc_stride", _DEFAULTS["mc_stride"])),
+                "only_largest_component": bool(self.setting("only_largest_component", _DEFAULTS["only_largest_component"])),
             },
         }
 
