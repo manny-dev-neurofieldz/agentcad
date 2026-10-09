@@ -47,12 +47,17 @@ function apply() {{ const lo = +document.getElementById("lo").value, hi = +docum
   layerObjs.forEach(m => m.visible = on[m.userData.feature] && m.userData.layer >= lo && m.userData.layer <= hi);
   document.getElementById("zr").textContent = `z ${{DATA.layers[lo].z}}-${{DATA.layers[hi].z}} mm`; }}
 document.querySelectorAll("input").forEach(i => i.addEventListener("input", apply)); apply();
+(DATA.contacts || []).forEach(([x, y, z, k]) => {{ const d = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 4),
+  new THREE.MeshBasicMaterial({{color: k === "cavity" ? "#ff2020" : "#20ff60"}})); d.position.set(x, y, z); scene.add(d); }});
 (function loop() {{ requestAnimationFrame(loop); r.render(scene, cam); }})();
 </script></body></html>"""
 
 
-def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb: float = 8.0) -> Path:
+def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb: float = 8.0,
+               contacts=None) -> Path:
+    """``contacts``: optional [(x, y, z, "outside" | "cavity")] support contact cells (bed frame), drawn as dots."""
     data = pack(model, int(budget_mb * 1024 * 1024))
+    data["contacts"] = [[float(x), float(y), float(z), kind] for x, y, z, kind in (contacts or [])]
     note = (f"every {data['stride']}th layer shown (the full print exceeds the {budget_mb:g} MB embed budget)"
             if data["stride"] > 1 else "")
     html = PAGE.format(title=title, note=note, nmax=max(0, len(data["layers"]) - 1),

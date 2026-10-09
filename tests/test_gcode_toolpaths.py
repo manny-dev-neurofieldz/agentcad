@@ -29,3 +29,9 @@ def test_page_embeds_the_layers_and_says_when_layers_were_dropped(tmp_path):
     assert "<title>ten layers</title>" in html and '"stride": 1' in html and "every" not in html.split("<script>")[0]
     p = view.write_page(gm.parse(TEXT), tmp_path / "t2.html", budget_mb=72 / 1024 / 1024)
     assert "every 4th layer shown" in p.read_text()
+
+
+def test_page_carries_contact_cells_when_given(tmp_path):
+    from agentcad.gcode import view
+    p = view.write_page(gm.parse(TEXT), tmp_path / "c.html", contacts=[(1.0, 2.0, 0.2, "cavity")])
+    assert '"contacts": [[1.0, 2.0, 0.2, "cavity"]]' in p.read_text()
