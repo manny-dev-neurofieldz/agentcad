@@ -708,6 +708,42 @@ def cmd_gcode_thumbnails(args):
         print(f)
 
 
+def cmd_gcode_summary(args):
+    """Layers, filament, and extrusion by object and feature of a sliced file."""
+    from agentcad.gcode import bgcode, model
+
+    path = Path(args.file)
+    meta = bgcode.read(path).metadata if bgcode.is_bgcode(path) else {}
+    slicer = meta.get("slicer_metadata", {})
+    density = float(slicer.get("filament_density", "0").split(",")[0] or 0) or None
+    diameter = float(slicer.get("filament_diameter", "1.75").split(",")[0] or 1.75)
+    s = model.summary(model.parse(bgcode.gcode_text(path)), diameter, density)
+    stated = meta.get("print_metadata", {}).get("filament used [mm]")
+    if stated:
+        s["filament_used_stated_mm"] = float(stated)
+    if args.json:
+        print(json.dumps(s, indent=2))
+        return
+    fu = s["filament_used"]
+    print(f"{path.name}: {s['layers']} layers to z {s['top_z']}; filament {fu['filament_mm']} mm"
+          + (f" ({fu['mass_g']} g)" if "mass_g" in fu else "")
+          + (f"; the file states {stated} mm" if stated else ""))
+    if not s["features_known"]:
+        print("  features unknown: the file carries no feature comments; totals only")
+    for obj, o in s["by_object"].items():
+        print(f"  {obj}: {o['filament_mm']} mm, support {100 * o['support_share']:.1f}%")
+        for feat, f in sorted(o["features"].items(), key=lambda kv: -kv[1]["filament_mm"]):
+            print(f"      {feat}: {f['filament_mm']} mm")
+    sp = s["support"]
+    if sp["first_layer"] is not None:
+        print(f"  supports: {100 * sp['share']:.1f}% of extrusion, layers {sp['first_layer']}-{sp['last_layer']}"
+              f" (z {sp['first_z']}-{sp['last_z']})")
+    else:
+        print("  supports: none")
+    if s["unknown_features"]:
+        print(f"  unclassified feature types: {s['unknown_features']}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -970,6 +1006,10 @@ def main():
     pg.add_argument("file")
     pg.add_argument("--no-verify", action="store_true", help="Skip the CRC32 checks")
     pg.set_defaults(func=cmd_gcode_info)
+    pg = sub_gcode.add_parser("summary", help="Layers, filament, extrusion by object and feature, where supports are")
+    pg.add_argument("file")
+    pg.add_argument("--json", action="store_true", help="Print the summary record (schema agentcad.gcode.summary/1)")
+    pg.set_defaults(func=cmd_gcode_summary)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")
     pg.add_argument("-o", "--output", required=True, help="Directory to write into")

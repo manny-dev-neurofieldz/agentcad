@@ -154,7 +154,21 @@ The `gcode` commands read it, in pure Python, with no slicer installed:
 agentcad gcode info part.bgcode           # header, block table, printer and print metadata, thumbnails
 agentcad gcode decode part.bgcode -o part.gcode   # plain G-code (a plain .gcode passes through)
 agentcad gcode thumbnails part.bgcode -o thumbs/
+agentcad gcode summary part.bgcode [--json]       # layers, filament, extrusion by object and feature, supports
 ```
+
+`gcode summary` models the sliced file by layer (`;LAYER_CHANGE`/`;Z:`/`;HEIGHT:`), object (`M486` labels)
+and feature type (`;TYPE:`), in absolute or relative extrusion with G92 resets, arcs and firmware retraction.
+Its filament total is computed the way the slicer reports it (net extrusion without a final retraction that
+is never primed again) and is printed beside the total the file states, so the two can be compared. A file
+without feature comments still gives layers by Z and totals, and says the features are unknown; feature
+types the model does not recognise are counted, never dropped.
+
+`--json` prints a record with schema `agentcad.gcode.summary/1`: `layers`, `top_z`, `filament_used`
+(`filament_mm`, `volume_cm3`, `mass_g` when the density is known), `filament_used_stated_mm` (from the
+file's metadata), `features_known`, `unknown_features`, `objects` (id to name), `by_object` (filament,
+per-feature amounts, `support_share`), `by_feature`, `support` (`share`, first and last layer and Z) and
+`brim_area_mm2`.
 
 Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
 its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
