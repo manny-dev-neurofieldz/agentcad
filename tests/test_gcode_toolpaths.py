@@ -17,9 +17,18 @@ def test_segments_decode_to_the_moves_printed():
 
 
 def test_over_budget_keeps_every_nth_layer_and_the_first_and_last():
-    out = tp.pack(gm.parse(TEXT), budget_bytes=24 * 3)      # each layer is 24 bytes: 10 layers -> stride 4
+    # each layer is 24 float bytes, embedded as 32 base64 bytes: the budget counts what is embedded
+    out = tp.pack(gm.parse(TEXT), budget_bytes=32 * 3)      # 10 layers -> stride 4
     assert out["stride"] == 4
     assert [L["index"] for L in out["layers"]] == [0, 4, 8, 9]
+    assert out["bytes"] == sum(len(b) for L in out["layers"] for b in L["features"].values())
+    assert tp.pack(gm.parse(TEXT), budget_bytes=32 * 10)["stride"] == 1
+
+
+def test_stride_note_uses_english_ordinals():
+    from agentcad.gcode import view
+    assert [view.ordinal(n) for n in (2, 3, 4, 11, 12, 13, 21, 22, 103)] == [
+        "2nd", "3rd", "4th", "11th", "12th", "13th", "21st", "22nd", "103rd"]
 
 
 def test_page_embeds_the_layers_and_says_when_layers_were_dropped(tmp_path):
@@ -27,7 +36,7 @@ def test_page_embeds_the_layers_and_says_when_layers_were_dropped(tmp_path):
     p = view.write_page(gm.parse(TEXT), tmp_path / "t.html", title="ten layers")
     html = p.read_text()
     assert "<title>ten layers</title>" in html and '"stride": 1' in html and "every" not in html.split("<script>")[0]
-    p = view.write_page(gm.parse(TEXT), tmp_path / "t2.html", budget_mb=72 / 1024 / 1024)
+    p = view.write_page(gm.parse(TEXT), tmp_path / "t2.html", budget_mb=96 / 1024 / 1024)
     assert "every 4th layer shown" in p.read_text()
 
 

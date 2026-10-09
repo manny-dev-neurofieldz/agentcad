@@ -209,7 +209,8 @@ remove and foul the fit.
 
 `gcode view` writes a standalone page of the toolpaths, offline (three.js inlined): lines coloured by
 feature with a toggle per feature and a layer-range slider. Toolpaths are embedded within a budget
-(`--budget-mb`, default 8); over it, every Nth layer is kept, first and last always, and the page says so.
+(`--budget-mb`, default 8, counted as embedded base64; the inlined three.js adds about 0.6 MB); over it,
+every Nth layer is kept, first and last always, and the page says so.
 
 With `--placement` (and `--stl-root` when the STLs are elsewhere) the placed parts are drawn translucent
 under the paths, and support contacts as dots: green on an outer surface, red walled in a cavity.

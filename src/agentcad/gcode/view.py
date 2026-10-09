@@ -60,6 +60,12 @@ document.querySelectorAll("input").forEach(i => i.addEventListener("input", appl
 </script></body></html>"""
 
 
+def ordinal(n: int) -> str:
+    """2 -> "2nd", 11 -> "11th", 21 -> "21st"."""
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
+
+
 def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb: float = 8.0,
                contacts=None, meshes=None) -> Path:
     """``contacts``: optional [(x, y, z, "outside" | "cavity")] support contact cells (bed frame), drawn as dots.
@@ -73,7 +79,7 @@ def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb
                        "t": base64.b64encode(np.asarray(tri, np.uint32).tobytes()).decode("ascii")}
                       for pts, tri in (meshes or [])]
     data["contacts"] = [[float(x), float(y), float(z), kind] for x, y, z, kind in (contacts or [])]
-    note = (f"every {data['stride']}th layer shown (the full print exceeds the {budget_mb:g} MB embed budget)"
+    note = (f"every {ordinal(data['stride'])} layer shown (the full print exceeds the {budget_mb:g} MB embed budget)"
             if data["stride"] > 1 else "")
     html = PAGE.format(title=title, note=note, nmax=max(0, len(data["layers"]) - 1),
                        three=(VENDOR / "three.min.js").read_text(), orbit=(VENDOR / "OrbitControls.js").read_text(),
