@@ -26,6 +26,7 @@ class Band:
     xy_max: Tuple[float, float]
     area_mm2: float
     points: int
+    cells: Optional[List[Tuple[float, float, float]]] = None   # contact cell centres (bed frame, support-top z)
 
     def sentence(self) -> str:
         who = self.object or "the part"
@@ -103,7 +104,8 @@ def find_contacts(model: GCodeModel, contact_distance: float = 0.25, cell: float
         bands.append(Band(max(set(objs), key=objs.count), (min(layers), max(layers)),
                           (zs.get(min(layers), 0.0), zs.get(max(layers), 0.0)),
                           (min(xs), min(ys)), (max(xs) + cell, max(ys) + cell),
-                          round(sum(hits[c][1] for c in comp) * cell, 1), len(comp)))
+                          round(sum(hits[c][1] for c in comp) * cell, 1), len(comp),
+                          [((c[1] + 0.5) * cell, (c[2] + 0.5) * cell, zs.get(c[0], 0.0)) for c in comp]))
     bands.sort(key=lambda b: (b.object or "", b.z[0]))
     return bands
 
@@ -132,3 +134,33 @@ def in_object_frame(band: "Band", placement: Dict[str, Dict]) -> Optional[Dict]:
     return {"stl": p["stl"], "x": (band.xy_min[0] - ox, band.xy_max[0] - ox),
             "y": (band.xy_min[1] - oy, band.xy_max[1] - oy), "z": (band.z[0] - oz, band.z[1] - oz),
             "print_pose": p.get("print_pose")}
+
+
+def band_enclosure(band: "Band", placement: Dict[str, Dict], mesh, samples: int = 40) -> Optional[Dict[str, int]]:
+    """Votes of enclosure() over up to ``samples`` of the band's own contact cells, in the STL frame: the
+    band's bounding-box centre is not on a long or curved band, so it is never used."""
+    p = placement.get(band.object or "")
+    if not p or not band.cells:
+        return None
+    ox, oy, oz = p["bed_offset"]
+    step = max(1, len(band.cells) // samples)
+    votes: Dict[str, int] = {}
+    for x, y, z in band.cells[::step]:
+        v = enclosure((x - ox, y - oy, z - oz), mesh)
+        votes[v] = votes.get(v, 0) + 1
+    return votes
+
+
+def enclosure(point, mesh, reach: float = 200.0) -> str:
+    """Where a contact point sits relative to a part mesh in the same frame: "cavity" when horizontal rays in
+    +-x and +-y all hit the part (the support is walled in on every side: a bore or pocket), else "outside".
+    Only "does each ray hit" is used: hit counts are not, because a ray grazing a mesh edge can drop an
+    intersection. A contact point is the top of a support, under the part, never inside it."""
+    import numpy as np
+
+    p = np.asarray(point, float)
+    hits = []
+    for d in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0)):
+        pts, _ = mesh.ray_trace(p, p + reach * np.asarray(d, float))
+        hits.append(len(pts))
+    return "cavity" if all(h > 0 for h in hits) else "outside"

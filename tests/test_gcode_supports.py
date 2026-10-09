@@ -80,3 +80,13 @@ def test_cli_placement_prints_the_stl_frame_or_says_unknown(tmp_path):
     r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0.25", "--min-area", "0",
                               "--placement", str(p)], capture_output=True, text=True)
     assert "placement unknown" in r.stdout
+
+
+def test_enclosure_tells_a_bore_from_an_outer_surface():
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    tube = pv.Cylinder(radius=6.0, height=20, direction=(0, 0, 1), capping=False, resolution=64) \
+        + pv.Cylinder(radius=4.0, height=20, direction=(0, 0, 1), capping=False, resolution=64)
+    assert sp.enclosure((0.31, 0.17, 0.0), tube) == "cavity"        # in the bore (off the mesh's symmetry lines)
+    assert sp.enclosure((8.31, 0.17, 0.0), tube) == "outside"       # beside the tube
+    assert sp.enclosure((0.31, 0.17, 15.0), tube) == "outside"      # above the open end
