@@ -744,6 +744,39 @@ def cmd_gcode_summary(args):
         print(f"  unclassified feature types: {s['unknown_features']}")
 
 
+def cmd_gcode_check(args):
+    """Compare the settings a sliced file carries with the [slice] intent of a project, a job or a TOML file."""
+    from agentcad.gcode import check
+
+    cfg = check.embedded_config(Path(args.file))
+    source_path = None
+    if args.project:
+        source_path = Path(args.project)
+        source_path = source_path / "agentcad.toml" if source_path.is_dir() else source_path
+    elif args.intent:
+        source_path = Path(args.intent)
+    intent = check.load_intent(source_path) if source_path else {}
+    label = f"{source_path.name} [slice]" if source_path else ""
+    if not intent:
+        print(f"{Path(args.file).name}: no [slice] intent declared" + (f" in {source_path}" if source_path else "")
+              + "; the file's key settings, without a verdict:")
+        for k in check.KEY_SETTINGS:
+            if k in cfg:
+                print(f"  {k} = {cfg[k]}")
+        return 0
+    findings = check.check(cfg, intent, label)
+    if args.json:
+        print(json.dumps([f.__dict__ | {"sentence": f.sentence()} for f in findings], indent=2))
+    else:
+        for f in findings:
+            mark = {"error": "ERROR", "warning": "warning", "ok": "ok"}[f.severity]
+            print(f"  {mark}: {f.sentence()}")
+        n_err = sum(f.severity == "error" for f in findings)
+        n_warn = sum(f.severity == "warning" for f in findings)
+        print(f"{Path(args.file).name}: {len(findings)} intended settings, {n_err} error(s), {n_warn} warning(s)")
+    return 1 if any(f.severity == "error" for f in findings) else 0
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -1010,6 +1043,12 @@ def main():
     pg.add_argument("file")
     pg.add_argument("--json", action="store_true", help="Print the summary record (schema agentcad.gcode.summary/1)")
     pg.set_defaults(func=cmd_gcode_summary)
+    pg = sub_gcode.add_parser("check", help="Compare a sliced file's settings with the [slice] intent; exit 1 on an error")
+    pg.add_argument("file")
+    pg.add_argument("--project", default=None, help="Project folder or agentcad.toml carrying the [slice] table")
+    pg.add_argument("--intent", default=None, help="Any TOML file with a [slice] table (a job.toml, for one)")
+    pg.add_argument("--json", action="store_true", help="Findings as JSON, each with its sentence")
+    pg.set_defaults(func=cmd_gcode_check)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")
     pg.add_argument("-o", "--output", required=True, help="Directory to write into")
@@ -1128,4 +1167,6 @@ def main():
     if args.command == "session" and not getattr(args, "session_command", None):
         p_session.print_help()
         sys.exit(0)
-    args.func(args)
+    rc = args.func(args)
+    if isinstance(rc, int) and rc:     # a command may return an exit status (gcode check: 1 on an error)
+        sys.exit(rc)

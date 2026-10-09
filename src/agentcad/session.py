@@ -455,6 +455,7 @@ class DesignSession:
                    "print_orientation", "printer_profile"):
             if k in self.params:
                 setattr(manifest, k, self.params[k])
+        manifest.slice_intent = dict(self.config.slice_intent)
         manifest.parts = ([{"name": name, "quantity": int(quantity), "stl_filename": Path(path).name}
                            for name, path, quantity in self.part_meshes]
                           or [{"name": self.name, "quantity": 1, "stl_filename": manifest.stl_filename}])

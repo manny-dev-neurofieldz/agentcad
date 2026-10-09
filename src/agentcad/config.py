@@ -90,6 +90,9 @@ class ProjectConfig:
     #: dicts so any registered engine can read its own keys; the engine
     #: decides which keys it knows and reports the rest.
     engine_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    #: The ``[slice]`` table: intended slicer settings by the slicer's own key names, each a value or a table
+    #: with ``value`` or ``min``/``max`` and ``why``; ``agentcad gcode check`` compares a sliced file with it.
+    slice_intent: Dict[str, Any] = field(default_factory=dict)
 
     # Source path (where agentcad.toml was loaded from)
     _project_dir: Optional[Path] = field(default=None, repr=False)
@@ -195,6 +198,9 @@ class ProjectConfig:
                    "printer_profile", "filament_profile", "print_orientation", "notes"):
             if k in pr:
                 setattr(config.print, k, pr[k])
+
+        # Slice intent: the [slice] table, verbatim
+        config.slice_intent = dict(data.get("slice", {}))
 
         # Engine configs: every [engine.<name>] table, verbatim
         engines = data.get("engine", {})
