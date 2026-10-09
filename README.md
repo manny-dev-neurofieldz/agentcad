@@ -219,6 +219,9 @@ under the paths, and support contacts as dots: green on an outer surface, red wa
 agentcad gcode view plate.bgcode -o plate.toolpaths.html --placement plate.placement.json
 ```
 
+`--artifact DIR` writes the same page as `DIR/index.html` without its document shell, plus an empty
+`files.json` (everything is inline), for an artifact host that supplies the shell.
+
 `session finalize` writes a toolpath page beside every `.bgcode` or `.gcode` file in the project's exports
 folder (`<name>.toolpaths.html`, within `[output] viewer_embed_mb`) and lists them in the print manifest
 under `sliced`; a file it cannot read is warned about and skipped.

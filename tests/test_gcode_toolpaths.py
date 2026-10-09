@@ -74,3 +74,14 @@ def test_page_script_runs_in_node_with_contacts_and_a_mesh(tmp_path):
 def tp_page(tmp_path, **kw):
     from agentcad.gcode import view
     return view.write_page(gm.parse(TEXT), tmp_path / "p.html", **kw)
+
+
+def test_artifact_fragment_has_no_document_shell(tmp_path):
+    import json
+    from agentcad.gcode import view
+    page = view.write_page(gm.parse(TEXT), tmp_path / "art" / "index.html", title="ten layers", fragment=True)
+    html = page.read_text()
+    for tag in ("<!doctype", "<html", "<head>", "</head>", "<body>", "</body>", "</html>"):
+        assert tag not in html.lower()
+    assert "<title>ten layers</title>" in html and "<style>" in html and html.count("<script>") == 3
+    assert json.loads((tmp_path / "art" / "files.json").read_text()) == {}

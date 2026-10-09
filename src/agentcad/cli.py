@@ -860,7 +860,8 @@ def cmd_gcode_view(args):
     from agentcad.gcode import bgcode, model, view
 
     path = Path(args.file)
-    out = Path(args.output) if args.output else path.with_suffix(".toolpaths.html")
+    out = (Path(args.artifact) / "index.html" if getattr(args, "artifact", None)
+           else Path(args.output) if args.output else path.with_suffix(".toolpaths.html"))
     m = model.parse(bgcode.gcode_text(path))
     contacts = []
     if args.placement:
@@ -884,7 +885,8 @@ def cmd_gcode_view(args):
             if stl is not None and stl.exists():
                 mesh = pv.read(str(stl)).triangulate()
                 meshes.append((np.asarray(mesh.points) + np.asarray(p["bed_offset"]), mesh.faces.reshape(-1, 4)[:, 1:]))
-    view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts, meshes=meshes)
+    view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts, meshes=meshes,
+                    fragment=bool(getattr(args, "artifact", None)))
     print(f"toolpaths: {out}")
 
 
@@ -1176,6 +1178,8 @@ def main():
     pg.add_argument("--budget-mb", type=float, default=8.0, help="Embedded toolpath budget; over it, every Nth layer")
     pg.add_argument("--placement", default=None, help="Placement sidecar: mark support contact cells (red in a cavity)")
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to")
+    pg.add_argument("--artifact", metavar="DIR", default=None,
+                    help="Write DIR/index.html as a page fragment (no document shell) plus files.json, for an artifact host")
     pg.set_defaults(func=cmd_gcode_view)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")

@@ -67,8 +67,10 @@ def ordinal(n: int) -> str:
 
 
 def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb: float = 8.0,
-               contacts=None, meshes=None) -> Path:
-    """``contacts``: optional [(x, y, z, "outside" | "cavity")] support contact cells (bed frame), drawn as dots.
+               contacts=None, meshes=None, fragment: bool = False) -> Path:
+    """``fragment``: write the page without its document shell (doctype, html, head, body), for an artifact host
+    that supplies one, plus an empty ``files.json`` beside it (everything is inline).
+    ``contacts``: optional [(x, y, z, "outside" | "cavity")] support contact cells (bed frame), drawn as dots.
     ``meshes``: optional [(points (N, 3) in the bed frame, triangles (M, 3))], drawn translucent under the paths."""
     import base64
 
@@ -85,5 +87,11 @@ def write_page(model: GCodeModel, out: Path, title: str = "toolpaths", budget_mb
                        three=(VENDOR / "three.min.js").read_text(), orbit=(VENDOR / "OrbitControls.js").read_text(),
                        data=json.dumps(data), colours=json.dumps(COLOURS))
     out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if fragment:
+        for tag in ("<!doctype html>", "<html>", "<head>", '<meta charset="utf-8">',
+                    "</head>", "<body>", "</body>", "</html>"):
+            html = html.replace(tag, "", 1)
+        (out.parent / "files.json").write_text("{}\n")
     out.write_text(html, encoding="utf-8")
     return out
