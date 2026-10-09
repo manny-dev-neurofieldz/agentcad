@@ -789,8 +789,10 @@ def cmd_gcode_supports(args):
         cd = float(cfg.get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
     bands = [b for b in supports.find_contacts(model.parse(bgcode.gcode_text(path)), contact_distance=cd)
              if b.area_mm2 >= args.min_area]
+    placement = supports.load_placement(Path(args.placement)) if args.placement else {}
     if args.json:
-        print(json.dumps([b.__dict__ for b in bands], indent=2))
+        print(json.dumps([dict(b.__dict__, object_frame=supports.in_object_frame(b, placement)) for b in bands],
+                         indent=2))
         return
     if not bands:
         print(f"{path.name}: no support touches a part (contact distance {cd} mm)")
@@ -799,6 +801,10 @@ def cmd_gcode_supports(args):
           f"(contact distance {cd} mm; bed frame)")
     for b in sorted(bands, key=lambda b: -b.area_mm2):
         print(f"  {b.sentence()}")
+        if args.placement:
+            o = supports.in_object_frame(b, placement)
+            print("      in its STL frame: " + (f"x {o['x'][0]:.1f}..{o['x'][1]:.1f}, y {o['y'][0]:.1f}..{o['y'][1]:.1f}, "
+                                                 f"z {o['z'][0]:.1f}..{o['z'][1]:.1f}" if o else "placement unknown"))
 
 
 def cmd_compare(args):
@@ -1078,6 +1084,7 @@ def main():
     pg.add_argument("--contact-distance", type=float, default=None,
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
+    pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1): bands in each STL's frame")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     pg.set_defaults(func=cmd_gcode_supports)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
