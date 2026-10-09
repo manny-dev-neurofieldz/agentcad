@@ -75,7 +75,7 @@ def test_cli_placement_prints_the_stl_frame_or_says_unknown(tmp_path):
     r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0.25", "--min-area", "0",
                               "--placement", str(p)], capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
-    assert "in its STL frame: x 0.0.." in r.stdout
+    assert "in its STL frame: x 10.0..10.2, y 0.8..1.5" in r.stdout          # zero offset: STL frame = bed frame
     p.write_text(json.dumps({"schema": "agentcad.placement/1", "objects": []}))
     r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0.25", "--min-area", "0",
                               "--placement", str(p)], capture_output=True, text=True)
