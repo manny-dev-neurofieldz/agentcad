@@ -32,3 +32,19 @@ def test_a_window_too_short_for_the_gap_finds_nothing():
 def test_support_beside_the_part_is_not_a_contact():
     text = TEXT.replace(PART, ";TYPE:Bridge infill\n;WIDTH:0.45\nG1 X20 Y1\nG1 X30 Y1 E1\n")
     assert sp.find_contacts(gm.parse(text), contact_distance=0.25) == []
+
+
+def test_cli_reads_the_contact_distance_from_the_file(tmp_path):
+    import json
+    import subprocess
+    import sys
+    f = tmp_path / "ledge.gcode"
+    f.write_text(TEXT + "; prusaslicer_config = begin\n; support_material_contact_distance = 0.25\n"
+                        "; prusaslicer_config = end\n")
+    run = [sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())"]
+    r = subprocess.run(run + ["gcode", "supports", str(f), "--min-area", "0", "--json"], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert [b["object"] for b in json.loads(r.stdout)] == ["ledge.stl"]
+    r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0", "--min-area", "0"],
+                       capture_output=True, text=True)
+    assert "no support touches a part" in r.stdout
