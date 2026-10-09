@@ -60,3 +60,23 @@ def test_bands_map_into_the_object_frame_only_with_a_placement(tmp_path):
     o = sp.in_object_frame(band, placement)
     assert o["x"] == (1.0, 5.0) and o["y"] == (2.0, 3.0) and o["z"] == (0.3, 0.3)
     assert sp.in_object_frame(sp.Band("other.stl", (1, 1), (0, 0), (0, 0), (1, 1), 1.0, 1), placement) is None
+
+
+def test_cli_placement_prints_the_stl_frame_or_says_unknown(tmp_path):
+    import json
+    import subprocess
+    import sys
+    f = tmp_path / "ledge.gcode"
+    f.write_text(TEXT)
+    p = tmp_path / "plate.placement.json"
+    p.write_text(json.dumps({"schema": "agentcad.placement/1", "objects": [
+        {"name": "ledge.stl", "stl": "ledge.stl", "instances": [{"label": "ledge.stl", "bed_offset": [0, 0, 0]}]}]}))
+    run = [sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())"]
+    r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0.25", "--min-area", "0",
+                              "--placement", str(p)], capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    assert "in its STL frame: x 0.0.." in r.stdout
+    p.write_text(json.dumps({"schema": "agentcad.placement/1", "objects": []}))
+    r = subprocess.run(run + ["gcode", "supports", str(f), "--contact-distance", "0.25", "--min-area", "0",
+                              "--placement", str(p)], capture_output=True, text=True)
+    assert "placement unknown" in r.stdout
