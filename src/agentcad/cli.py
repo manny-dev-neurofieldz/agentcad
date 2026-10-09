@@ -855,6 +855,16 @@ def cmd_gcode_supports(args):
         return 1
 
 
+def cmd_gcode_view(args):
+    """Write a standalone page showing a sliced file's toolpaths."""
+    from agentcad.gcode import bgcode, model, view
+
+    path = Path(args.file)
+    out = Path(args.output) if args.output else path.with_suffix(".toolpaths.html")
+    view.write_page(model.parse(bgcode.gcode_text(path)), out, title=path.stem, budget_mb=args.budget_mb)
+    print(f"toolpaths: {out}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -1137,6 +1147,11 @@ def main():
     pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     pg.set_defaults(func=cmd_gcode_supports)
+    pg = sub_gcode.add_parser("view", help="A standalone page of the toolpaths: feature colours, toggles, layer range")
+    pg.add_argument("file")
+    pg.add_argument("-o", "--output", default=None, help="Page path (default: <file>.toolpaths.html)")
+    pg.add_argument("--budget-mb", type=float, default=8.0, help="Embedded toolpath budget; over it, every Nth layer")
+    pg.set_defaults(func=cmd_gcode_view)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")
     pg.add_argument("-o", "--output", required=True, help="Directory to write into")
