@@ -42,3 +42,26 @@ def test_page_embeds_a_placed_mesh(tmp_path):
     tri = ([(0, 0, 0), (1, 0, 0), (0, 1, 0)], [(0, 1, 2)])
     html = view.write_page(gm.parse(TEXT), tmp_path / "m.html", meshes=[tri]).read_text()
     assert '"meshes": [{"p": "' in html
+
+
+def test_page_script_runs_in_node_with_contacts_and_a_mesh(tmp_path):
+    import json, re, shutil, subprocess
+    from pathlib import Path
+    node = shutil.which("node")
+    assert node, "node is needed to run the page's script"
+    pts = np.array([[0, 0, 0], [10, 0, 0], [0, 10, 0]], float)
+    page = tp_page(tmp_path, contacts=[(1, 1, 0.2, "outside"), (2, 2, 0.4, "cavity")], meshes=[(pts, [[0, 1, 2]])])
+    for i, s in enumerate(re.findall(r"<script>(.*?)</script>", page.read_text(), re.S)):
+        (tmp_path / f"page_script_{i}.js").write_text(s)
+    harness = Path(__file__).parent / "js" / "run_page.js"
+    r = subprocess.run([node, str(harness), str(tmp_path), "9"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    # 10 layers of one feature, one mesh, one point cloud per contact kind
+    assert out["renders"] >= 1 and out["objects"] == 10 + 1 + 2
+    assert out["legend"] == 1 and out["zr"] == "z 0.2-2 mm"
+
+
+def tp_page(tmp_path, **kw):
+    from agentcad.gcode import view
+    return view.write_page(gm.parse(TEXT), tmp_path / "p.html", **kw)

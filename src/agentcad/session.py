@@ -373,6 +373,25 @@ class DesignSession:
             raise RuntimeError("No iteration to annotate - call iterate() first")
         self.iterations[-1].notes.append(text)
 
+    def _toolpath_pages(self) -> List[Dict[str, Any]]:
+        """A toolpath page beside each sliced file (.bgcode or .gcode) in the exports folder; a file that cannot
+        be read is warned about and skipped, never fatal to finalize."""
+        from agentcad.gcode import bgcode, model, view
+
+        out = []
+        for f in sorted(self.project.exports_dir.glob("*.*")):
+            if f.suffix.lower() not in (".bgcode", ".gcode"):
+                continue
+            page = f.with_suffix(".toolpaths.html")
+            try:
+                m = model.parse(bgcode.gcode_text(f))
+                view.write_page(m, page, title=f.stem, budget_mb=self.config.output.viewer_embed_mb)
+            except Exception as e:   # one unreadable file must not stop the rest of finalize
+                print(f"agentcad warning: {f.name}: no toolpath page ({type(e).__name__}: {e})", file=sys.stderr)
+                continue
+            out.append({"file": f.name, "toolpaths": page.name, "layers": len(m.layers)})
+        return out
+
     def finalize(self, export_all: bool = False) -> Path:
         """Export all iterations as variants, generate HTML viewer with version history.
 
@@ -466,6 +485,7 @@ class DesignSession:
             except (OSError, ValueError, TypeError, KeyError):
                 pass
 
+        manifest.sliced = self._toolpath_pages()
         manifest.save(manifest_path)
         self.project.metadata["manifest"] = str(manifest_path.name)
 

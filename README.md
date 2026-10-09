@@ -211,9 +211,16 @@ remove and foul the fit.
 feature with a toggle per feature and a layer-range slider. Toolpaths are embedded within a budget
 (`--budget-mb`, default 8); over it, every Nth layer is kept, first and last always, and the page says so.
 
+With `--placement` (and `--stl-root` when the STLs are elsewhere) the placed parts are drawn translucent
+under the paths, and support contacts as dots: green on an outer surface, red walled in a cavity.
+
 ```bash
-agentcad gcode view plate.bgcode -o plate.toolpaths.html
+agentcad gcode view plate.bgcode -o plate.toolpaths.html --placement plate.placement.json
 ```
+
+`session finalize` writes a toolpath page beside every `.bgcode` or `.gcode` file in the project's exports
+folder (`<name>.toolpaths.html`, within `[output] viewer_embed_mb`) and lists them in the print manifest
+under `sliced`; a file it cannot read is warned about and skipped.
 
 Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
 its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four

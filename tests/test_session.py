@@ -286,3 +286,20 @@ def test_manifest_lists_parts_with_quantities_and_keeps_fit_results(session):
     assert PrintManifest.load(path).fit[0]["clearance_mm"] == 0.15
     single = PrintManifest(part_name="solo", project_name="solo", stl_filename="solo_v1.stl")
     assert single.part_count() == 1
+
+
+def test_finalize_writes_a_toolpath_page_for_each_sliced_file_in_exports(session):
+    from agentcad.manifest import PrintManifest
+    session.iterate("volume = 10\n")
+    session.finalize()
+    exports = session.project.exports_dir
+    (exports / "widget.gcode").write_text(
+        "M83\n" + "".join(f";LAYER_CHANGE\n;Z:{0.2 * (i + 1):.1f}\n;HEIGHT:0.2\n;TYPE:Perimeter\n"
+                          f"G1 X0 Y0\nG1 X10 Y0 E1\n" for i in range(3)))
+    (exports / "broken.gcode").write_bytes(b"GCDE\x09\x00")   # not readable: warned, never fatal
+    session.finalize()
+    page = exports / "widget.toolpaths.html"
+    assert page.exists() and "THREE" in page.read_text()
+    sliced = PrintManifest.load(exports / "widget.print.json").sliced
+    assert [s["file"] for s in sliced] == ["widget.gcode"]
+    assert sliced[0]["toolpaths"] == "widget.toolpaths.html" and sliced[0]["layers"] == 3

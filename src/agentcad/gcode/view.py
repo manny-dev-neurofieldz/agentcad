@@ -52,8 +52,10 @@ document.querySelectorAll("input").forEach(i => i.addEventListener("input", appl
   const s = atob(M.t); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
   g.setIndex(new THREE.BufferAttribute(new Uint32Array(u.buffer), 1)); g.computeVertexNormals();
   scene.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({{color: "#9fb4d0", transparent: true, opacity: 0.18}}))); }});
-(DATA.contacts || []).forEach(([x, y, z, k]) => {{ const d = new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 4),
-  new THREE.MeshBasicMaterial({{color: k === "cavity" ? "#ff2020" : "#20ff60"}})); d.position.set(x, y, z); scene.add(d); }});
+[["outside", "#20ff60"], ["cavity", "#ff2020"]].forEach(([kind, col]) => {{
+  const pts = (DATA.contacts || []).filter(c => c[3] === kind).flatMap(c => [c[0], c[1], c[2]]); if (!pts.length) return;
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pts), 3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({{color: col, size: 0.5}}))); }});
 (function loop() {{ requestAnimationFrame(loop); r.render(scene, cam); }})();
 </script></body></html>"""
 

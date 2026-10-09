@@ -60,6 +60,8 @@ class PrintManifest:
     fit: List[Dict[str, Any]] = field(default_factory=list)
     #: The project's [slice] intent, carried so a sliced file can be checked against the manifest it came from.
     slice_intent: Dict[str, Any] = field(default_factory=dict)
+    #: Sliced files found in the exports folder at finalize: [{file, toolpaths, layers}].
+    sliced: List[Dict[str, Any]] = field(default_factory=list)
 
     def part_count(self) -> int:
         return sum(int(p.get("quantity", 1)) for p in self.parts) if self.parts else 1
