@@ -104,3 +104,24 @@ def test_the_same_job_writes_the_same_bytes(job, tmp_path):
     first = [p.read_bytes() for p in target.write_job(job, tmp_path / "a")]
     second = [p.read_bytes() for p in target.write_job(job, tmp_path / "b")]
     assert first == second
+
+
+def test_the_print_intent_reaches_the_manifest(tmp_path):
+    """[print] states the neutral intent; finalize carries it into the manifest, typed fields filled
+    from what it states, every key kept verbatim (the manifest used to carry the class defaults)."""
+    from agentcad.config import ProjectConfig
+    from agentcad.manifest import PrintManifest
+    from agentcad.session import DesignSession
+    from tests.test_session import FakeEngine
+    proj = tmp_path / "designs" / "bracket"
+    proj.mkdir(parents=True)
+    (proj / "agentcad.toml").write_text(
+        f'[project]\nname = "bracket"\n[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\ndefault_views = ["iso"]\n'
+        '[print]\nmaterial = "PETG"\nlayer_height = 0.15\nwalls = 4\ntarget = "generic"\n')
+    session = DesignSession("bracket", FakeEngine(), config=ProjectConfig.load(proj / "agentcad.toml"))
+    session.iterate("volume = 10\n")
+    session.finalize()
+    m = PrintManifest.load(proj / "exports" / "bracket.print.json")
+    assert (m.material, m.layer_height) == ("PETG", 0.15)
+    assert m.print_intent == {"material": "PETG", "layer_height": 0.15, "walls": 4, "target": "generic"}
+    assert m.infill_percent == 20                      # not stated: the default stays, and print_intent does not claim it

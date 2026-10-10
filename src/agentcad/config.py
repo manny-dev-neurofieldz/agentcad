@@ -93,6 +93,9 @@ class ProjectConfig:
     #: The ``[slice]`` table: intended slicer settings by the slicer's own key names, each a value or a table
     #: with ``value`` or ``min``/``max`` and ``why``; ``agentcad gcode check`` compares a sliced file with it.
     slice_intent: Dict[str, Any] = field(default_factory=dict)
+    #: The ``[print]`` table as written: the neutral print intent (material, layer height, walls,
+    #: infill, supports, orientation, printer, target), carried verbatim into the print manifest.
+    print_intent: Dict[str, Any] = field(default_factory=dict)
     #: The ``[qc]`` table (gate, printer, limits, severity, pose), or None when the project declares
     #: none: QC runs at finalize only for a project that asks for it.
     qc: Optional[Dict[str, Any]] = None
@@ -203,6 +206,9 @@ class ProjectConfig:
                    "printer_profile", "filament_profile", "print_orientation", "notes"):
             if k in pr:
                 setattr(config.print, k, pr[k])
+
+        # Print intent: the [print] table, verbatim (its typed keys also fill config.print above)
+        config.print_intent = dict(pr)
 
         # Slice intent: the [slice] table, verbatim
         config.slice_intent = dict(data.get("slice", {}))
