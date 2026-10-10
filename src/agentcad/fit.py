@@ -2,22 +2,25 @@
 
 A mate stated in one program is a hypothesis; only a check with both bodies
 tests it. ``fit`` loads two exact shapes (STEP or build123d sources, each
-with its own defines), poses the second by an optional transform, and
-reports:
+with its own defines), poses the second, and reports:
 
 * ``interference_mm3``: the volume of their intersection (zero is the only
   passing value for parts that must not touch);
 * ``clearance_mm``: the minimum distance between the bodies (line-to-line
   mates read 0.000 here while every single-part instrument passes);
 * per named window, the minimum distance between the two surfaces inside
-  an axis-aligned box, so a key tip and a flange are read separately;
+  an axis-aligned box, so a key tip and a flange are read separately, with a
+  verdict against the window's nominal clearance;
+* contacts: where the surfaces come within a threshold, as regions;
 * an insertion sweep along an axis: the interference at each step of the
-  second body sliding in, so a part that binds on the way in is seen.
+  second body sliding in, so a part that binds on the way in is seen;
+* with an output directory, assembled, exploded and cutaway views and two
+  sections through the mate's axis, overlapping material in red.
 
-Declared mates come from a ``[mates]`` table in the project's
-``agentcad.toml`` (name -> window box and optional nominal clearance);
-``--map`` gives the pose when no declaration exists. Renders through the
-build123d engine's camera presets show the pair assembled and exploded.
+The pose comes from the datums each part declares for a mate
+(``agentcad.mates``), from ``--map``, or from an offset and spin. A fit
+record (time, both parts' parameter snapshots, verdict) goes into the print
+manifests of both parts; ``session finalize`` fits every declared mate.
 """
 
 import json
