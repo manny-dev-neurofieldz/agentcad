@@ -326,6 +326,18 @@ over the registry, so `pytest` exercises the new engine the same way the CLI
 does with no test changes; `export` must return `self._unsupported_format(fmt)`
 for formats outside `EXPORT_FORMATS`.
 
+## Policies
+
+Every capability ships with a policy: a document in the package that says what the capability is for, how to use it well and how it fails, read through the CLI so the guidance always matches the installed version.
+
+```
+agentcad policy list                      # installed policies and the commands each governs
+agentcad policy navigate session          # a policy's numbered topics and their questions
+agentcad policy read session --section 2  # one section, with its subsections
+```
+
+Policies follow a fixed format (a header, a navigation guide of numbered questions, one boundary line, numbered sections), so another tool that reads the same format can mount them unchanged. `tests/test_policy.py` checks the reader against reference outputs committed under `tests/data/policy_golden/`, holds every command to a governing policy (a command added without one fails the suite), and lints each policy (plain ASCII, no absolute paths, fences at column 0, the navigation guide numbered like the content).
+
 ## Adding a Command
 
 A command module in `src/agentcad/commands/` adds commands without editing `cli.py`. The module defines `register(subparsers, groups)`: `subparsers` is the top-level subparsers action, and `groups` maps a command group's name (`probe`, `gcode`, `gallery`, `session`, and any group a module adds) to that group's subparsers action, so a module can also add a subcommand under an existing group. Every argument carries help text; `tests/test_cli_tree.py` walks the whole tree (`agentcad.cli.build_parser()`) and fails on a command without a handler or an argument without help. A module that fails to import is reported on stderr and skipped, and the other commands keep working.
