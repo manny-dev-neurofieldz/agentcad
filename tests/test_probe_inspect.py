@@ -567,7 +567,7 @@ def test_the_worst_five_percent_lie_where_the_hole_moved(shifted_plate):
     for way in ("candidate_to_original", "original_to_candidate"):
         dev = res["deviation"][way]
         worst = dev["worst5"]
-        assert worst["fraction"] == 0.05 and 1 <= worst["n"] <= math.ceil(0.05 * dev["n"])
+        assert worst["fraction"] == 0.05 and worst["n"] >= 1          # 5% of the points, plus any tied with the last
         assert worst["threshold"] <= dev["max"] and worst["threshold"] > 0
         assert worst["bbox_max"][0] < -3.0 and worst["bbox_min"][0] > -15.0          # the left hole's side of the plate
         assert -4.0 < worst["bbox_min"][1] and worst["bbox_max"][1] < 4.0
@@ -789,3 +789,18 @@ def test_probe_knobs_through_the_cli(knob_part, tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         cli.main(["probe", "knobs", str(broken), "--knob", "a=1"])
     assert exc.value.code == 1 and "the base run does not build" in capsys.readouterr().err
+
+
+def test_equal_deviations_are_never_split_by_sort_order():
+    """Three holes that each moved 0.2 are three clusters, even when 5% of the points is fewer than
+    the points at 0.2 (the cut once fell inside the tie and dropped a hole)."""
+    import numpy as np
+    from agentcad.probe import worst_region
+    rng = np.random.default_rng(1)
+    flat = rng.uniform([-30, -10, -3], [30, 10, 3], size=(900, 3))
+    holes = np.concatenate([np.c_[np.full(40, x), rng.uniform(-2, 2, 40), rng.uniform(-3, 3, 40)] for x in (-15, 0, 15)])
+    P = np.concatenate([flat, holes])
+    d = np.concatenate([np.zeros(len(flat)), np.full(len(holes), 0.2)])
+    w = worst_region(P, d)
+    assert w["n"] == 120 and w["n_clusters"] == 3          # 5% of 1020 is 51: the tie brings in all 120
+    assert sorted(round(c["center"][0]) for c in w["clusters"]) == [-15, 0, 15]

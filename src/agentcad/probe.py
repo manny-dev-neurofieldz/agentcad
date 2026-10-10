@@ -325,7 +325,8 @@ def worst_region(points: Sequence[Sequence[float]], dist: Sequence[float], fract
                  shown: int = _CLUSTERS_SHOWN) -> Dict[str, Any]:
     """Where the worst ``fraction`` of the deviations lie: their bounding box, and clusters.
 
-    The points with the largest distances (the top ``fraction`` of them, those above zero) are
+    The points with the largest distances (the top ``fraction`` of them and every point tied with
+    the last of them, those above zero) are
     grouped by the cubic cells they fall in, cells of 1/20 of the bounding-box diagonal of all the
     points; cells that touch (by face, edge or corner) join into one cluster. A cluster reports the
     mean of its points as its centre, its size, its worst distance and its box, and the ``shown``
@@ -336,6 +337,10 @@ def worst_region(points: Sequence[Sequence[float]], dist: Sequence[float], fract
 
     P, d = np.asarray(points, dtype=float), np.asarray(dist, dtype=float)
     pick = np.argsort(-d, kind="stable")[:max(1, math.ceil(fraction * len(d)))]
+    if len(pick):
+        # every point tied with the last one picked joins: equal deviations are never split by sort order
+        floor = float(d[pick].min())
+        pick = np.nonzero(d >= floor - 1e-9 * max(1.0, abs(floor)))[0]
     pick = pick[d[pick] > 0]
     out: Dict[str, Any] = {"fraction": fraction, "n": int(len(pick)), "of": int(len(d))}
     if not len(pick):
@@ -349,7 +354,8 @@ def worst_region(points: Sequence[Sequence[float]], dist: Sequence[float], fract
     clusters.sort(key=lambda c: (-c["max"], -c["n"]))
     out.update(threshold=float(worst_d.min()), bbox_min=worst.min(axis=0).tolist(), bbox_max=worst.max(axis=0).tolist(),
                cell=cell, n_clusters=len(clusters), clusters=clusters[:shown],
-               method=f"the worst {fraction:.0%} of the points by distance; occupied cells of {cell:.4g} "
+               method=f"the worst {fraction:.0%} of the points by distance, and every point tied with the last "
+                      f"of them; occupied cells of {cell:.4g} "
                       f"(1/{_CLUSTER_CELLS} of the bounding-box diagonal) that touch form one cluster, "
                       f"centre = mean of its points")
     return out

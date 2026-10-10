@@ -137,7 +137,8 @@ compared in the sampled compartment only, and the output says so.
 
 `compare` reports the deviation both ways (each sampled point's distance to the nearest sampled point of
 the other part): p50, p95 and max as before, and now the `rms`, and where the worst 5 percent lie as
-`worst5`: the number of points and the smallest distance among them, their bounding box, and clusters.
+`worst5` (with every point tied with the last of them, so equal deviations are never split by sort
+order): the number of points and the smallest distance among them, their bounding box, and clusters.
 The clustering rule is stated in the record (`method`) and printed: the worst points are binned into cells
 of one twentieth of the bounding-box diagonal, cells that touch form a cluster, and each cluster gives
 the mean of its points, its size, its worst distance and its box (the five worst are kept). With
