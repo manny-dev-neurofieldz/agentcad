@@ -175,8 +175,8 @@ def _assembly_frame(source: Path, defines):
 def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
         offset=(0, 0, 0), spin_deg=0.0, spin_axis="z", transform: Optional[Sequence[Sequence[float]]] = None,
         windows: Optional[Dict[str, Sequence[float]]] = None,
-        sweep_axis: Optional[str] = None, sweep_travel: float = 10.0,
-        out_dir: Optional[Path] = None) -> Dict[str, Any]:
+        sweep_axis: Optional[str] = None, sweep_travel: float = 10.0, sweep_steps: int = 10,
+        sample_step: Optional[float] = None, out_dir: Optional[Path] = None) -> Dict[str, Any]:
     from agentcad.probe import load_shape
 
     a_defines, b_defines = _assembly_frame(a_source, a_defines), _assembly_frame(b_source, b_defines)
@@ -193,11 +193,11 @@ def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
     }
     if windows:
         try:
-            result["windows"] = window_clearances(a, b, windows)
+            result["windows"] = window_clearances(a, b, windows, tol=sample_step)
         except ImportError as e:
             result["windows_error"] = f"scipy unavailable: {e}"
     if sweep_axis:
-        result["insertion"] = insertion_sweep(a, b, sweep_axis, sweep_travel)
+        result["insertion"] = insertion_sweep(a, b, sweep_axis, sweep_travel, steps=sweep_steps)
     if out_dir is not None:
         result["renders"] = _render_pair(a, b, Path(out_dir))
     return result

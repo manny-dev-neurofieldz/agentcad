@@ -975,7 +975,8 @@ def cmd_fit(args):
                      a_defines=a_defs or None, b_defines=b_defs or None,
                      offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
                      sweep_axis=args.sweep, sweep_travel=args.travel,
-                     out_dir=Path(args.output_dir) if args.output_dir else None)
+                     out_dir=Path(args.output_dir) if args.output_dir else None,
+                     sweep_steps=args.sweep_steps, sample_step=args.step)
     print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
     for name, w in (res.get("windows") or {}).items():
         if "min_mm" in w:
@@ -1249,6 +1250,9 @@ def _register_compare_fit(sub, groups):
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
     p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
+    p_fit.add_argument("--sweep-steps", type=int, default=10, help="Positions along the insertion sweep (default 10)")
+    p_fit.add_argument("--step", type=float, default=None,
+                       help="Surface sampling spacing for window clearances in mm (default: part diagonal / 2000)")
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
     p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
