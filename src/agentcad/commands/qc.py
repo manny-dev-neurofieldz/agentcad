@@ -9,12 +9,18 @@ from pathlib import Path
 def _print_report(name, report):
     p = report["printer"]
     pose = report["pose"]
+    stated = f"matrix {pose['matrix']}" if pose.get("matrix") else f"up {pose.get('up', [0, 0, 1])}, spin {pose.get('spin_deg', 0)}"
     print(f"{name} v{report['iteration']} against {p['label']} ({p['name']}, {p['process']}, "
           f"{' x '.join(f'{v:g}' for v in p['build_volume'])} mm; {p['source']}); "
-          f"pose up {pose.get('up', [0, 0, 1])}, spin {pose.get('spin_deg', 0)}")
+          f"pose {stated} ({report.get('pose_from', '[qc] pose')})")
     for f in report["findings"]:
         print(f"  {f['severity'].upper() if f['severity'] == 'error' else f['severity']}: {f['rule']}: "
               f"{f['sentence']} (limit: {f['layer']})")
+    for s in report.get("suppressed", []):
+        print(f"  suppressed: {s['rule']} at {s['source']}, because {s['why']}: {s['finding']}")
+    for item in report.get("loosened", []):
+        print(f"  loosened: {item['limit']} {item['value']:g} (from {item['below']:g}) for {item['feature']!r} at "
+              f"{item['source']}" + (f", because {item['why']}" if item["why"] else ", with no reason given"))
     print("  limits: " + ", ".join(f"{k} {v['value']:g} ({v['layer']})" for k, v in report["limits"].items()))
     if report["not_measured"]:
         print("  not measured: " + "; ".join(f"{k} ({why})" for k, why in report["not_measured"].items()))
@@ -47,7 +53,8 @@ def cmd_qc(args):
             print(f"agentcad qc: no mesh of v{it.number} ({'; '.join(result.errors)}); nothing measured", file=sys.stderr)
             stl = None
     try:
-        report = qcmod.run(cfg, stl, qs, printer_override=args.printer)
+        report = qcmod.run(cfg, stl, qs, printer_override=args.printer, annotations=it.metadata.get("qc_annotations"),
+                           origin_of={str(it.source_path): it.origin} if it.origin else None)
     except (KeyError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2

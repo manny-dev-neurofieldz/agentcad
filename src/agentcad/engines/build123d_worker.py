@@ -503,9 +503,14 @@ def run(job: Dict[str, Any], out: Dict[str, Any]) -> None:
         return
     t0 = time.monotonic()
     b3d = _bootstrap()
+    from agentcad import annotate
+    annotate.reset()                     # a build declares its own features, never a previous build's
     namespace = _execute(job["source_path"])
     shape = _harvest(b3d, namespace, job.get("defines") or {}, out["warnings"])
     out["metadata"] = _measure(b3d, shape, float(job.get("short_edge_mm") or 0.25))
+    notes = annotate.records()
+    if notes:
+        out["metadata"]["qc_annotations"] = notes
     if job.get("expected_solids") is not None:
         out["metadata"]["expected_solids"] = int(job["expected_solids"])
     out["metadata"]["runtime_s"] = round(time.monotonic() - t0, 3)
