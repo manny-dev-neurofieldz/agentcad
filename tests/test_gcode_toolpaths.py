@@ -63,12 +63,20 @@ def test_page_script_runs_in_node_with_contacts_and_a_mesh(tmp_path):
     for i, s in enumerate(re.findall(r"<script>(.*?)</script>", page.read_text(), re.S)):
         (tmp_path / f"page_script_{i}.js").write_text(s)
     harness = Path(__file__).parent / "js" / "run_page.js"
-    r = subprocess.run([node, str(harness), str(tmp_path), "9"], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, r.stderr
-    out = json.loads(r.stdout.strip().splitlines()[-1])
-    # 10 layers of one feature, one mesh, one point cloud per contact kind
-    assert out["renders"] >= 1 and out["objects"] == 10 + 1 + 2
-    assert out["legend"] == 1 and out["zr"] == "z 0.2-2 mm"
+    def run(hi, *extra):
+        r = subprocess.run([node, str(harness), str(tmp_path), str(hi), *extra], capture_output=True, text=True,
+                           timeout=60)
+        assert r.returncode == 0, r.stderr
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    out = run(9)
+    # 10 layers of one feature, one mesh, one point cloud per contact kind; a checkbox for the feature, the parts
+    # and each contact kind
+    assert out["renders"] >= 1 and out["objects"] == 10 + 1 + 2 and out["shown"] == 13
+    assert out["legend"] == 4 and out["zr"] == "z 0.2-2 mm"
+    # every checkbox off: nothing is drawn (contacts once lingered with no checkbox of their own)
+    assert run(9, "off")["shown"] == 0
+    # layer range up to z 0.2: one layer, the parts, and only the contact at z 0.2 (the outside one)
+    assert run(0)["shown"] == 1 + 1 + 1
 
 
 def tp_page(tmp_path, **kw):

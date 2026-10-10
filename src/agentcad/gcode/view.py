@@ -39,23 +39,35 @@ DATA.layers.forEach((L, i) => {{ for (const [f, b] of Object.entries(L.features)
   m.userData = {{feature: f, layer: i}}; scene.add(m); layerObjs.push(m); groups[f] = true; }} }});
 const box = new THREE.Box3().setFromObject(scene); const c = box.getCenter(new THREE.Vector3()); const sz = box.getSize(new THREE.Vector3()).length();
 ctl.target.copy(c); cam.position.set(c.x + sz, c.y - sz, c.z + sz * 0.8); ctl.update();
-const leg = document.getElementById("legend");
-Object.keys(groups).forEach(f => {{ const l = document.createElement("label");
-  l.innerHTML = `<input type=checkbox checked data-f="${{f}}"> <span style="color:${{COLOURS[f] || '#ccc'}}">&#9632;</span> ${{f}}`; leg.appendChild(l); }});
-function apply() {{ const lo = +document.getElementById("lo").value, hi = +document.getElementById("hi").value;
-  const on = {{}}; document.querySelectorAll("#legend input").forEach(i => on[i.dataset.f] = i.checked);
-  layerObjs.forEach(m => m.visible = on[m.userData.feature] && m.userData.layer >= lo && m.userData.layer <= hi);
-  document.getElementById("zr").textContent = `z ${{DATA.layers[lo].z}}-${{DATA.layers[hi].z}} mm`; }}
-document.querySelectorAll("input").forEach(i => i.addEventListener("input", apply)); apply();
-(DATA.meshes || []).forEach(M => {{ const g = new THREE.BufferGeometry();
+// overlays: the placed parts, and support contacts per kind (sorted by z, so the layer range is a draw range)
+const extras = [];
+const parts = (DATA.meshes || []).map(M => {{ const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.BufferAttribute(dec(M.p), 3));
   const s = atob(M.t); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
   g.setIndex(new THREE.BufferAttribute(new Uint32Array(u.buffer), 1)); g.computeVertexNormals();
-  scene.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({{color: "#9fb4d0", transparent: true, opacity: 0.18}}))); }});
-[["outside", "#20ff60"], ["cavity", "#ff2020"]].forEach(([kind, col]) => {{
-  const pts = (DATA.contacts || []).filter(c => c[3] === kind).flatMap(c => [c[0], c[1], c[2]]); if (!pts.length) return;
-  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pts), 3));
-  scene.add(new THREE.Points(g, new THREE.PointsMaterial({{color: col, size: 0.5}}))); }});
+  const m = new THREE.Mesh(g, new THREE.MeshBasicMaterial({{color: "#9fb4d0", transparent: true, opacity: 0.18}}));
+  scene.add(m); return m; }});
+if (parts.length) extras.push({{name: "Parts", colour: "#9fb4d0", objs: parts}});
+[["outside", "Support contacts (outside)", "#20ff60"], ["cavity", "Support contacts (in a cavity)", "#ff2020"]]
+  .forEach(([kind, name, col]) => {{
+  const cs = (DATA.contacts || []).filter(c => c[3] === kind).sort((p, q) => p[2] - q[2]); if (!cs.length) return;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(cs.flatMap(c => [c[0], c[1], c[2]])), 3));
+  const m = new THREE.Points(g, new THREE.PointsMaterial({{color: col, size: 0.5}})); m.userData.zs = cs.map(c => c[2]);
+  scene.add(m); extras.push({{name: name, colour: col, objs: [m]}}); }});
+const leg = document.getElementById("legend");
+const entries = Object.keys(groups).map(f => [f, COLOURS[f] || "#ccc"]).concat(extras.map(e => [e.name, e.colour]));
+entries.forEach(([f, col]) => {{ const l = document.createElement("label");
+  l.innerHTML = `<input type=checkbox checked data-f="${{f}}"> <span style="color:${{col}}">&#9632;</span> ${{f}}`; leg.appendChild(l); }});
+function apply() {{ const lo = +document.getElementById("lo").value, hi = +document.getElementById("hi").value;
+  const on = {{}}; document.querySelectorAll("#legend input").forEach(i => on[i.dataset.f] = i.checked);
+  layerObjs.forEach(m => m.visible = !!on[m.userData.feature] && m.userData.layer >= lo && m.userData.layer <= hi);
+  const zlo = DATA.layers[lo].z - 1e-6, zhi = DATA.layers[hi].z + 1e-6;
+  extras.forEach(e => e.objs.forEach(m => {{ m.visible = !!on[e.name];
+    if (m.userData.zs) {{ const zs = m.userData.zs; let a = 0, b = zs.length;
+      while (a < zs.length && zs[a] < zlo) a++; while (b > a && zs[b - 1] > zhi) b--; m.geometry.setDrawRange(a, b - a); }} }}));
+  document.getElementById("zr").textContent = `z ${{DATA.layers[lo].z}}-${{DATA.layers[hi].z}} mm`; }}
+document.querySelectorAll("input").forEach(i => i.addEventListener("input", apply)); apply();
 (function loop() {{ requestAnimationFrame(loop); r.render(scene, cam); }})();
 </script></body></html>"""
 
