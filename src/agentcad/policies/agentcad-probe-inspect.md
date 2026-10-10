@@ -3,11 +3,11 @@
 **Type**: Capability Policy (inspection probes)
 **Scope**: Any agent or person measuring what a part is made of: walls, voids, parameters, face types
 **Status**: ACTIVE
-**Commands**: agentcad probe rays, agentcad probe inventory
+**Commands**: agentcad probe rays, agentcad probe knobs, agentcad probe inventory
 
 ## Purpose
 
-A render shows a silhouette; it does not show how thick a wall is, how deep a bore goes, whether a gap is where it should be, or whether a count of faces can be believed. The inspection probes measure those things. They read an exact source (a build123d program or a STEP file) exactly and a mesh to its tessellation, and every output says which it did. This policy says which probe answers which question, how to read the numbers, and what each one cannot tell.
+A render shows a silhouette; it does not show how thick a wall is, how deep a bore goes, whether a gap is where it should be, which parameters of a program move the part at all, or whether a count of faces can be believed. The inspection probes measure those things. They read an exact source (a build123d program or a STEP file) exactly and a mesh to its tessellation, and every output says which it did. This policy says which probe answers which question, how to read the numbers, and what each one cannot tell.
 
 ## CEP Navigation Guide
 
@@ -56,13 +56,21 @@ A render shows a silhouette; it does not show how thick a wall is, how deep a bo
 - What are the radial and axial extents of a loop?
 - How are the axis and its centre chosen, and when must they be named?
 
-**5 Integration with Other Policies**
+**5 Knobs: Which Parameters Matter**
+- What does a knob sweep run, and how many builds does it cost?
+- How is the base moved, and how is a delta given?
+
+**5.1 Reading the Verdicts**
+- What do live, saturated, dead, partial and refused mean?
+- What does a dead verdict not prove?
+
+**6 Integration with Other Policies**
 - Which policies govern what surrounds these probes?
 
-**6 Anti-Patterns**
+**7 Anti-Patterns**
 - Which readings of these probes mislead?
 
-**7 Evolution and Feedback**
+**8 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -70,6 +78,7 @@ A render shows a silhouette; it does not show how thick a wall is, how deep a bo
 ## 1 Choosing the Probe
 
 - A wall, a floor, a bore, a gap or a rib along a direction: `agentcad probe rays`. It returns lengths, which a render cannot.
+- Whether a parameter is worth tuning, and which ones the part ignores: `agentcad probe knobs`.
 - What the whole part is made of (bounding box, volume, area, solid and face counts, face types, cylinder axes, loops on planes): `agentcad probe inventory`.
 - The outline of the part on a plane: `agentcad probe section`, governed by the recover policy; section 4 covers an STL source.
 
@@ -140,13 +149,28 @@ Every mesh loop, and each plane over all its loops (including any a cap dropped)
 
 `--axis-center A,B` names where the axis passes, as the two coordinates across it in x, y, z order (for the Z axis, x then y). The default is the middle of the mesh's bounding box, which for a polygonal body of revolution is within a sagitta of the true axis; name the centre for a part whose axis lies elsewhere.
 
-## 5 Integration with Other Policies
+## 5 Knobs: Which Parameters Matter
+
+`agentcad probe knobs SOURCE --knob NAME=DELTA` runs a build123d program that defines `build(**params)` at its base values and, for each knob, at the base plus DELTA and minus DELTA: two builds per knob and one for the base, never more, and the count is printed. `--knob` is repeatable, and a delta may be a percentage of the base, `--knob width=10%`. `-D VAR=VAL` (`--define`, repeatable) moves the base before the sweep, for a part that is worth tuning around a value other than its default. `-o FILE` (`--output`) writes the record (schema `agentcad.probe.knobs/1`).
+
+Each run is measured four ways: volume, area, bounding-box size and solid count, and each side reports its change against the base. A knob is a number: an integer's delta must be a whole number, and a boolean or a string is refused with a message. A run that does not build is recorded with its error, not hidden; a base that does not build stops the sweep.
+
+### 5.1 Reading the Verdicts
+
+- `live`: both sides change the part.
+- `saturated`: one side changes the part and the other does nothing, so the knob is at a limit in that direction (a clamp, a minimum, a branch not taken). The record names the side that does nothing.
+- `dead`: neither side changes anything the four measures can see. The parameter may be unused, shadowed, or overwritten before it is read.
+- `partial`: one side does not build (a negative size, a fillet larger than its edge) and the error says why; `refused` means neither side builds.
+
+A dead verdict names the measures, not a certainty. A knob that only moves a feature of equal volume along a wall, or only a label, reads as dead, and a delta that stays inside a clamp or below a feature's resolution reads as no change. Sweep again with a larger delta, and read the program, before removing a knob.
+
+## 6 Integration with Other Policies
 
 - `agentcad-session`: the tray after each iteration carries the census warning of section 3.1.
 - `agentcad-probe-recover`: section loops of an exact source, fits and comparison; it governs `agentcad probe section` for every source, and section 4 here adds what an STL changes.
 - `agentcad-policies`: how this and every other policy is found and read.
 
-## 6 Anti-Patterns
+## 7 Anti-Patterns
 
 - **Reading a clipped interval as a thickness**: an interval cut short by the range is a lower bound, whatever its length.
 - **Trusting a zero from a spline census**: no cylinders counted is not no cylinders present when the census says it cannot see them.
@@ -154,7 +178,9 @@ Every mesh loop, and each plane over all its loops (including any a cap dropped)
 - **Comparing a mesh to the nominal to the last digit**: the tessellation is a stated approximation; the tolerance belongs to the comparison.
 - **Judging a wall by its render**: a picture shows no thickness; ask a ray.
 - **Reading mesh loops as exact edges**: a polylined circle has the tessellation's perimeter; read the fitted radius or the extents.
+- **Calling a knob dead from one small delta**: a delta inside a clamp reads as no change; sweep a larger one.
+- **Reading a saturated side as a broken knob**: it is at a limit, and the limit is the design's.
 
-## 7 Evolution and Feedback
+## 8 Evolution and Feedback
 
 This policy ships with agentcad and changes with the commands it governs; a change to an inspection command's behaviour updates this policy in the same pull request.

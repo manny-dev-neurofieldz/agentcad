@@ -1,4 +1,5 @@
-"""``agentcad probe rays``: material and void intervals along lines and fans.
+"""``agentcad probe rays`` and ``agentcad probe knobs``: what a part is made of along lines, and which
+parameters of its program matter.
 
 The commands here sit under the ``probe`` group beside the recover probes and
 share their conventions: a source (build123d program, STEP file, or for rays an
@@ -39,6 +40,25 @@ def cmd_probe_rays(args):
     return 0
 
 
+def cmd_probe_knobs(args):
+    """Which parameters of a program change the part: base, plus and minus a delta per knob."""
+    from agentcad import knobs, probe
+    from agentcad.cli import _parse_defines
+
+    if not args.knob:
+        print("Error: give at least one --knob NAME=DELTA (agentcad policy read probe-inspect shows the forms)", file=sys.stderr)
+        return 2
+    try:
+        res = knobs.knob_sweep(Path(args.source), args.knob, defines=_parse_defines(args.define) if args.define else None)
+    except (ValueError, RuntimeError, OSError) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2 if isinstance(e, ValueError) else 1
+    print("\n".join(knobs.render_knobs(res)))
+    if args.output:
+        print(f"knobs.json: {probe.write_json(res, Path(args.output))}")
+    return 0
+
+
 def register(subparsers, groups):
     from agentcad.cli import DEFINE_HELP
 
@@ -57,3 +77,10 @@ def register(subparsers, groups):
     pr.add_argument("-o", "--output", default=None, help="Write the JSON record here (schema agentcad.probe.rays/1)")
     pr.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
     pr.set_defaults(func=cmd_probe_rays)
+
+    pk = sub.add_parser("knobs", help="Which parameters of a program matter: base, plus and minus a delta per knob; flags saturated and dead knobs")
+    pk.add_argument("source", help="build123d program defining build(**params)")
+    pk.add_argument("--knob", action="append", metavar="NAME=DELTA", help="A parameter to move by DELTA, or by NAME=P%% of its base (repeatable; two builds each)")
+    pk.add_argument("-o", "--output", default=None, help="Write the JSON record here (schema agentcad.probe.knobs/1)")
+    pk.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help="Move the base: override a parameter before the sweep (repeatable)")
+    pk.set_defaults(func=cmd_probe_knobs)

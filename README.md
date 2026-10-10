@@ -123,6 +123,7 @@ the check: the gallery is a test of the tool on every engine.
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
 agentcad probe rays part.py --line=-30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
+agentcad probe knobs part.py --knob width=2 --knob wall=10%          # which parameters move the part, which do nothing
 agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
 ```
 
@@ -186,6 +187,17 @@ agentcad probe section turned.stl --planes y=0 --axis z    # a profile through t
 A plane through vertices reads as moved a hair toward lower coordinates, and at
 the mesh's lowest coordinate as moved a hair up, so a part standing on z=0 and
 cut at z=0 gives the outline of its bottom face.
+
+### Knobs
+
+`probe knobs` finds out which parameters of a build123d program (`def build(**params)`) reach the geometry.
+Each `--knob NAME=DELTA` (or `NAME=10%`, a share of the base) builds the program at the base plus and minus
+the delta, so a sweep costs one build for the base and two per knob, and says so. Each side reports its change
+in volume, area, bounding-box size and solid count against the base. A knob is `live` when both sides change
+the part, `saturated` when only one does (a clamp, a limit: the record names the side that does nothing),
+`dead` when neither does, `partial` when a side does not build (the error is recorded), `refused` when
+neither does. `-D NAME=VALUE` moves the base first. A dead verdict names the four measures, not a
+certainty: sweep a larger delta and read the program before removing a knob.
 
 ### The census says when it cannot see
 

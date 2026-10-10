@@ -606,3 +606,119 @@ def test_overlays_draw_whole_circles_and_the_right_half_of_a_half_circle(tmp_pat
     old = {"type": "circle", "start": [5, 0, 0], "end": [0, 5, 0], "center": [0, 0, 0], "radius": 5.0, "sweep_deg": 90.0}   # no midpoint recorded
     legacy = probe._loop_points_2d([{"edges": [old]}], "z=mid", 8)
     assert legacy[0] == pytest.approx((5.0, 0.0)) and legacy[-1] == pytest.approx((0.0, 5.0), abs=1e-9) and legacy[4][0] > 0
+
+
+# --- knobs ------------------------------------------------------------------------------------
+
+# width and height reach the geometry; label is accepted and never used; lip is clamped to 4, so raising it does nothing.
+KNOB_PART = (
+    "from build123d import *\n"
+    "\n"
+    "def build(width=20.0, height=10.0, label=5.0, lip=4.0, count=3):\n"
+    "    lip = min(lip, 4.0)\n"
+    "    part = Box(width, 20, height)\n"
+    "    return part + Pos(0, 0, height / 2 + lip / 2) * Box(width, 4, lip)\n"
+)
+
+
+@pytest.fixture(scope="module")
+def knob_part(tmp_path_factory) -> Path:
+    path = tmp_path_factory.mktemp("inspect_knobs") / "knob_part.py"
+    path.write_text(KNOB_PART)
+    return path
+
+
+def test_a_sweep_flags_the_dead_and_the_saturated_knob(knob_part):
+    from agentcad import knobs
+    res = knobs.knob_sweep(knob_part, ["width=2", "height=1", "label=1", "lip=1"])
+    assert res["schema"] == knobs.SCHEMA and res["runs"] == 9                        # one base and two per knob
+    by = {k["name"]: k for k in res["knobs"]}
+    assert res["base"]["volume"] == pytest.approx(20 * 20 * 10 + 20 * 4 * 4) and res["base"]["solids"] == 1
+    assert by["width"]["verdict"] == "live" and by["height"]["verdict"] == "live"
+    assert by["label"]["verdict"] == "dead"
+    assert by["label"]["plus"]["status"] == by["label"]["minus"]["status"] == "unchanged"
+    assert by["lip"]["verdict"] == "saturated" and by["lip"]["saturated"] == "plus"     # raising it does nothing
+    assert by["lip"]["plus"]["status"] == "unchanged" and by["lip"]["minus"]["status"] == "changed"
+    # the arithmetic of the live knob: widening by 2 adds 2 * (20 * 10 + 4 * 4) of volume and 2 to the x size
+    assert by["width"]["plus"]["volume"] == pytest.approx(2 * (20 * 10 + 4 * 4)) and by["width"]["minus"]["volume"] == pytest.approx(-2 * 216)
+    assert by["width"]["plus"]["bbox_size"] == pytest.approx([2.0, 0.0, 0.0]) and by["width"]["plus"]["solids"] == 0
+    assert by["width"]["plus"]["volume_pct"] == pytest.approx(100.0 * 432 / 4320)
+
+
+def test_a_sweep_is_bounded_and_reads_overrides_and_percentages(knob_part):
+    from agentcad import knobs
+    res = knobs.knob_sweep(knob_part, ["width=10%", "count=2"], defines={"width": "30"})
+    assert res["runs"] == 5 and res["defines"] == {"width": "30"}
+    width, count = res["knobs"]
+    assert width["base"] == 30.0 and width["delta"] == pytest.approx(3.0) and width["relative"] and width["percent"] == 10.0
+    assert (width["plus"]["value"], width["minus"]["value"]) == (33.0, 27.0)
+    assert count["verdict"] == "dead" and isinstance(count["base"], int) and (count["plus"]["value"], count["minus"]["value"]) == (5, 1)
+
+
+def test_a_side_that_does_not_build_is_named_not_hidden(tmp_path):
+    from agentcad import knobs
+    program = tmp_path / "limit.py"
+    program.write_text("from build123d import *\n\ndef build(r=5.0):\n    if r <= 0:\n        raise ValueError('radius must be positive')\n"
+                       "    return Cylinder(r, 10)\n")
+    res = knobs.knob_sweep(program, ["r=5"])                                   # minus 5 is a radius of 0
+    cut = res["knobs"][0]
+    assert cut["verdict"] == "partial" and cut["minus"]["status"] == "refused" and "radius must be positive" in cut["minus"]["error"]
+    assert cut["plus"]["status"] == "changed" and knobs.knob_sweep(program, ["r=1"])["knobs"][0]["verdict"] == "live"
+    both = tmp_path / "both.py"
+    both.write_text("from build123d import *\n\ndef build(r=5.0):\n    if r != 5.0:\n        raise RuntimeError('only the base builds')\n"
+                    "    return Cylinder(r, 10)\n")
+    assert knobs.knob_sweep(both, ["r=1"])["knobs"][0]["verdict"] == "refused"
+    assert any("REFUSED" in line for line in knobs.render_knobs(res))
+
+
+def test_a_sweep_names_what_it_cannot_run(knob_part, tmp_path):
+    from agentcad import knobs
+    for knob_args, words in ((["nope=1"], "no parameter 'nope'"), (["width"], "knob spec"), (["width=0"], "above 0"), (["=3"], "knob spec"),
+                             (["width=x"], "not a number"), ([], "at least one"), (["width=1", "width=2"], "given twice"),
+                             (["count=0.5"], "whole number")):
+        with pytest.raises(ValueError, match=words):
+            knobs.knob_sweep(knob_part, knob_args)
+    flag = tmp_path / "flag.py"
+    flag.write_text("from build123d import *\n\ndef build(label='x', on=True, n=0, **extra):\n    return Box(5, 5, 5)\n")
+    for knob_args, defines, words in ((["label=1"], None, "not a number"), (["on=1"], None, "bool"), (["n=10%"], None, "is 0"),
+                                      (["size=1"], None, "give -D size=VALUE")):
+        with pytest.raises(ValueError, match=words):
+            knobs.knob_sweep(flag, knob_args, defines)
+    with pytest.raises(ValueError, match="build123d program"):
+        knobs.knob_sweep(tmp_path / "part.step", ["a=1"])
+    plain = tmp_path / "plain.py"
+    plain.write_text("from build123d import *\npart = Box(5, 5, 5)\n")
+    with pytest.raises(ValueError, match="knobs need a parametric build"):
+        knobs.knob_sweep(plain, ["a=1"])
+    broken = tmp_path / "broken.py"
+    broken.write_text("from build123d import *\n\ndef build(a=1.0):\n    raise RuntimeError('does not build')\n")
+    with pytest.raises(RuntimeError, match="the base run does not build: RuntimeError: does not build"):
+        knobs.knob_sweep(broken, ["a=1"])
+    quiet = tmp_path / "quiet.py"
+    quiet.write_text("from build123d import *\n\ndef build(a=1.0):\n    raise RuntimeError()\n")
+    assert knobs._build(quiet, {})["error"] == "RuntimeError"
+
+
+def test_probe_knobs_through_the_cli(knob_part, tmp_path, capsys):
+    from agentcad import cli
+    out = tmp_path / "knobs.json"
+    cli.main(["probe", "knobs", str(knob_part), "--knob", "width=2", "--knob", "label=1", "--knob", "lip=1", "-o", str(out)])
+    text = capsys.readouterr().out
+    assert "7 builds (1 base + 2 per knob)" in text and "knob width: base 20, delta 2" in text
+    assert "live: both sides change the part" in text
+    assert "DEAD: no change in volume, area, bounding box or solid count either way" in text
+    assert "SATURATED: increasing it changes nothing, decreasing it does" in text
+    data = json.loads(out.read_text())
+    assert [k["verdict"] for k in data["knobs"]] == ["live", "dead", "saturated"]
+    cli.main(["probe", "knobs", str(knob_part), "--knob", "width=10%", "-D", "width=30"])
+    assert "(10% of the base)" in capsys.readouterr().out
+    for argv, code, words in ((["probe", "knobs", str(knob_part)], 2, "at least one --knob"),
+                              (["probe", "knobs", str(knob_part), "--knob", "nope=1"], 2, "no parameter 'nope'")):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv)
+        assert exc.value.code == code and words in capsys.readouterr().err
+    broken = tmp_path / "broken.py"
+    broken.write_text("from build123d import *\n\ndef build(a=1.0):\n    raise RuntimeError('does not build')\n")
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["probe", "knobs", str(broken), "--knob", "a=1"])
+    assert exc.value.code == 1 and "the base run does not build" in capsys.readouterr().err
