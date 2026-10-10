@@ -8,3 +8,13 @@ base_dir = ".."
 sub_dir = "."
 image_size = 512
 default_views = ["iso", "front", "top", "right"]
+
+# The peg's side of the middle_peg mate: its axis, and its base (the peg stands on z = 0).
+[mates.middle_peg]
+counterpart = "plate"
+[mates.middle_peg.axis]
+point = [0.0, 0.0, 0.0]
+direction = [0.0, 0.0, 1.0]
+[mates.middle_peg.rim_plane]
+point = [0.0, 0.0, 0.0]
+normal = [0.0, 0.0, -1.0]
