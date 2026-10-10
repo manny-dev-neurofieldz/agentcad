@@ -123,3 +123,21 @@ def test_judge_windows_fails_below_nominal_and_never_passes_an_unmeasured_window
     assert v["ok"]["verdict"] == "pass"            # within the default 0.05 mm tolerance
     assert v["empty"]["verdict"] == "unmeasured"
     assert "undeclared" not in v
+
+
+def test_fit_cli_with_output_dir_step_and_sweep_steps(tmp_path, monkeypatch, capsys):
+    """The sampling options reach fit() and an output directory still works with them."""
+    pytest.importorskip("build123d")
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("from build123d import Box\npart = Box(10, 10, 2)\n")
+    b.write_text("from build123d import Box\npart = Box(4, 4, 2)\n")
+    out = tmp_path / "out"
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})   # renders are not under test here
+    cli.main(["fit", str(a), str(b), "--offset", "0,0,3", "--sweep", "z", "--travel", "2",
+              "--sweep-steps", "3", "--step", "0.5", "-o", str(out)])
+    import json
+    rec = json.loads((out / "fit.json").read_text())
+    assert len(rec["insertion"]) in (3, 4)
+    assert rec["clearance_mm"] > 0
