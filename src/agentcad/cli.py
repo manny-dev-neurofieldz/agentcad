@@ -930,6 +930,7 @@ def cmd_fit(args):
     from agentcad import fit as fitmod
 
     windows = {}
+    nominals = {}
     for item in args.window or []:
         name, _, nums = item.partition("=")
         vals = [float(v) for v in nums.split(",")]
@@ -951,6 +952,7 @@ def cmd_fit(args):
             if sides and ((pair and pair != sides) or (not pair and cp and cp not in sides)):
                 continue
             windows.setdefault(name, [float(v) for v in m["window"]])
+            nominals.setdefault(name, (m.get("nominal_mm"), m.get("tol_mm")))
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
     transform = None
     if args.map:
@@ -1000,6 +1002,18 @@ def cmd_fit(args):
             print(f"recorded in {manifests[0]}")
         else:
             print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
+    failed_windows = []
+    if nominals and res.get("windows"):
+        res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)
+        for name, v in res["verdicts"].items():
+            measured = f"{v['min_mm']:.3g} mm" if "min_mm" in v else "not measured"
+            print(f"  window {name}: {v['verdict'].upper()} (clearance {measured}; nominal {v['nominal_mm']:.3g} "
+                  f"+/- {v['tol_mm']:.3g} mm)")
+            if v["verdict"] == "fail":
+                failed_windows.append(name)
+    if failed_windows:
+        print(f"fit: BELOW NOMINAL CLEARANCE in {', '.join(failed_windows)}", file=sys.stderr)
+        sys.exit(1)
     if res["interference_mm3"] and res["interference_mm3"] > (args.allow or 0.0):
         print("fit: INTERFERENCE (the bodies overlap)", file=sys.stderr)
         sys.exit(1)
