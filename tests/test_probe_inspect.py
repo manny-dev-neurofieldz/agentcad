@@ -475,6 +475,18 @@ def test_a_mesh_with_a_hole_gives_open_chains_and_the_cap_is_printed(cylinder_st
     assert "cap max_loops=1 applied: 2 loops" in capsys.readouterr().err
 
 
+def test_probe_section_of_a_program_prints_what_it_always_did(bore_block, tmp_path, capsys):
+    """The exact path is unchanged: the same lines, and a record that is not a mesh record."""
+    from agentcad import cli
+    out = tmp_path / "loops.json"
+    cli.main(["probe", "section", str(bore_block), "--planes", "z=mid", "y=0", "-o", str(out)])
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[:6] == ["z=mid (at 0): 2 loop(s)", "  loop 1: length 140, 4 line", "  loop 2: length 31.42, 1 circle",
+                         "y=0 (at 0): 2 loop(s)", "  loop 1: length 80, 4 line", "  loop 2: length 60, 4 line"]
+    data = json.loads(out.read_text())
+    assert set(data) == {"source", "planes"} and "extents" not in data["planes"][0]["loops"][0]
+
+
 def test_probe_section_takes_an_stl_through_the_cli(cylinder_stl, tmp_path, capsys):
     from agentcad import cli
     out = tmp_path / "loops.json"
@@ -651,6 +663,13 @@ def test_overlays_draw_whole_circles_and_the_right_half_of_a_half_circle(tmp_pat
     assert half and all(x > -1e-6 and abs(math.hypot(x, y) - 5.0) < 1e-6 for x, y in half)                          # the side with the part
     quarter = arc_points("quarter")
     assert quarter and all(x > -1e-6 and y > -1e-6 for x, y in quarter)
+    root = math.sqrt(12.5)
+    for start, end in (([5, 0, 0], [0, 5, 0]), ([0, 5, 0], [5, 0, 0])):                  # the same quarter arc, run either way
+        arc = {"type": "circle", "start": start, "end": end, "center": [0, 0, 0], "radius": 5.0, "sweep_deg": 90.0,
+               "midpoint": [root, root, 0]}
+        run = probe._loop_points_2d([{"edges": [arc]}], "z=mid", 8)
+        assert run[0] == pytest.approx(tuple(start[:2])) and run[-1] == pytest.approx(tuple(end[:2]), abs=1e-9)
+        assert run[4] == pytest.approx((root, root), abs=1e-9) and all(x > -1e-9 and y > -1e-9 for x, y in run)   # through the midpoint
     old = {"type": "circle", "start": [5, 0, 0], "end": [0, 5, 0], "center": [0, 0, 0], "radius": 5.0, "sweep_deg": 90.0}   # no midpoint recorded
     legacy = probe._loop_points_2d([{"edges": [old]}], "z=mid", 8)
     assert legacy[0] == pytest.approx((5.0, 0.0)) and legacy[-1] == pytest.approx((0.0, 5.0), abs=1e-9) and legacy[4][0] > 0
