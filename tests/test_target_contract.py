@@ -140,3 +140,19 @@ def test_native_tables_override_the_mapped_intent_and_report_conflicts(tmp_path)
     assert settings["layer_height"] == 0.2 and settings["perimeters"] == 3      # native wins, the rest is mapped
     assert len(conflicts) == 1 and "layer_height" in conflicts[0] and "0.15" in conflicts[0]
     assert targets.native_settings(cfg, "generic")[0] == {"note": "plain plate"}   # not the default: [slice] is not its
+
+
+def test_support_bands_are_placed_through_a_placement_2_turn(job, tmp_path):
+    """gcode supports reads placement/2: a band on the bed comes back in the part's own frame through
+    the full transform, not just an offset (a /1 sidecar still reads as before)."""
+    from agentcad.gcode import supports
+    written = targets.get_target("generic").write_job(job, tmp_path / "out")
+    placed = supports.load_placement(next(p for p in written if str(p).endswith(".placement.json")))
+    entry = placed["bar"]
+    corner_on_bed = [100 + 10 * math.cos(math.radians(30)), 60 + 10 * math.sin(math.radians(30)), 0.0]
+    back = supports.to_part(entry, corner_on_bed)
+    assert back == pytest.approx([10.0, 0.0, 0.0], abs=1e-6)
+    (tmp_path / "old.json").write_text(json.dumps({"schema": "agentcad.placement/1", "objects": [
+        {"stl": "a.stl", "instances": [{"label": "a", "bed_offset": [5, 6, 0]}]}]}))
+    old = supports.load_placement(tmp_path / "old.json")["a"]
+    assert supports.to_part(old, [6, 8, 1]) == pytest.approx([1, 2, 1])

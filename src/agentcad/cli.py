@@ -920,7 +920,7 @@ def _supports_png(out, bands, placement, meshes, stl_root):
         if p and stl_root is not None and (stl_root / p["stl"]).exists():
             mesh = meshes.setdefault(str(stl_root / p["stl"]), pv.read(str(stl_root / p["stl"])))
             if b.object not in placed:
-                pl.add_mesh(mesh.translate(p["bed_offset"], inplace=False), color="lightsteelblue", opacity=0.35)
+                pl.add_mesh(mesh.transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)
             votes = supports.band_enclosure(b, placement, mesh) or {}
             if votes and max(votes, key=votes.get) == "cavity":
@@ -1010,7 +1010,8 @@ def cmd_gcode_view(args):
             stl = root / p["stl"] if p.get("stl") else None
             if stl is not None and stl.exists():
                 mesh = pv.read(str(stl)).triangulate()
-                meshes.append((np.asarray(mesh.points) + np.asarray(p["bed_offset"]), mesh.faces.reshape(-1, 4)[:, 1:]))
+                bed = np.c_[np.asarray(mesh.points), np.ones(len(mesh.points))] @ np.asarray(p["transform"]).T
+                meshes.append((bed[:, :3], mesh.faces.reshape(-1, 4)[:, 1:]))
     view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts, meshes=meshes,
                     fragment=bool(getattr(args, "artifact", None)))
     print(f"toolpaths: {out}")
@@ -1410,7 +1411,7 @@ def _register_gcode(sub, groups):
     pg.add_argument("--contact-distance", type=float, default=None,
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
-    pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1): bands in each STL's frame")
+    pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1 or /2): bands in each STL's frame")
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
     pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
