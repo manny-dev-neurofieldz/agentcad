@@ -101,7 +101,8 @@ def test_the_smallest_box_claims_and_suppressions_name_their_reason():
     overhang = Finding("overhang", "warning", "x", "y", "z", "[qc]", rule="max_overhang")
     wall = Finding("wall", "warning", "x", "y", "z", "[qc]", rule="min_wall")
     kept, suppressed = qc._apply_suppressions([(overhang, [1, 1, 1]), (wall, [1, 1, 1])], ann, 0.05)
-    assert kept == [wall] and suppressed[0]["why"] == "planned supports" and suppressed[0]["source"] == "/work/mine.py:5"
+    assert kept == [(wall, [1, 1, 1])] and suppressed[0]["why"] == "planned supports"
+    assert suppressed[0]["source"] == "/work/mine.py:5"
 
 
 def test_a_pose_matrix_is_a_rotation():
@@ -268,3 +269,67 @@ def test_a_bridge_whose_ends_are_filleted_into_its_pillars_is_still_a_bridge(tmp
     import math
     edge = 1.5 * math.sin(math.radians(qc.CEILING_DEG))
     assert len(bridges) == 1 and 17.0 - 0.01 <= bridges[0]["span_mm"] <= 17.0 + 2 * edge + 0.01
+
+
+# --- fixes by sensitivity ------------------------------------------------------------------------
+
+KNOBBED = FALLBACK + '''
+from build123d import Align, Cylinder
+
+
+def build(wall=0.4, r=5.0, h=10.0, unused=1.0):
+    low = (Align.CENTER, Align.CENTER, Align.MIN)
+    part = Cylinder(r, h, align=low) - Cylinder(r - wall, h + 2, align=low)
+    feature("tube wall", box=(-r - 1, -r - 1, -1, r + 1, r + 1, h + 1), kind="wall",
+            knobs=("wall=0.1", "unused=0.5", "h=2"))
+    return part
+'''
+
+
+def test_a_knob_spec_is_checked_where_it_is_declared():
+    annotate.feature("a", box=(0, 0, 0, 1, 1, 1), knobs=("wall", "r=0.2", "h=10%"))
+    assert annotate.records()[0]["knobs"] == ["wall=10%", "r=0.2", "h=10%"]
+    with pytest.raises(ValueError, match="knob"):
+        annotate.feature("b", box=(0, 0, 0, 1, 1, 1), knobs=("wall=-1",))
+
+
+@needs_b3d
+def test_fixes_name_the_knob_that_moves_the_wall_and_the_ones_that_do_nothing(tmp_path, capsys):
+    proj, source = _project(tmp_path)
+    source.write_text(KNOBBED)
+    cli.main(["session", "start", str(proj)])
+    cli.main(["session", "iterate", str(proj), str(source)])
+    capsys.readouterr()
+    try:
+        cli.main(["qc", str(proj), "--json", "--fixes"])
+    except SystemExit:
+        pass
+    report = json.loads(capsys.readouterr().out)
+    (rec,) = report["sensitivity"]
+    assert rec["feature"] == "tube wall" and rec["base"]["value"] == pytest.approx(0.4, abs=0.01)
+    knobs = {k["name"]: k for k in rec["knobs"]}
+    assert knobs["wall"]["verdict"] == "live"
+    assert knobs["wall"]["plus"]["value"] == pytest.approx(0.5, abs=0.01)
+    assert knobs["wall"]["minus"]["change"] == pytest.approx(-0.1, abs=0.01)
+    assert knobs["unused"]["verdict"] == "dead" and knobs["h"]["verdict"] == "dead"   # h moves the part, not this wall
+    assert knobs["h"]["plus"]["knob"] == 12.0 and knobs["h"]["plus"]["value"] == pytest.approx(0.4, abs=0.01)
+    fix = report["findings"][rec["finding"]]["fix"]
+    assert "wall +0.1 gives 0.500 mm" in fix and "(passes)" in fix and "unused moves nothing here" in fix
+
+    capsys.readouterr()
+    try:
+        cli.main(["qc", str(proj), "--json", "--fixes", "--max-runs", "3"])
+    except SystemExit:
+        pass
+    (rec,) = json.loads(capsys.readouterr().out)["sensitivity"]
+    assert [k["verdict"] for k in rec["knobs"]] == ["live", "untried", "untried"]
+
+
+@needs_b3d
+def test_an_annotated_program_builds_again_in_process(tmp_path):
+    from agentcad.probe import load_shape
+    src = tmp_path / "tube.py"
+    src.write_text(KNOBBED)
+    first, second = load_shape(src), load_shape(src, {"wall": "0.5"})      # a second build declares afresh
+    assert second.volume > first.volume
+    assert [r["name"] for r in annotate.records()] == ["tube wall"]

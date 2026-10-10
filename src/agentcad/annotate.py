@@ -58,10 +58,28 @@ def _box(box: Sequence[float], what: str) -> List[float]:
     return lo + hi
 
 
-def feature(name: str, box: Sequence[float], *, kind: str = "feature", why: str = "", **limits: float) -> None:
+def _knob(spec: str, feature_name: str) -> str:
+    """``NAME``, ``NAME=DELTA`` or ``NAME=PERCENT%``; a bare name moves by 10% of its value."""
+    name, sep, delta = str(spec).partition("=")
+    name, delta = name.strip(), delta.strip()
+    ok = name.isidentifier()
+    if sep:
+        try:
+            ok = ok and float(delta[:-1] if delta.endswith("%") else delta) > 0
+        except ValueError:
+            ok = False
+    if not ok:
+        raise ValueError(f"feature {feature_name!r}: knob {spec!r} is not NAME, NAME=DELTA or NAME=PERCENT%")
+    return f"{name}={delta}" if sep else f"{name}=10%"
+
+
+def feature(name: str, box: Sequence[float], *, kind: str = "feature", why: str = "",
+            knobs: Sequence[str] = (), **limits: float) -> None:
     """Declare a feature: a name, the box it occupies in the part's frame, its kind, and any limits
     of its own (``min_wall_mm``, ``min_feature_mm``, ``max_overhang_deg``, ``max_bridge_mm``).
-    ``why`` says why a limit differs from the process's; a limit loosened without one is reported."""
+    ``why`` says why a limit differs from the process's; a limit loosened without one is reported.
+    ``knobs`` names the build parameters that move the feature (``"wall"``, ``"wall=0.2"``,
+    ``"r=10%"``): ``agentcad qc --fixes`` turns each and says what it does to a failing finding."""
     if not isinstance(name, str) or not name.strip():
         raise ValueError("feature: a feature needs a name")
     if any(r["type"] == "feature" and r["name"] == name for r in _REGISTRY):
@@ -75,8 +93,11 @@ def feature(name: str, box: Sequence[float], *, kind: str = "feature", why: str 
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"feature {name!r}: {key} must be a positive number, not {value!r}")
         values[key] = value
+    if isinstance(knobs, str):
+        knobs = [knobs]
     _REGISTRY.append(dict(_where(), type="feature", name=name.strip(), kind=str(kind or "feature"),
-                          box=_box(box, f"feature {name!r}"), limits=values, why=str(why or "")))
+                          box=_box(box, f"feature {name!r}"), limits=values, why=str(why or ""),
+                          knobs=[_knob(k, name) for k in knobs]))
 
 
 def suppress(rule: str, *, why: str, box: Optional[Sequence[float]] = None) -> None:
