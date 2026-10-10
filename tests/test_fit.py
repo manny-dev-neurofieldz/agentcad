@@ -102,3 +102,13 @@ def test_pose_matrix_moves_a_body_by_a_rigid_transform():
     bb = moved.bounding_box()
     assert abs(bb.size.X - 4) < 1e-6 and abs(bb.size.Y - 2) < 1e-6   # x and y swap under the turn
     assert abs(bb.center().X - 10) < 1e-6
+
+
+def test_map_and_offset_spin_pose_a_body_identically():
+    pytest.importorskip("build123d")
+    from agentcad import fit as fitmod, mates
+    box = fitmod._b3d().Box(2, 4, 6)
+    old = fitmod.pose(box, (5, 1, 0), 30, "z").bounding_box()
+    new = fitmod.pose_matrix(box, mates.map_transform("z", 30, (5, 1, 0))).bounding_box()
+    for a, b in ((old.min, new.min), (old.max, new.max)):
+        assert abs(a.X - b.X) < 1e-6 and abs(a.Y - b.Y) < 1e-6 and abs(a.Z - b.Z) < 1e-6

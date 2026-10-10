@@ -952,7 +952,24 @@ def cmd_fit(args):
                 continue
             windows.setdefault(name, [float(v) for v in m["window"]])
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
-    res = fitmod.fit(Path(args.a), Path(args.b),
+    transform = None
+    if args.map:
+        if args.offset or args.spin:
+            print("Error: --map replaces --offset and --spin; give one or the other", file=sys.stderr)
+            sys.exit(2)
+        from agentcad import mates
+        fields = dict(item.partition("=")[::2] for item in args.map)
+        unknown = set(fields) - {"axis", "spin", "offset"}
+        if unknown:
+            print(f"Error: --map takes axis=, spin= and offset=, not {', '.join(sorted(unknown))}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            transform = mates.map_transform(fields.get("axis", "z"), float(fields.get("spin", 0)),
+                                            [float(v) for v in fields.get("offset", "0,0,0").split(",")])
+        except (ValueError, mates.MateError) as e:
+            print(f"Error: --map: {e}", file=sys.stderr)
+            sys.exit(2)
+    res = fitmod.fit(Path(args.a), Path(args.b), transform=transform,
                      a_defines=a_defs or None, b_defines=b_defs or None,
                      offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
                      sweep_axis=args.sweep, sweep_travel=args.travel,
@@ -1211,6 +1228,9 @@ def _register_compare_fit(sub, groups):
     p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
     p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
     p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
+    p_fit.add_argument("--map", nargs="+", metavar="KEY=VALUE", default=None,
+                       help="Pose B by axis=x|y|z spin=DEG offset=x,y,z: a turn about the axis, then the offset "
+                            "(instead of --offset/--spin)")
     p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
