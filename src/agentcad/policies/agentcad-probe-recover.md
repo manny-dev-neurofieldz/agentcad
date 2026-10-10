@@ -3,11 +3,11 @@
 **Type**: Capability Policy (recover)
 **Scope**: Any agent or person rebuilding a part whose source is gone: from a STEP file, a mesh-converted body or a design dump
 **Status**: ACTIVE
-**Commands**: agentcad probe section
+**Commands**: agentcad probe section, agentcad probe sketches
 
 ## Purpose
 
-A part to be rebuilt keeps its construction in the curves of its sections. In a body made of exact edges the arcs and lines can be read directly; in a mesh-converted body they survive only as hundreds of short edges whose vertices lie on them. The recover commands read those curves back as what a designer would have drawn (lines, arcs, which arc is tangent to which) and label every number with where it came from. This policy says how to use them to recover a construction without inventing one.
+A part to be rebuilt keeps its construction in the curves of its sections. In a body made of exact edges the arcs and lines can be read directly; in a mesh-converted body they survive only as hundreds of short edges whose vertices lie on them. The recover commands read those curves back as what a designer would have drawn (lines, arcs, which arc is tangent to which) and label every number with where it came from. The sketches of a design dump say what was drawn, which the finished solid does not; `probe sketches` reads them and says which drawn dimensions the part still carries. This policy says how to use these commands to recover a construction without inventing one.
 
 ## CEP Navigation Guide
 
@@ -54,13 +54,26 @@ A part to be rebuilt keeps its construction in the curves of its sections. In a 
 **4.3 From the Literal to a Face**
 - How is a literal turned into a face?
 
-**5 Integration with Other Policies**
+**5 Design Dumps**
+- What is a design dump, and what does `probe sketches` print from it?
+- Which part of the output needs no CAD backend?
+
+**5.1 The Dump Format**
+- Which fields does the reader use, and in which units?
+- What happens to a field or a curve type it does not know?
+
+**5.2 DRAWN and APPLIED**
+- What does each label claim?
+- How is a dimension matched against a part, and with what tolerance?
+- Which sketches cannot be matched, and what does the output say then?
+
+**6 Integration with Other Policies**
 - Which policies govern what follows a recovery?
 
-**6 Anti-Patterns**
+**7 Anti-Patterns**
 - Which readings of these reports are wrong?
 
-**7 Evolution and Feedback**
+**8 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -168,20 +181,67 @@ def chain_face(chain, plane=Plane.XY):
 
 The face lies in the plane through the origin. Move it to the section's coordinate by offsetting the plane: `Plane.XY.offset(z)` and `Plane.YZ.offset(x)`, but `Plane.XZ.offset(-y)`, because the normal of the XZ plane points toward -y.
 
-## 5 Integration with Other Policies
+## 5 Design Dumps
+
+`agentcad probe sketches DUMP` reads a design dump, a JSON record of a parametric-CAD design, and prints its sketches in millimetres with a flag on every construction curve (`C`), then its parameters and its timeline. The dump is read with the standard library alone, so it needs no CAD backend. `--sketch NAME` keeps the sketches whose name contains NAME, ignoring case, and says how many of the dump's sketches it shows. `-o FILE` (long form `--output`) writes the record, every dimension with its labels, as JSON.
+
+### 5.1 The Dump Format
+
+The reader uses these fields; every other key is ignored, and a curve of any other type is listed with its keys as not read, never dropped.
+
+```
+{
+  "designName": "name",                  string
+  "designType": "...",                   string, optional
+  "parameters": [                        optional
+    {"name": "width", "expression": "40 mm", "role": "user", "comment": "...", "value_internal_cm": 4.0}
+  ],
+  "timeline": [                          optional, in order
+    {"index": 0, "name": "Extrude1", "entityType": "ExtrudeFeature", "isSuppressed": false, "operation": "..."}
+  ],
+  "sketches": [                          required
+    {
+      "name": "Sketch1",
+      "origin": [x, y, z],               centimetres, in model space
+      "xDirection": [x, y, z],           unit vectors, in model space
+      "yDirection": [x, y, z],
+      "profileCount": 2,                 optional
+      "curves": [
+        {"type": "SketchLine",   "isConstruction": false, "start": [x, y, 0], "end": [x, y, 0]},
+        {"type": "SketchArc",    "isConstruction": false, "center": [x, y, 0], "radius": r, "start": [x, y, 0], "end": [x, y, 0]},
+        {"type": "SketchCircle", "isConstruction": true,  "center": [x, y, 0], "radius": r}
+      ]
+    }
+  ]
+}
+```
+
+Geometry (`origin`, curve points, `radius`) is in centimetres and is printed in millimetres. Curve points are in the sketch's own frame; an arc runs counter-clockwise from `start` to `end`. A parameter is kept as the dump states it: its `expression` is the authority, and `value_internal_cm` is centimetres whatever unit the design displays. A timeline entry is printed with its index, name, type, operation and whether it is suppressed.
+
+### 5.2 DRAWN and APPLIED
+
+Every number read from the dump is DRAWN: the radius of each circle and arc, the sweep of each arc, the length of each line, and each parameter. A line's angle and every position are printed without a label, because they follow from drawn endpoints.
+
+`--against PART` (a STEP file or a build123d program) adds APPLIED. The part is cut on each sketch's plane, which must lie along an axis (`x=`, `y=` or `z=`); a dimension is APPLIED when that section carries it: a circular edge of that radius, an arc of that radius and sweep, or a line of that length, within `--tol` (default 0.01 mm; a sweep within the angle `--tol` subtends at the arc's radius). The section is read as in section 3, so a mesh-converted part is matched through its fitted arcs. The label names the loop that carries it. Construction curves are never matched, and parameters are DRAWN only.
+
+A dimension compared and not found is printed `absent from the section`: it was drawn and the part does not have it. A later feature may have changed it, or the curve may only ever have been construction; the timeline says which features follow the sketch. A sketch whose plane is not along an axis, or that has no usable origin and directions, is not compared; the output says why and its dimensions stay DRAWN only. Without the build123d backend `--against` says so on stderr and leaves every dimension DRAWN only.
+
+## 6 Integration with Other Policies
 
 - `agentcad-session`: a program built from a chain is iterated, read and noted like any other. The measured solid count and face census say whether the rebuild closed and which faces it has.
 - `agentcad-policies`: how this and every other policy is found and read.
 
-## 6 Anti-Patterns
+## 7 Anti-Patterns
 
 - **A radius without its evidence**: building on a fitted number without reading `rms`, `max` and `n`.
 - **Reading tangency from the verdict word alone**: `tangent` with a gap near the tolerance is a joint to measure again; `kinked` is a joint to look at, not an error.
 - **Straightening what was reported**: editing a REPORTED edge into a line to make the chain close. The face then has a shape the part never had.
 - **Tightening `--tangent-tol` to catch a kink**: the gap shrinks with the square of the angle; read `kink_deg`.
 - **Copying a defect because the file has it**: a sliver, or a joint that was drawn near-tangent by eye. Recovery shows what the file contains; what to build is a decision.
+- **Reading DRAWN as true of the part**: the dump says what was drawn. Only APPLIED says the part still carries it.
+- **Reading APPLIED as proof of intent**: a drawn length that equals an unrelated edge's length is APPLIED too; the loop named in the label says where.
 - **Recovering a part that is a polygon**: a faceted body with many small turns is read as a circle. Check `n` and the sweep per vertex.
 
-## 7 Evolution and Feedback
+## 8 Evolution and Feedback
 
-This policy ships with agentcad and changes with the commands it governs; a change to the behaviour of `probe section` updates this policy in the same pull request.
+This policy ships with agentcad and changes with the commands it governs; a change to the behaviour of `probe section` or `probe sketches` updates this policy in the same pull request.

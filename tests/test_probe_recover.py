@@ -676,3 +676,189 @@ def test_every_flag_of_a_command_the_policy_governs_appears_in_it(words):
 def test_the_policy_recipe_is_the_one_the_tests_run():
     recipe = policy_recipe()
     assert callable(recipe) and recipe.__name__ == "chain_face"
+
+
+# --- design dumps: probe sketches ----------------------------------------------------------------------------
+
+from pathlib import Path
+
+DUMP = Path(__file__).resolve().parent / "data" / "design_dump_synthetic.json"
+
+
+def sketches(argv, capsys):
+    """Run ``probe sketches`` and return (exit code, stdout, stderr)."""
+    rc = cli.main(["probe", "sketches"] + [str(a) for a in argv])
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+def dims_of(record, sketch, curve_type=None):
+    """{(kind, rounded value): labels} for the dimensions of one sketch in a -o record."""
+    (s,) = [s for s in record["sketches"] if s["name"] == sketch]
+    return {(c["kind"], d["name"], round(d["value"], 4)): d for c in s["curves"] if curve_type in (None, c["type"])
+            for d in c["dimensions"]}
+
+
+@pytest.fixture(scope="module")
+def plate_step(tmp_path_factory):
+    """A 40 x 20 x 6 plate with one corner rounded at r 4 and a hole of r 2 at (10, 5): the solid the
+    synthetic dump's first sketch describes (and a stray circle and a construction circle it does not)."""
+    from build123d import Axis, Box, Cylinder, Pos, export_step, fillet
+    part = Box(40, 20, 6)
+    corner = part.edges().filter_by(Axis.Z).filter_by(lambda e: e.center().X > 19 and e.center().Y > 9)
+    part = fillet(corner, 4) - Pos(10, 5, 0) * Cylinder(2, 10)
+    path = tmp_path_factory.mktemp("step") / "plate.step"
+    export_step(part, str(path))
+    return path
+
+
+def test_the_dump_is_printed_in_millimetres_with_construction_flags(capsys):
+    rc, out, err = sketches([DUMP], capsys)
+    assert rc is None and err == ""
+    assert "design demo_plate" in out and "centimetres" in out and "millimetres" in out
+    assert "parameters: 4" in out and "plate_length = 40 mm" in out and "corner_r = plate_width / 5" in out
+    assert "mounting hole" in out                                               # a comment is kept
+    assert "timeline: 4" in out and "Extrude1" in out and "NewBodyFeatureOperation" in out and "suppressed" in out
+    assert "== Plate sketch" in out and "== Side profile" in out and "== Tilted note" in out
+    assert "length 40.0000" in out and "length 16.0000" in out and "sweep 90.00" in out    # the file said 4.0, 1.6, ... cm
+    lines = out.splitlines()
+    (construction,) = [l for l in lines if "r 7.0000" in l]
+    assert construction.startswith("  C ") and "circle" in construction
+    (stray,) = [l for l in lines if "r 3.0000" in l]
+    assert stray.startswith("    ") and not stray.startswith("  C ")
+    assert "plane z=0" in out and "plane x=0" in out and "not axis-aligned" in out
+
+
+def test_every_dimension_is_labelled_drawn_and_none_is_applied_without_a_part(capsys, tmp_path):
+    out_json = tmp_path / "dump.json"
+    rc, out, _ = sketches([DUMP, "-o", out_json], capsys)
+    assert "APPLIED" not in out
+    record = json.loads(out_json.read_text())
+    every = [d for s in record["sketches"] for c in s["curves"] for d in c["dimensions"]]
+    assert len(every) >= 14 and all(d["labels"] == ["DRAWN"] for d in every)
+    assert all(p["labels"] == ["DRAWN"] for p in record["parameters"])
+    assert "[DRAWN]" in out and all("[DRAWN]" in l for l in out.splitlines() if "length " in l or " r " in l)
+    assert record["against"] is None
+
+
+def test_the_dump_is_read_without_touching_any_cad_backend(capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "build123d", None)                  # an import of it now raises
+    monkeypatch.setitem(sys.modules, "OCP", None)
+
+    def touched(*a, **k):
+        raise AssertionError("a CAD backend was asked for")
+    monkeypatch.setattr(probe, "_b3d", touched)
+    rc, out, err = sketches([DUMP], capsys)
+    assert rc is None and "== Plate sketch" in out
+
+
+def test_an_unknown_curve_type_is_listed_not_dropped(capsys):
+    _, out, _ = sketches([DUMP, "--sketch", "side"], capsys)
+    (spline,) = [l for l in out.splitlines() if "SketchFittedSpline" in l]
+    assert "not read" in spline and "fitPoints" in spline
+
+
+@needs_build123d
+def test_against_a_part_labels_applied_exactly_the_dimensions_its_section_carries(capsys, plate_step, tmp_path):
+    out_json = tmp_path / "against.json"
+    rc, out, err = sketches([DUMP, "--against", plate_step, "-o", out_json], capsys)
+    assert rc is None
+    record = json.loads(out_json.read_text())
+    plate = dims_of(record, "Plate sketch")
+    applied = lambda key: "APPLIED" in plate[key]["labels"]
+    for length in (40.0, 16.0, 36.0, 20.0):
+        assert applied(("line", "length", length))                               # the four sides of the outline
+    assert applied(("arc", "radius", 4.0)) and applied(("arc", "sweep", 90.0))    # the rounded corner
+    assert applied(("circle", "radius", 2.0))                                     # the hole
+    assert not applied(("circle", "radius", 3.0))                                 # drawn, but the part has no such hole
+    assert plate[("circle", "radius", 3.0)]["labels"] == ["DRAWN"]
+    assert plate[("circle", "radius", 7.0)]["labels"] == ["DRAWN"]                # construction: never matched
+    side = dims_of(record, "Side profile")
+    assert all("APPLIED" in side[("line", "length", v)]["labels"] for v in (20.0, 6.0))
+    tilted = dims_of(record, "Tilted note")
+    assert all(d["labels"] == ["DRAWN"] for d in tilted.values())
+    assert "not axis-aligned" in out
+    assert record["against"]["source"] == str(plate_step) and record["against"]["tol"] == 0.01
+    shown = {l.strip() for l in out.splitlines()}
+    assert any("r 2.0000 [DRAWN APPLIED loop 2]" in l for l in shown)
+    assert any("r 3.0000 [DRAWN, absent from the section]" in l for l in shown)
+    assert not any("APPLIED" in l for l in out.splitlines() if "r 7.0000" in l or "r 3.0000" in l)
+
+
+@needs_build123d
+def test_a_changed_part_changes_the_labels(capsys, tmp_path):
+    """The control: the same dump against a plate whose hole is r 2.5 must no longer carry the drawn r 2."""
+    from build123d import Axis, Box, Cylinder, Pos, export_step, fillet
+    part = Box(40, 20, 6)
+    corner = part.edges().filter_by(Axis.Z).filter_by(lambda e: e.center().X > 19 and e.center().Y > 9)
+    part = fillet(corner, 4) - Pos(10, 5, 0) * Cylinder(2.5, 10)
+    step = tmp_path / "wider.step"
+    export_step(part, str(step))
+    out_json = tmp_path / "wider.json"
+    sketches([DUMP, "--against", step, "-o", out_json], capsys)
+    plate = dims_of(json.loads(out_json.read_text()), "Plate sketch")
+    assert plate[("circle", "radius", 2.0)]["labels"] == ["DRAWN"]
+    assert "APPLIED" in plate[("arc", "radius", 4.0)]["labels"]                     # the rest still matches
+
+
+@needs_build123d
+def test_tol_decides_how_close_a_dimension_must_be(capsys, plate_step, tmp_path):
+    data = json.loads(DUMP.read_text())
+    hole = [c for c in data["sketches"][0]["curves"] if c["type"] == "SketchCircle" and not c["isConstruction"]][0]
+    hole["radius"] = 0.205                                                         # 2.05 mm drawn, 2.00 in the part
+    drawn = tmp_path / "drawn.json"
+    drawn.write_text(json.dumps(data))
+    for tol, expect in ((0.01, False), (0.1, True)):
+        out_json = tmp_path / f"tol{tol}.json"
+        sketches([drawn, "--against", plate_step, "--tol", tol, "-o", out_json], capsys)
+        hole_dim = dims_of(json.loads(out_json.read_text()), "Plate sketch")[("circle", "radius", 2.05)]
+        assert ("APPLIED" in hole_dim["labels"]) is expect
+
+
+def test_against_without_the_backend_says_so_and_still_prints_the_drawn_numbers(capsys, monkeypatch, tmp_path):
+    def missing(*a, **k):
+        raise ImportError("No module named 'build123d'")
+    monkeypatch.setattr(probe, "load_shape", missing)
+    rc, out, err = sketches([DUMP, "--against", tmp_path / "anything.step"], capsys)
+    assert rc is None and "== Plate sketch" in out and "APPLIED" not in out.replace("APPLIED labels", "")
+    assert "needs the build123d backend" in err and "APPLIED labels were not computed" in err
+
+
+def test_against_a_file_that_does_not_exist_is_an_error(capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--against", tmp_path / "missing.step"], capsys)
+    assert exc.value.code == 1
+    assert "missing.step" in capsys.readouterr().err
+
+
+def test_sketch_filters_by_name_and_says_what_it_matched(capsys):
+    _, out, _ = sketches([DUMP, "--sketch", "SIDE"], capsys)
+    assert "== Side profile" in out and "== Plate sketch" not in out
+    assert "sketches: 3 in the dump, 1 shown (--sketch 'SIDE')" in out
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--sketch", "nothing"], capsys)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no sketch matches 'nothing'" in err and "Plate sketch" in err and "Side profile" in err
+
+
+@pytest.mark.parametrize("content,message", [("{not json", "not valid JSON"), ('{"designName": "x"}', "not a design dump"),
+                                             ("[1, 2]", "not a design dump")])
+def test_a_file_that_is_not_a_design_dump_is_an_error_naming_why(capsys, tmp_path, content, message):
+    bad = tmp_path / "bad.json"
+    bad.write_text(content)
+    with pytest.raises(SystemExit) as exc:
+        sketches([bad], capsys)
+    assert exc.value.code == 1 and message in capsys.readouterr().err
+
+
+def test_a_missing_dump_is_an_error(capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        sketches([tmp_path / "nope.json"], capsys)
+    assert exc.value.code == 1 and "nope.json" in capsys.readouterr().err
+
+
+def test_the_command_is_registered_under_probe_without_editing_the_cli_module():
+    parser = command_parser(("probe", "sketches"))
+    flags = {o for a in parser._actions for o in a.option_strings}
+    assert {"--sketch", "--against", "--tol", "-o", "--output"} <= flags

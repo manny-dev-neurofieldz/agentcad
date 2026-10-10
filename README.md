@@ -123,6 +123,7 @@ the check: the gallery is a test of the tool on every engine.
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
 agentcad probe section part.step --planes z=mid --arcs               # ... and the lines and arcs in each loop, every joint judged
 agentcad probe section part.step --planes y=3.2 --chain 2 > outline.py   # loop 2 as a literal a build123d program pastes
+agentcad probe sketches design.dump.json --against part.step        # what was drawn, and what the part still carries
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
 agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
 ```
@@ -150,6 +151,14 @@ with, and sends the listing to stderr so the output can be redirected into a pro
 than `--min-len` (0.02 mm) are removed, the joint moving to where their neighbours meet; an edge that is
 neither a line nor an arc is left as a commented gap, reported, and makes the exit status 1. It is never
 turned into a line. `agentcad policy read probe-recover` says how far to trust each number.
+
+`probe sketches` reads a design dump (the JSON of a parametric-CAD design: sketches, parameters and a
+timeline, geometry in centimetres) and prints its sketches in millimetres with a flag on construction
+curves. Every dimension is labelled `DRAWN`. With `--against PART` (a STEP file or a build123d program)
+a dimension is also `APPLIED` when the part's section on the sketch's plane carries it within `--tol`
+(0.01 mm), and printed `absent from the section` when it does not: it was drawn and the part lacks it.
+Reading the dump needs no CAD backend; `--against` needs build123d and says so when it is missing. The
+dump format is `agentcad policy read probe-recover --section 5.1`.
 
 ## Fit and mates
 
