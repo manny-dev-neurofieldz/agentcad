@@ -1041,20 +1041,19 @@ def cmd_fit(args):
         print(f"  render {name}: {path}")
     if args.output_dir:
         print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
-    if args.record:
-        from agentcad.manifest import PrintManifest
-        manifests = sorted(Path(args.record).glob("exports/*.print.json"))
-        if manifests:
-            m = PrintManifest.load(manifests[0])
-            key = (res["a"], res["b"], json.dumps(res["a_defines"], sort_keys=True), json.dumps(res["b_defines"], sort_keys=True))
-            m.fit = [f for f in m.fit if (f.get("a"), f.get("b"), json.dumps(f.get("a_defines") or {}, sort_keys=True),
-                                          json.dumps(f.get("b_defines") or {}, sort_keys=True)) != key]
-            m.fit.append({k: res[k] for k in ("a", "b", "a_defines", "b_defines", "pose", "interference_mm3", "clearance_mm") if k in res}
-                         | ({"windows": res["windows"]} if res.get("windows") else {}))
-            m.save(manifests[0])
-            print(f"recorded in {manifests[0]}")
-        else:
-            print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
+    if args.record is not None:
+        record = fitmod.fit_record(res, allow_mm3=args.allow or 0.0)
+        projects = [Path(p) for p in args.record] or [q for q in (fitmod.project_of(Path(args.a)),
+                                                                  fitmod.project_of(Path(args.b))) if q]
+        if not projects:
+            print("Warning: --record found no project (agentcad.toml) above either part; name one", file=sys.stderr)
+        for project in dict.fromkeys(p.resolve() for p in projects):
+            written = fitmod.record_fit(project, record)
+            if written:
+                print(f"recorded ({record['verdict']}) in {written}")
+            else:
+                print(f"Warning: no print manifest under {project}/exports to record into (finalize it first)",
+                      file=sys.stderr)
     if failed_windows:
         print(f"fit: BELOW NOMINAL CLEARANCE in {', '.join(failed_windows)}", file=sys.stderr)
         sys.exit(1)
@@ -1309,7 +1308,9 @@ def _register_compare_fit(sub, groups):
                             "(default 0.05; a negative value skips it)")
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
-    p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
+    p_fit.add_argument("--record", metavar="PROJECT", nargs="*", default=None,
+                       help="Record the fit (time, both parts' parameters, verdict) in the print manifest of each "
+                            "PROJECT; with no PROJECT, in both parts' own projects")
     p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL", help="Override a parameter of part A (repeatable)")
     p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL", help="Override a parameter of part B (repeatable)")
     p_fit.set_defaults(func=cmd_fit)

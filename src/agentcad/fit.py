@@ -350,6 +350,100 @@ def _render_pair(a, b, out_dir: Path) -> Dict[str, str]:
     return renders
 
 
+def parameter_snapshot(source: Path, defines=None) -> Dict[str, Any]:
+    """What a fit was measured against: the source file's SHA-256 and, for a program with
+    ``build()``, every parameter's value (its defaults with the defines applied). A later fit
+    record, or a duty that asks whether a mate changed since its last fit, compares these."""
+    import hashlib
+    import inspect
+    source = Path(source)
+    snap: Dict[str, Any] = {"source": str(source)}
+    try:
+        snap["sha256"] = hashlib.sha256(source.read_bytes()).hexdigest()
+    except OSError as e:
+        snap["sha256_error"] = str(e)
+    if source.suffix.lower() == ".py":
+        try:
+            from agentcad.engines.build123d_worker import _execute
+            from agentcad.params import coerce_defines
+            build = _execute(str(source.resolve())).get("build")
+            if callable(build):
+                params = {k: p.default for k, p in inspect.signature(build).parameters.items()
+                          if p.default is not inspect.Parameter.empty}
+                params.update(coerce_defines(defines, build))
+                snap["params"] = {k: v for k, v in params.items() if isinstance(v, (bool, int, float, str)) or v is None}
+        except Exception as e:  # a snapshot that cannot read the program says so; the fit still stands
+            snap["params_error"] = f"{type(e).__name__}: {e}"
+    return snap
+
+
+def overall_verdict(res: Dict[str, Any], allow_mm3: float = 0.0) -> str:
+    """One word for a fit: ``fail`` (overlap beyond ``allow_mm3`` or a window below nominal),
+    ``unmeasured`` (a declared window read nothing), ``pass`` (every declared nominal met) or
+    ``measured`` (numbers recorded, no nominal declared to judge them by)."""
+    interference = res.get("interference_mm3")
+    if interference is not None and interference == interference and interference > allow_mm3:
+        return "fail"
+    verdicts = [v["verdict"] for v in (res.get("verdicts") or {}).values()]
+    if "fail" in verdicts:
+        return "fail"
+    if "unmeasured" in verdicts:
+        return "unmeasured"
+    return "pass" if verdicts else "measured"
+
+
+def fit_record(res: Dict[str, Any], mate: Optional[str] = None, allow_mm3: float = 0.0) -> Dict[str, Any]:
+    """The record a fit leaves in each part's manifest: when, what was measured (both sources'
+    parameter snapshots), the pose, the numbers, and the verdict."""
+    from datetime import datetime
+    keep = ("a", "b", "a_defines", "b_defines", "pose", "interference_mm3", "clearance_mm",
+            "windows", "verdicts", "contact_mm")
+    record: Dict[str, Any] = {"recorded": datetime.now().astimezone().isoformat(timespec="seconds"),
+                              "mate": mate or res.get("pose", {}).get("mate")}
+    record.update({k: res[k] for k in keep if k in res})
+    if "contacts" in res:
+        record["contacts"] = res["contacts"][:20]
+        record["contact_regions"] = len(res["contacts"])
+    record["a_snapshot"] = parameter_snapshot(Path(res["a"]), res.get("a_defines"))
+    record["b_snapshot"] = parameter_snapshot(Path(res["b"]), res.get("b_defines"))
+    record["verdict"] = overall_verdict(res, allow_mm3)
+    return record
+
+
+def _record_key(f: Dict[str, Any]):
+    return (f.get("mate"), f.get("a"), f.get("b"), json.dumps(f.get("a_defines") or {}, sort_keys=True),
+            json.dumps(f.get("b_defines") or {}, sort_keys=True))
+
+
+def record_fit(project_dir: Path, record: Dict[str, Any]) -> Optional[Path]:
+    """Write ``record`` into a project's print manifest fit table, replacing an earlier record of
+    the same mate, parts and defines. None when the project has no manifest yet (finalize it)."""
+    from agentcad.manifest import PrintManifest
+    project_dir = Path(project_dir)
+    manifests = sorted(project_dir.glob("exports/*.print.json"))
+    own = project_dir / "exports" / f"{project_dir.name}.print.json"
+    path = own if own in manifests else (manifests[0] if manifests else None)
+    if path is None:
+        return None
+    m = PrintManifest.load(path)
+    m.fit = [f for f in m.fit if _record_key(f) != _record_key(record)] + [record]
+    m.save(path)
+    return path
+
+
+def project_of(source: Path, max_up: int = 4) -> Optional[Path]:
+    """The project folder a source belongs to: the nearest folder at or above it with an agentcad.toml."""
+    folder = Path(source).resolve()
+    folder = folder if folder.is_dir() else folder.parent
+    for _ in range(max_up + 1):
+        if (folder / "agentcad.toml").is_file():
+            return folder
+        if folder.parent == folder:
+            break
+        folder = folder.parent
+    return None
+
+
 def load_mates(project_dir: Path) -> Dict[str, Any]:
     """The raw [mates] table of a project's agentcad.toml, job.toml or part.toml (or a file path):
     name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, parts: [a, b] or counterpart, and any datums}.

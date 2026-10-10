@@ -265,3 +265,33 @@ def test_a_mate_without_datums_asks_for_map(tmp_path, monkeypatch, capsys):
     assert "has no axis" in err and "--map" in err
     assert _fit_cli([slot, key, "--mate", "no_such_mate"], monkeypatch) == 2
     assert "declares no [mates.no_such_mate]" in capsys.readouterr().err
+
+
+def test_a_recorded_fit_lands_in_both_parts_manifests(tmp_path, monkeypatch, capsys):
+    import json
+    from agentcad.manifest import PrintManifest
+    slot, key = _key_and_slot(tmp_path)
+    for name in ("slot", "key"):
+        folder = tmp_path / name
+        if not (folder / "agentcad.toml").exists():
+            (folder / "agentcad.toml").write_text(f'[project]\nname = "{name}"\n')
+        (folder / "exports").mkdir()
+        PrintManifest(part_name=name).save(folder / "exports" / f"{name}.print.json")
+    assert _fit_cli([slot, key, "--mate", "key_in_slot", "--record"], monkeypatch) == 0
+    assert _fit_cli([slot, key, "--mate", "key_in_slot", "--record"], monkeypatch) == 0     # replaces, not appends
+    for name in ("slot", "key"):
+        fits = json.loads((tmp_path / name / "exports" / f"{name}.print.json").read_text())["fit"]
+        assert len(fits) == 1
+        rec = fits[0]
+        assert rec["mate"] == "key_in_slot" and rec["verdict"] == "pass" and rec["recorded"]
+        assert rec["a_snapshot"]["params"] == {"width": 6.2} and len(rec["a_snapshot"]["sha256"]) == 64
+        assert rec["b_snapshot"]["params"] == {} and rec["verdicts"]["key_in_slot"]["verdict"] == "pass"
+    assert capsys.readouterr().out.count("recorded (pass)") == 4
+
+
+def test_overall_verdict_reads_overlap_before_windows():
+    from agentcad import fit as fitmod
+    assert fitmod.overall_verdict({"interference_mm3": 2.0, "verdicts": {"w": {"verdict": "pass"}}}) == "fail"
+    assert fitmod.overall_verdict({"interference_mm3": 2.0}, allow_mm3=5.0) == "measured"
+    assert fitmod.overall_verdict({"interference_mm3": 0.0, "verdicts": {"w": {"verdict": "unmeasured"}}}) == "unmeasured"
+    assert fitmod.overall_verdict({"interference_mm3": 0.0, "verdicts": {"w": {"verdict": "pass"}}}) == "pass"
