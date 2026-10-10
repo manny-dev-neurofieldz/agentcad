@@ -125,3 +125,18 @@ def test_the_print_intent_reaches_the_manifest(tmp_path):
     assert (m.material, m.layer_height) == ("PETG", 0.15)
     assert m.print_intent == {"material": "PETG", "layer_height": 0.15, "walls": 4, "target": "generic"}
     assert m.infill_percent == 20                      # not stated: the default stays, and print_intent does not claim it
+
+
+def test_native_tables_override_the_mapped_intent_and_report_conflicts(tmp_path):
+    from agentcad.config import ProjectConfig
+    (tmp_path / "agentcad.toml").write_text(
+        '[project]\nname = "p"\n[print]\ntarget = "prusaslicer"\n'
+        '[slice]\nlayer_height = 0.2\ntemperature = { min = 270, max = 275, why = "layer bond" }\n'
+        '[slice.generic]\nnote = "plain plate"\n')
+    cfg = ProjectConfig.load(tmp_path / "agentcad.toml")
+    assert set(cfg.slice_intent) == {"layer_height", "temperature"}       # a setting's table is not a target's
+    assert cfg.slice_targets == {"generic": {"note": "plain plate"}}
+    settings, conflicts = targets.native_settings(cfg, "prusaslicer", mapped={"layer_height": 0.15, "perimeters": 3})
+    assert settings["layer_height"] == 0.2 and settings["perimeters"] == 3      # native wins, the rest is mapped
+    assert len(conflicts) == 1 and "layer_height" in conflicts[0] and "0.15" in conflicts[0]
+    assert targets.native_settings(cfg, "generic")[0] == {"note": "plain plate"}   # not the default: [slice] is not its

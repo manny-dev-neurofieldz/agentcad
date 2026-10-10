@@ -96,6 +96,8 @@ class ProjectConfig:
     #: The ``[print]`` table as written: the neutral print intent (material, layer height, walls,
     #: infill, supports, orientation, printer, target), carried verbatim into the print manifest.
     print_intent: Dict[str, Any] = field(default_factory=dict)
+    #: ``[slice.<target>]`` tables: native settings for one output target, over the mapped intent.
+    slice_targets: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     #: The ``[qc]`` table (gate, printer, limits, severity, pose), or None when the project declares
     #: none: QC runs at finalize only for a project that asks for it.
     qc: Optional[Dict[str, Any]] = None
@@ -210,8 +212,14 @@ class ProjectConfig:
         # Print intent: the [print] table, verbatim (its typed keys also fill config.print above)
         config.print_intent = dict(pr)
 
-        # Slice intent: the [slice] table, verbatim
-        config.slice_intent = dict(data.get("slice", {}))
+        # Slice intent: the [slice] table's settings (the default target's native table); a table under
+        # it whose keys are not a setting's (value, min, max, why) is a target's own: [slice.<target>]
+        config.slice_intent, config.slice_targets = {}, {}
+        for key, value in dict(data.get("slice", {})).items():
+            if isinstance(value, dict) and value and not set(value) <= {"value", "min", "max", "why"}:
+                config.slice_targets[key] = dict(value)
+            else:
+                config.slice_intent[key] = value
 
         # QC: the [qc] table when declared, and any [printers.<name>] tables
         if isinstance(data.get("qc"), dict):

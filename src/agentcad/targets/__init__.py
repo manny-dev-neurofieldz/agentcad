@@ -117,6 +117,29 @@ def describe() -> List[Dict[str, Any]]:
     return out
 
 
+def default_target(cfg) -> str:
+    """The project's target: ``[print] target``, else prusaslicer (whose keys a bare [slice] holds)."""
+    return str((getattr(cfg, "print_intent", None) or {}).get("target") or "prusaslicer")
+
+
+def native_settings(cfg, target_name: str, mapped: Optional[Dict[str, Any]] = None) -> Tuple[Dict[str, Any], List[str]]:
+    """A target's native settings: the neutral intent as the target mapped it (``mapped``), then the
+    bare ``[slice]`` table when the target is the project's default, then ``[slice.<target>]``. A
+    native value that differs from the mapped one wins and is reported as a conflict."""
+    settings = dict(mapped or {})
+    native: Dict[str, Any] = {}
+    if target_name == default_target(cfg):
+        native.update(getattr(cfg, "slice_intent", {}) or {})
+    native.update((getattr(cfg, "slice_targets", {}) or {}).get(target_name, {}))
+    conflicts = []
+    for key, value in native.items():
+        wanted = value.get("value") if isinstance(value, dict) else value
+        if key in settings and wanted is not None and str(settings[key]) != str(wanted):
+            conflicts.append(f"{key}: [print] maps to {settings[key]!r}, the native table says {wanted!r} (native kept)")
+        settings[key] = value
+    return settings, conflicts
+
+
 # imported last: the generic target subclasses OutputTarget, defined above
 from agentcad.targets import generic as _generic  # noqa: E402
 
