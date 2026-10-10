@@ -59,6 +59,17 @@ def cmd_qc(args):
         print(f"Error: {e}", file=sys.stderr)
         return 2
     report.update(iteration=it.number, mesh=str(stl) if stl else None)
+    if getattr(args, "fixes", False):
+        src = Path(it.source_path) if it.source_path else None
+        if src is None or src.suffix.lower() != ".py":
+            print("agentcad qc: --fixes turns the knobs of a build123d program; this iteration has none", file=sys.stderr)
+        else:
+            layer = float(getattr(getattr(cfg, "print", None), "layer_height", 0.2) or 0.2)
+            try:
+                report["sensitivity"] = qcmod.sensitivity(report, src, it.defines or session.defines or None,
+                                                          max_runs=args.max_runs, layer=layer)
+            except (ValueError, RuntimeError) as e:
+                print(f"agentcad qc: no fixes measured: {e}", file=sys.stderr)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
@@ -87,6 +98,10 @@ def register(subparsers, groups):
     pq.add_argument("project", help="Project name (folder under designs_dir) or path")
     pq.add_argument("--printer", default=None, help="Judge against this printer instead of the project's")
     pq.add_argument("--json", action="store_true", help="Print the report as JSON")
+    pq.add_argument("--fixes", action="store_true",
+                    help="For each error a feature claims, turn the knobs the feature names and say what each does")
+    pq.add_argument("--max-runs", type=int, default=16, metavar="N",
+                    help="Rebuilds --fixes may make, the base included (default 16)")
     pq.set_defaults(func=cmd_qc)
 
     pp = subparsers.add_parser("printers", help="The printers QC knows: process, build volume, nozzle, defaults")

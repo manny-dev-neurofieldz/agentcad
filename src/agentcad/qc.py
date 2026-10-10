@@ -719,14 +719,14 @@ def _loosened(ann: Annotated, lim) -> Tuple[List[Dict[str, Any]], List[Finding]]
     return listed, found
 
 
-def _apply_suppressions(pairs, ann: Annotated, tol: float) -> Tuple[List[Finding], List[Dict[str, Any]]]:
+def _apply_suppressions(pairs, ann: Annotated, tol: float) -> Tuple[List[Tuple[Finding, Any]], List[Dict[str, Any]]]:
     kept, suppressed = [], []
     for finding, point in pairs:
         hit = next((s for s in ann.suppressions if s["rule"] == finding.rule and (
             s.get("box") is None or (point is not None and all(
                 s["box"][i] - tol <= point[i] <= s["box"][i + 3] + tol for i in range(3))))), None)
         if hit is None:
-            kept.append(finding)
+            kept.append((finding, point))
         else:
             suppressed.append({"rule": finding.rule, "why": hit["why"], "source": hit["source"],
                                "finding": finding.sentence()})
@@ -787,9 +787,17 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
             pairs += check_overhang(measure_overhang(part, steepest, layer, exclude), lim, qs, ann, pose, tol)
         else:
             not_measured["max_overhang"] = "no overhang limit for this process (resin prints on supports)"
-        found, suppressed = _apply_suppressions(pairs, ann, tol)
+        kept, suppressed = _apply_suppressions(pairs, ann, tol)
     if mesh is None:
-        found, suppressed = [], []
+        kept, suppressed = [], []
+    found = [f for f, _ in kept]
+    by_name = {f["name"]: f for f in ann.features}
+    claimed = [{"finding": i, "feature": f.feature, "rule": f.rule, "kind": f.key, "at": point,
+                "threshold": Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim)[0],
+                "knobs": list(by_name[f.feature].get("knobs", []))}
+               for i, (f, point) in enumerate(kept)
+               if f.feature in by_name and f.rule in LIMIT_OF and point is not None
+               and Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim) is not None]
     measured_limits = set(LIMIT_OF.values()) if mesh is not None else set()
     for key in lim:
         if key not in measured_limits:
@@ -799,7 +807,157 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
             "sampled": sampled, "findings": [f.to_dict() for f in found + loose_findings],
             "annotations": {"features": [{"name": f["name"], "kind": f["kind"], "source": f["source"]} for f in ann.features],
                             "suppressions": len(ann.suppressions)},
-            "suppressed": suppressed, "loosened": loosened, "not_measured": not_measured}
+            "suppressed": suppressed, "loosened": loosened, "claimed": claimed, "not_measured": not_measured}
+
+
+# --- fixes by sensitivity: which knob moves a failing finding, and by how much ----------------------
+
+#: At most this many rebuilds per ``sensitivity`` call (the base counts as one).
+SENSITIVITY_RUNS = 16
+
+
+def _build_mesh(source: Path, defines: Dict[str, str], out_dir: Path, n: int):
+    """The program built with ``defines`` and tessellated for QC, or the error that stopped it."""
+    from agentcad.fit import _b3d
+    from agentcad.probe import load_shape
+    try:
+        shape = load_shape(source, defines)
+        path = out_dir / f"run_{n}.stl"
+        _b3d().export_stl(shape, str(path), tolerance=0.01, angular_tolerance=0.05)
+        return load_mesh(path)
+    except Exception as e:  # noqa: BLE001 - a knob value can break the program in any way; the error is the answer
+        text = str(e).splitlines()[0][:160] if str(e) else ""
+        return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def _quantity(claim: Dict[str, Any], mesh, pose, layer: float) -> Dict[str, Any]:
+    """The claimed finding's measure on another build, at the same place: the width of a wall, the
+    thickness of a floor, the worst angle of an overhang, the span of a bridge; ``clear`` when nothing
+    near the place is within twice the limit (or, for an overhang, steeper than 20 degrees under it)."""
+    import numpy as np
+    if isinstance(mesh, str):
+        return {"error": mesh}
+    part = posed(mesh, pose)
+    limit, kind = float(claim["threshold"]), claim["kind"]
+    if kind == "wall":
+        regions = [(r, r["width_mm"]) for r in measure_walls(part, 2.0 * limit, layer)["regions"] if r["kind"] == "wall"]
+    elif kind == "floor":
+        regions = [(r, r["thickness_mm"]) for r in measure_floors(part, 2.0 * limit)["regions"]]
+    elif kind == "overhang":
+        regions = [(r, r["worst_deg"]) for r in measure_overhang(part, max(0.0, limit - 20.0), layer)]
+    elif kind == "bridge":
+        regions = [(b, b["span_mm"]) for b in measure_bridges(part, layer)["bridges"]]
+    else:
+        return {"error": f"no measure for a {kind} finding"}
+    reach = max(3.0 * limit, 2.0) if kind != "overhang" else max(5.0, float(part.diag) / 20.0)
+    near = [(float(np.linalg.norm(np.subtract(_to_part_frame(r["at"], pose), claim["at"]))), q) for r, q in regions]
+    near = [(d, q) for d, q in near if d <= reach]
+    return {"value": float(min(near)[1])} if near else {"clear": True}
+
+
+def _effect(base: Dict[str, Any], side: Dict[str, Any]) -> Tuple[str, Optional[float]]:
+    if "error" in side:
+        return "refused", None
+    if "clear" in side or "clear" in base:
+        return ("unchanged", None) if ("clear" in side) == ("clear" in base) else ("changed", None)
+    change = side["value"] - base["value"]
+    return ("changed" if abs(change) > 1e-3 else "unchanged"), change
+
+
+def sensitivity(report: Dict[str, Any], source: Path, defines: Optional[Dict[str, str]] = None,
+                max_runs: int = SENSITIVITY_RUNS, layer: float = 0.2) -> List[Dict[str, Any]]:
+    """For each error a feature claims, the knobs the feature names, turned by +/- their delta: each
+    rebuild is measured again for the finding's rule at the finding's place. Each knob is ``live``,
+    ``saturated`` (only one direction moves it), ``dead`` or ``refused``; the finding's fix is
+    rewritten to say what each knob does. Rebuilds stop at ``max_runs``, and the records say which
+    knobs that left untried."""
+    import tempfile
+    from agentcad import knobs as knobmod
+    from agentcad.engines.build123d_worker import _execute
+
+    claims = [c for c in report.get("claimed", [])
+              if c["knobs"] and report["findings"][c["finding"]]["severity"] == "error"]
+    if not claims:
+        return []
+    source, defines = Path(source), dict(defines or {})
+    build = _execute(str(source)).get("build")
+    if not callable(build):
+        raise ValueError(f"{source}: fixes need a parametric build(**params)")
+    pose, out, cache = report["pose"], [], {}
+    with tempfile.TemporaryDirectory() as tmp:
+        def measured(overrides):
+            key = tuple(sorted(overrides.items()))
+            if key not in cache:
+                cache[key] = _build_mesh(source, {**defines, **overrides}, Path(tmp), len(cache))
+            return cache[key]
+
+        measured({})
+        for claim in claims:
+            base = _quantity(claim, measured({}), pose, layer)
+            rec = {"finding": claim["finding"], "feature": claim["feature"], "rule": claim["rule"], "kind": claim["kind"],
+                   "threshold": claim["threshold"], "base": base, "knobs": []}
+            for spec in claim["knobs"]:
+                name, amount, relative = knobmod.parse_knob(spec)
+                try:
+                    value = knobmod._base_values(build, [name], defines)[name]
+                except ValueError as e:
+                    rec["knobs"].append({"name": name, "verdict": "refused", "error": str(e)})
+                    continue
+                delta = abs(value) * amount / 100.0 if relative else amount
+                if isinstance(value, int):
+                    delta = max(1, int(round(delta)))
+                moves = {tag: value + sign * delta for tag, sign in (("plus", 1), ("minus", -1))}
+                new = sum(1 for v in moves.values() if tuple(sorted({**{name: repr(v)}}.items())) not in cache)
+                if len(cache) + new > max_runs:
+                    rec["knobs"].append({"name": name, "verdict": "untried", "why": f"the {max_runs}-run budget is spent"})
+                    continue
+                sides = {tag: dict(_quantity(claim, measured({name: repr(v)}), pose, layer), knob=v)
+                         for tag, v in moves.items()}
+                effects = {tag: _effect(base, side) for tag, side in sides.items()}
+                states = [s for s, _ in effects.values()]
+                verdict = ("refused" if states.count("refused") == 2 else "partial" if "refused" in states
+                           else "live" if states.count("changed") == 2 else "dead" if states.count("changed") == 0
+                           else "saturated")
+                rec["knobs"].append({"name": name, "base": value, "delta": delta, "verdict": verdict,
+                                     "plus": dict(sides["plus"], change=effects["plus"][1]),
+                                     "minus": dict(sides["minus"], change=effects["minus"][1])})
+            out.append(rec)
+            finding = report["findings"][claim["finding"]]
+            finding["fix"] = _fix_sentence(rec, finding.get("fix", ""))
+            finding["sentence"] = Finding.from_dict(finding).sentence()
+    return out
+
+
+def _fix_sentence(rec: Dict[str, Any], before: str) -> str:
+    unit = "deg" if rec["rule"] == "max_overhang" else "mm"
+    passes = (lambda v: v <= rec["threshold"]) if rec["rule"].startswith("max_") else (lambda v: v >= rec["threshold"])
+
+    def side(tag, k):
+        s = k[tag]
+        head = f"{k['name']} {'+' if tag == 'plus' else '-'}{k['delta']:g}"
+        if "error" in s:
+            return f"{head} does not build"
+        if "clear" in s:
+            what = "no face steeper than 20 deg under the limit" if unit == "deg" else \
+                f"no {rec.get('kind', 'feature')} under {2 * rec['threshold']:g} mm"
+            return f"{head} leaves {what} near it (cleared, or the material there is gone: look)"
+        verdict = " (passes)" if passes(s["value"]) else ""
+        return f"{head} gives {s['value']:.3f} {unit}" + (f" ({s['change']:+.3f})" if s.get("change") is not None else "") + verdict
+
+    parts = []
+    for k in rec["knobs"]:
+        if k["verdict"] in ("live", "saturated", "partial"):
+            parts.append(", ".join(side(t, k) for t in ("plus", "minus")) +
+                         (" (it moves only one way)" if k["verdict"] == "saturated" else ""))
+        elif k["verdict"] == "dead":
+            parts.append(f"{k['name']} moves nothing here")
+        elif k["verdict"] == "untried":
+            parts.append(f"{k['name']} not tried ({k['why']})")
+        else:
+            parts.append(f"{k['name']} could not be turned ({k.get('error', 'neither side builds')})")
+    base = rec["base"]
+    now = f"at {base['value']:.3f} {unit}" if "value" in base else "here"
+    return f"{before}; measured {now}: " + "; ".join(parts) if parts else before
 
 
 def errors(report: Dict[str, Any]) -> List[Dict[str, Any]]:

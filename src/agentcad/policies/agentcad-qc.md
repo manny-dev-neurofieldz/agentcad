@@ -37,6 +37,11 @@ Every print problem found after a print was a number that could have been read b
 - What does a rule that is not measured mean?
 - When does the command exit non-zero?
 
+**4.1 Fixes by Sensitivity**
+- Which knob moves a failing finding, in which direction and by how much?
+- What does a knob that moves nothing, or only one way, look like?
+- How many rebuilds does it cost, and how is that bounded?
+
 **5 The Gate at Finalize**
 - When does QC run at finalize, and when does it hold a part back?
 - What does a held part look like, and how does it continue?
@@ -100,7 +105,8 @@ except ImportError:                       # without agentcad the annotations do 
 def build(wall=1.2):
     ...
     feature("socket wall", box=(-6, -6, 0, 6, 6, 12), kind="wall")
-    feature("flexure", box=(10, -2, 0, 20, 2, 4), kind="wall", min_wall_mm=0.5, why="the beam is the spring")
+    feature("flexure", box=(10, -2, 0, 20, 2, 4), kind="wall", min_wall_mm=0.5, why="the beam is the spring",
+            knobs=("wall=0.1", "beam_len=10%"))
     suppress("max_overhang", box=(0, 0, 20, 30, 10, 22), why="the lid's underside; supports are planned")
     return part
 ```
@@ -124,6 +130,12 @@ A finding carries the rule, the severity (`error`, `warning` or `ok`), what was 
 A rule that is not measured has no finding: QC never fails a part on a number it did not take, and a part with no mesh to read is reported as not measured, not as passing.
 
 The command exits 1 when a finding is an error or the project is not found, and 2 when its session, its pose or its printer cannot be read.
+
+### 4.1 Fixes by Sensitivity
+
+A feature can name the build parameters that move it: `knobs=("wall", "r=0.2", "h=10%")`, each a name with an amount or a percentage of its value (a bare name moves by 10%). `agentcad qc PROJECT --fixes` takes every error a feature claims and, for each knob that feature names, rebuilds the program at the knob's value plus and minus its amount and measures the same rule again at the same place: the width of the wall, the thickness of the floor, the worst angle of the overhang, the span of the bridge. The finding's fix then says what each knob did, with the measured value, the change and whether it passes. A knob is `live` (both directions move it), `saturated` (only one does), `dead` (it moves nothing there: a knob the feature does not depend on), `partial` or `refused` (a value that does not build). A knob can surprise: a larger outer diameter can thin a wall when the bore grows with it, and the measurement says so. When a change leaves nothing thin near the place, the fix says so and cannot say which of two things happened: the material got thicker, or it is gone (a bore broke through); look at the part.
+
+The program must define `build(**params)`; a knob with no default to start from takes its value from the iteration's defines. Every rebuild runs the program, so the sweep is bounded: `--max-runs N` (default 16, the base build included) caps the rebuilds, and a knob the budget did not reach is listed as not tried. The sweep runs only on errors a feature claims and only when asked; finalize does not run it. The JSON report carries every knob's record under `sensitivity`.
 
 ## 5 The Gate at Finalize
 
