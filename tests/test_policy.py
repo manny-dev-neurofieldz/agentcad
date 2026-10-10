@@ -1,7 +1,8 @@
 """Policies ship with each capability: the reader, the contract and the lints.
 
 Parity: agentcad's reader extracts exactly what a reference reader of the same
-format extracts from the same files (goldens in ``tests/data/policy_golden/``).
+format extracts from the same files (goldens and frozen copies of the texts they
+were generated from, in ``tests/data/policy_golden/``).
 Contract: every leaf command is governed by at most one policy, and a command
 no policy governs must be on a frozen allow-list that may only shrink, so a
 new command arrives with its policy. Lints: every packaged policy is ASCII,
@@ -26,8 +27,8 @@ GOLDENS = json.loads((DATA / "policy_golden" / "goldens.json").read_text())
 # with its policy.
 UNCLAIMED_ALLOWED = {
     ("render",), ("export",), ("info",), ("new-project",), ("projects",), ("status",), ("open",),
-    ("config-init",), ("config-show",), ("probe", "inventory"),
-    ("probe", "fillet"), ("probe", "draft"), ("compare",), ("fit",), ("gallery", "build"),
+    ("config-init",), ("config-show",),
+    ("probe", "fillet"), ("probe", "draft"), ("compare",), ("gallery", "build"),
     ("gallery", "check"), ("viewer",), ("check",),
 }
 
@@ -36,9 +37,12 @@ ABS_PATH = re.compile(r"(^|[\s(`'\"])/(home|opt|tmp|Users|shared_workspace|mnt|v
 
 
 def _text(name):
+    """The text a golden was generated from: the edge-case fixture, or a frozen copy of a shipped
+    policy as it was then (parity tests the reader's rules, so a policy's wording can change
+    without regenerating goldens)."""
     if name == "policy_fixture.md":
         return (DATA / name).read_text()
-    return pol.get_policy(name[:-3]).text
+    return (DATA / "policy_golden" / name).read_text()
 
 
 def _numbered(first, lines):
@@ -117,6 +121,31 @@ def test_no_policy_claims_a_command_that_does_not_exist():
     leaves = set(_leaves(cli.build_parser()))
     ghosts = set(_claims()) - leaves
     assert not ghosts, f"policies claim missing commands: {sorted(ghosts)}"
+
+
+def _command_parser(path):
+    parser = cli.build_parser()
+    for word in path:
+        parser = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices[word]
+    return parser
+
+
+def test_the_inspection_policy_names_every_flag_of_the_commands_it_governs():
+    p = pol.get_policy("probe-inspect")
+    assert p.commands, "the policy claims its commands in the header"
+    missing = []
+    for command in p.commands:
+        for action in _command_parser(command)._actions:
+            if isinstance(action, argparse._HelpAction):
+                continue
+            for option in action.option_strings:
+                if option not in p.text:
+                    missing.append(f"{' '.join(command)} {option}")
+    assert not missing, "flags the policy does not mention: " + ", ".join(missing)
+    # probe section belongs to another policy; the flags only an STL source uses are documented here
+    section = [o for a in _command_parser(("probe", "section"))._actions for o in a.option_strings]
+    assert {"--axis", "--axis-center"} <= set(section)
+    assert all(flag in p.text for flag in ("--axis", "--axis-center"))
 
 
 # --- lints ---------------------------------------------------------------------------

@@ -40,6 +40,9 @@ class DesignVariant:
         self.source_path = source_path
         self.renders: Dict[str, Path] = {}
         self.meshes: List[MeshRef] = []
+        #: The variant's findings as dicts (Finding.to_dict): None when it was never judged,
+        #: an empty list when it was judged and nothing was found.
+        self.findings: Optional[List[Dict[str, Any]]] = None
 
     @property
     def stl_path(self) -> Optional[Path]:
@@ -72,6 +75,8 @@ class DesignProject:
 
     def __init__(self, name: str, config: Optional[OutputConfig] = None,
                  source_extension: str = "", syntax_language: str = "plaintext"):
+        #: A line shown at the top of the page (a QC gate that held the manifest back), or None.
+        self.banner: Optional[str] = None
         self.name = name
         self.config = config or OutputConfig()
         self.variants: List[DesignVariant] = []

@@ -33,14 +33,19 @@ from typing import Any, Dict, List, Optional
 from agentcad.config import OutputConfig, ProjectConfig
 from agentcad.engine import CADEngine, RenderResult
 from agentcad.output import DesignProject
-from agentcad.report import Report, feature_effect
+from agentcad.findings import Finding
+from agentcad.report import Report, feature_effect, rejudge
 
 SESSION_STATE_FILE = "session.json"
 #: Session record schema. 1: iterations carried paths and notes only.
 #: 2: each iteration also keeps the measured metadata it was rendered with,
 #: the defines in force, a hash of its source, and the feature-effect report
 #: against the previous iteration. A v1 file loads with those fields absent.
-SESSION_SCHEMA = 2
+#: 3: an iteration's judgments (the tray's findings) are kept apart from its
+#: measurements, under "judgments", and the session records the rules they were
+#: judged by. Judgments are recomputed from the measurements against the current
+#: rules whenever a session loads, so a v2 file loads and is judged afresh.
+SESSION_SCHEMA = 3
 
 
 @dataclass
@@ -81,6 +86,7 @@ class Iteration:
             "defines": dict(self.defines),
             "source_hash": self.source_hash,
             "report": self.report.to_dict() if self.report else None,
+            "judgments": {"findings": [f.to_dict() for f in self.report.findings]} if self.report else None,
         }
 
     @classmethod
@@ -88,8 +94,10 @@ class Iteration:
         src = Path(data["source_path"]) if data.get("source_path") else None
         code = src.read_text() if src and src.exists() else ""
         rep_data = data.get("report")
+        judged = (data.get("judgments") or {}).get("findings") or []
         report = Report(lines=list(rep_data.get("lines", [])), warnings=list(rep_data.get("warnings", [])),
-                        deltas=dict(rep_data.get("deltas", {})), changed=rep_data.get("changed")) if rep_data else None
+                        deltas=dict(rep_data.get("deltas", {})), changed=rep_data.get("changed"),
+                        findings=[Finding.from_dict(f) for f in judged]) if rep_data else None
         return cls(
             number=data["number"],
             timestamp=data["timestamp"],
@@ -228,8 +236,7 @@ class DesignSession:
         report = feature_effect(
             previous.metadata if previous else None, metadata,
             source_changed=(digest != previous.source_hash) if previous and previous.source_hash else None,
-            expected_solids=int(self.engine.setting("expected_solids")),
-            short_edge_mm=float(self.engine.setting("short_edge_mm")),
+            **self.rules(),
         )
 
         iteration = Iteration(
@@ -421,6 +428,7 @@ class DesignSession:
             variant = self.project.add_variant(label, variant_params)
             variant.source_code = it.source_code
             variant.source_path = it.source_path
+            variant.findings = [f.to_dict() for f in it.report.findings] if it.report else None
 
             # Save source
             self.project.save_source(
@@ -459,6 +467,31 @@ class DesignSession:
                     print(f"agentcad warning: v{it.number} STL export failed (viewer without mesh): {err}",
                           file=sys.stderr)
 
+        # QC for a project that declares [qc]: judged on the latest export; the gate holds the
+        # manifest back on an error, and the viewer is still written, with a banner
+        self.qc_report, self.qc_failed = None, False
+        self.project.banner = None
+        from agentcad import qc as qcmod
+        qs = qcmod.settings(self.config)
+        if qs is not None:
+            latest = self.iterations[-1]
+            stl = self.project.exports_dir / f"{self.name}_v{latest.number}.stl"
+            self.qc_report = qcmod.run(self.config, stl, qs)
+            if self.project.variants:
+                newest = self.project.variants[0]
+                newest.findings = (newest.findings or []) + self.qc_report["findings"]
+            held = qcmod.errors(self.qc_report)
+            if qs.gate and held:
+                self.qc_failed = True
+                self.project.banner = (f"QC gate failed: {len(held)} error(s) on v{latest.number}, so no print "
+                                       f"manifest was written. " + held[0]["sentence"])
+        if self.qc_failed:
+            # held, not finalized: the viewer shows why; iterate on without reopening
+            self._finalized = False
+            self.project.metadata["held_by_qc"] = datetime.now().isoformat()
+            self.project.metadata["iterations"] = self.iteration_count
+            return self.project.generate_viewer()
+
         # Generate print manifest for final iteration
         from agentcad.manifest import PrintManifest
         manifest = PrintManifest(
@@ -469,7 +502,14 @@ class DesignSession:
             engine=self.engine.name,
             agent_notes=[n for it in self.iterations for n in it.notes],
         )
-        # Apply any print params from session
+        # The project's [print] intent fills the fields it states (the class defaults stay for the
+        # rest), then session params override; the intent itself is kept verbatim
+        intent = dict(getattr(self.config, "print_intent", {}) or {})
+        for k in ("material", "layer_height", "infill_percent", "supports", "print_orientation",
+                  "printer_profile", "filament_profile"):
+            if k in intent:
+                setattr(manifest, k, intent[k])
+        manifest.print_intent = intent
         for k in ("material", "layer_height", "infill_percent", "supports",
                    "print_orientation", "printer_profile"):
             if k in self.params:
@@ -526,6 +566,19 @@ class DesignSession:
     def state_file(self) -> Path:
         return self._work_dir / SESSION_STATE_FILE
 
+    def rules(self) -> Dict[str, Any]:
+        """The tray's limits as the engine holds them now, with the layer that set each."""
+        return {"expected_solids": int(self.engine.setting("expected_solids")),
+                "short_edge_mm": float(self.engine.setting("short_edge_mm")),
+                "limits_from": {k: self.engine.setting_layer(k) for k in ("expected_solids", "short_edge_mm")}}
+
+    def rejudge(self) -> None:
+        """Judge every stored iteration's measurements against the current rules."""
+        records = [{"metadata": it.metadata, "source_hash": it.source_hash} for it in self.iterations]
+        for it, report in zip(self.iterations, rejudge(records, **self.rules())):
+            if report is not None:
+                it.report = report
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "schema": SESSION_SCHEMA,
@@ -538,6 +591,7 @@ class DesignSession:
             "finalized": self._finalized,
             "project_metadata": dict(self.project.metadata),
             "tags": dict(self.tags),
+            "judged_with": {k: v for k, v in self.rules().items()},
             "iterations": [it.to_dict() for it in self.iterations],
         }
 
@@ -593,4 +647,5 @@ class DesignSession:
             session.project.metadata.setdefault(meta_k, meta_v)
         for it_data in data.get("iterations", []):
             session.iterations.append(Iteration.from_dict(it_data))
+        session.rejudge()          # judgments follow today's rules; the measurements are what was stored
         return session

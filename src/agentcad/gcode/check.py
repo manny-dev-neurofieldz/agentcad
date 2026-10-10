@@ -14,11 +14,11 @@ block a plain G-code export carries. Each finding is a sentence: the key, both v
 declared, why it matters, and the usual fix.
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agentcad.config import tomllib
+from agentcad.findings import FIX_DIFFERS, FIX_MISSING, Finding   # Finding: callers import it from here too
 from agentcad.gcode import bgcode
 
 #: Settings worth printing when a project declares no intent.
@@ -32,35 +32,19 @@ KEY_SETTINGS = (
 PRIVATE_KEYS = ("printhost_apikey", "printhost_password", "printhost_user", "printhost_cafile", "post_process")
 
 
-@dataclass
-class Finding:
-    key: str
-    severity: str            # "error" | "warning" | "ok"
-    found: Optional[str]
-    intended: str
-    why: str
-    source: str
-
-    def sentence(self) -> str:
-        why = f" Why: {self.why}." if self.why else ""
-        if self.severity == "ok":
-            return f"{self.key} = {self.found}, as {self.source} asks."
-        if self.found is None:
-            return (f"{self.key} is not in the file's configuration; {self.source} asks for {self.intended}.{why} "
-                    f"Fix: check the slicer version writes this setting, or drop it from the intent.")
-        return (f"{self.key} is {self.found} in the file; {self.source} asks for {self.intended}.{why} "
-                f"Fix: re-load the project file in the slicer and re-slice; a preset selected afterwards can "
-                f"override a project's settings.")
-
-
 def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
     """The slicer configuration a sliced file carries (.bgcode metadata, or a plain file's comment block)."""
     path = Path(path)
     if bgcode.is_bgcode(path):
         return dict(bgcode.read(path).metadata.get("slicer_metadata", {}))
-    out: Dict[str, str] = {}
+    return config_from_text(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def _comments(text: str):
+    """(key, value, state) of every ``; key = value`` comment in plain G-code text. ``state`` is None before any
+    configuration block, True inside one and False after it; the block's own begin and end lines are not yielded."""
     in_block = None
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         if not line.startswith(";") or " = " not in line:
             continue
         k, v = line[1:].split(" = ", 1)
@@ -68,9 +52,30 @@ def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
         if k.endswith("_config") and v in ("begin", "end"):
             in_block = v == "begin"
             continue
-        if in_block is None or in_block:
-            out[k] = v
-    return out
+        yield k, v, in_block
+
+
+def config_from_text(text: str, whole: bool = False) -> Dict[str, str]:
+    """Every ``; key = value`` comment of plain G-code text, up to the end of the configuration block.
+
+    Lines before the block count too: a slicer writes its statistics (filament used, estimated printing time)
+    there, and a file without a block is all comments. Telling statistics from settings is the caller's job
+    (a setting's name has no spaces). Nothing after the block's end is read unless ``whole`` is set, which
+    reads the statistics a file writes after its block."""
+    return {k: v for k, v, state in _comments(text) if whole or state is None or state}
+
+
+def config_block(text: str) -> Optional[Dict[str, str]]:
+    """The settings inside the configuration block of plain G-code text, and nothing else; None when the text
+    carries no block."""
+    block: Dict[str, str] = {}
+    seen = False
+    for k, v, state in _comments(text):
+        if state is not None:
+            seen = True
+        if state:
+            block[k] = v
+    return block if seen else None
 
 
 def load_intent(path: Union[str, Path]) -> Dict[str, Any]:
@@ -118,11 +123,14 @@ def check(config: Dict[str, str], intent: Dict[str, Any], source: str) -> List[F
             intended = "between " + " and ".join(str(x) for x in (lo, hi) if x is not None) if lo is not None and hi is not None \
                 else (f"at least {lo}" if lo is not None else f"at most {hi}")
         if found is None:
-            findings.append(Finding(key, "warning", None, intended, why, source))
+            severity, fix = "warning", FIX_MISSING
         elif want is not None:
-            findings.append(Finding(key, "ok" if _same(found, want) else "error", found, intended, why, source))
+            severity = "ok" if _same(found, want) else "error"
+            fix = "" if severity == "ok" else FIX_DIFFERS
         else:
             v = _num(found)
             inside = v is not None and (lo is None or v >= float(lo)) and (hi is None or v <= float(hi))
-            findings.append(Finding(key, "ok" if inside else "warning", found, intended, why, source))
+            severity, fix = ("ok", "") if inside else ("warning", FIX_DIFFERS)
+        findings.append(Finding(key, severity, found, intended, why, source,
+                                rule="slice_setting", layer=source, fix=fix))
     return findings

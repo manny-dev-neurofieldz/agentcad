@@ -303,3 +303,30 @@ def test_finalize_writes_a_toolpath_page_for_each_sliced_file_in_exports(session
     sliced = PrintManifest.load(exports / "widget.print.json").sliced
     assert [s["file"] for s in sliced] == ["widget.gcode"]
     assert sliced[0]["toolpaths"] == "widget.toolpaths.html" and sliced[0]["layers"] == 3
+
+
+def test_a_v2_record_loads_under_v3_and_is_judged_by_the_current_rules(session, config):
+    session.iterate("volume = 10\nsolids = 3\n")
+    path = session.save_state()
+    data = json.loads(path.read_text())
+    assert data["schema"] == 3 and data["iterations"][0]["judgments"]["findings"][0]["rule"] == "solid_count"
+    # the same record as schema 2 wrote it: the judgments only as the report's warning strings
+    data["schema"] = 2
+    for it in data["iterations"]:
+        it.pop("judgments", None)
+        it["report"]["warnings"] = ["a warning from an older rule"]
+    path.write_text(json.dumps(data))
+    strict = DesignSession.load_state("widget", FakeEngine(), config=config)
+    assert [f.rule for f in strict.current.report.findings] == ["solid_count"]
+    assert strict.current.report.warnings == [strict.current.report.findings[0].message]
+    relaxed = DesignSession.load_state("widget", FakeEngine(settings={"expected_solids": 3}), config=config)
+    assert relaxed.current.report.findings == [] and relaxed.current.report.warnings == []
+    assert relaxed.current.metadata["counts"]["solids"] == 3           # the measurement itself is untouched
+
+
+def test_the_tray_findings_show_on_the_variant_page(session):
+    session.iterate("volume = 10\nsolids = 3\n")
+    session.iterate("volume = 12\n")
+    html = session.finalize().read_text()
+    assert 'class="finding finding-warning"' in html and "solids 3 != expected 1" in html
+    assert "Tray: no warnings" in html                  # the clean iteration says so rather than showing nothing

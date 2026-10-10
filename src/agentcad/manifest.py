@@ -58,6 +58,8 @@ class PrintManifest:
     #: Fit checks recorded against this manifest: [{a, b, interference_mm3,
     #: clearance_mm, windows}] from `agentcad fit`.
     fit: List[Dict[str, Any]] = field(default_factory=list)
+    #: The project's [print] table as written: the neutral print intent, every key kept.
+    print_intent: Dict[str, Any] = field(default_factory=dict)
     #: The project's [slice] intent, carried so a sliced file can be checked against the manifest it came from.
     slice_intent: Dict[str, Any] = field(default_factory=dict)
     #: Sliced files found in the exports folder at finalize: [{file, toolpaths, layers}].

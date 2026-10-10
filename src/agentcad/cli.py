@@ -4,11 +4,18 @@ import argparse
 import importlib
 import json
 import pkgutil
+import re
 import sys
 from pathlib import Path
 
 from agentcad import __version__
 from agentcad.camera import MULTI_VIEW_DEFAULT, STANDARD_PRESETS
+
+
+# argparse reads a bare "-30,0,0:1,0,0" as an unknown option, because only a lone number counts as negative.
+# A parser whose options take coordinate lists sets this as its _negative_number_matcher, so a leading
+# minus sign is a number there and `--line -30,0,0:1,0,0` works as `--line=-30,0,0:1,0,0` does.
+SIGNED_NUMBER_LIST = re.compile(r"^-\d*\.?\d+(?:[eE][-+]?\d+)?[-+\d.eE,:]*$")
 
 
 def _parse_defines(define_list):
@@ -513,6 +520,7 @@ def cmd_session_finalize(args):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    failed = []          # parts (and the project) that a QC gate held back or that could not be finalized
     if getattr(args, "all", False):
         gathered = []
         for folder, part_cfg in cfg.part_projects():
@@ -521,11 +529,15 @@ def cmd_session_finalize(args):
                 part_session = DesignSession.load_state(folder.name, engine=part_engine, config=part_cfg)
                 part_html = part_session.finalize(export_all=getattr(args, "export_all", False))
                 part_session.save_state()
+                if part_session.qc_failed:
+                    failed.append(folder.name)
+                    print(f"  part {folder.name}: {part_session.project.banner}", file=sys.stderr)
                 print(f"  part {folder.name}: finalized ({part_session.iteration_count} iteration(s)) {part_html}")
                 latest = part_session.project.variants[0] if part_session.project.variants else None
                 if latest is not None and latest.stl_path and latest.stl_path.exists():
                     gathered.append((folder.name, latest.stl_path, part_cfg.quantity))
             except (FileNotFoundError, ValueError, RuntimeError) as e:
+                failed.append(folder.name)
                 print(f"  part {folder.name}: {e}", file=sys.stderr)
         session.part_meshes = gathered
         if gathered:
@@ -534,9 +546,67 @@ def cmd_session_finalize(args):
     already = session._finalized
     html_path = session.finalize(export_all=getattr(args, "export_all", False))
     session.save_state()
-    print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
+    if session.qc_failed:
+        print("Session held by the QC gate: viewer written, no print manifest, not marked finalized.")
+    else:
+        print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
     print(f"  HTML viewer: {html_path}")
     print(f"  Iterations:  {session.iteration_count}")
+    if session.qc_report is not None:
+        for f in session.qc_report["findings"]:
+            print(f"  QC {f['severity']}: {f['sentence']}")
+    if session.qc_failed:
+        failed.append(session.name)
+        print(f"  {session.project.banner}", file=sys.stderr)
+    _finalize_fits(cfg, session)
+    if failed:
+        print(f"finalize: held back or failed: {', '.join(failed)}", file=sys.stderr)
+        return 1
+
+
+def _finalize_fits(cfg, session):
+    """Fit every mate the project declares and record each fit in both parts' manifests."""
+    from agentcad import fit as fitmod
+    from agentcad import mates
+    from agentcad.session import DesignSession
+
+    project_dir = cfg.project_dir
+    try:
+        declared = mates.load_all(project_dir) if project_dir else {}
+    except mates.MateError as e:
+        print(f"  Mates: not read ({e})", file=sys.stderr)
+        return
+    if not declared:
+        return
+
+    def latest(sess, folder):
+        it = sess.iterations[-1]
+        return (Path(it.source_path), dict(it.defines or sess.defines or {}), Path(folder))
+
+    sources = {session.name: latest(session, project_dir)}
+    parts = cfg.part_projects()
+    for folder, part_cfg in parts:
+        try:
+            part_session = DesignSession.load_state(folder.name, engine=_engine_for(None, part_cfg), config=part_cfg)
+        except (FileNotFoundError, ValueError, RuntimeError):
+            continue
+        if part_session.iterations:
+            sources[folder.name] = latest(part_session, folder)
+    print(f"  Mates:       {len(declared)} declared")
+    for r in fitmod.declared_fits(project_dir, session.name, sources, assembly=bool(parts)):
+        if "skipped" in r:
+            print(f"    {r['mate']}: not fitted ({r['skipped']})")
+            continue
+        rec = r["record"]
+        line = (f"    {r['mate']} ({r['pair'][0]} / {r['pair'][1]}): {rec['verdict'].upper()}; interference "
+                f"{rec['interference_mm3']:.4g} mm^3, clearance {rec['clearance_mm']:.4g} mm")
+        for v in (rec.get("verdicts") or {}).values():
+            if "min_mm" in v:
+                line += f", window {v['min_mm']:.3g} mm against {v['nominal_mm']:.3g} +/- {v['tol_mm']:.3g}"
+        print(line + f"; {rec.get('contact_regions', 0)} contact region(s)")
+        for note in rec.get("pose", {}).get("notes") or []:
+            print(f"      pose: {note}")
+        print(f"      recorded in {len(r['written'])} manifest(s)")
 
 
 def cmd_session_status(args):
@@ -590,11 +660,60 @@ def _windows_arg(items):
     return out
 
 
+def _loop_line(i, L):
+    kinds = {}
+    for e in L["edges"]:
+        kinds[e["type"]] = kinds.get(e["type"], 0) + 1
+    desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
+    fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
+    return f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}"
+
+
+def _probe_section_mesh(args, source):
+    """Section loops of an STL: polylines from triangle-plane intersection, with radial and axial extents."""
+    from agentcad import meshprobe, probe
+
+    if args.define:
+        print("agentcad probe: -D ignored: a mesh has no parameters", file=sys.stderr)
+    center = None
+    if args.axis_center:
+        try:
+            center = [float(v) for v in args.axis_center.split(",")]
+        except ValueError:
+            center = []
+        if len(center) != 2:
+            print(f"Error: --axis-center {args.axis_center!r}: expected two numbers A,B (the coordinates across the axis, "
+                  f"in x, y, z order)", file=sys.stderr)
+            sys.exit(2)
+    mesh = meshprobe.load_mesh(source)
+    data = {"source": str(source), "kind": "mesh",
+            "note": "loops are polylines from triangle-plane intersection: the tessellation's section, not exact edges",
+            "planes": []}
+    print(f"{source}: mesh, {mesh.n_triangles} triangles; {data['note']}")
+    for spec in args.planes or ["z=mid"]:
+        rec = probe.mesh_section_plane(mesh, spec, axis=args.axis, center=center, max_loops=args.max_loops)
+        total, loops = rec["n_loops"], rec["loops"]
+        print(f"{spec} (at {rec['coordinate']:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""))
+        ex = rec["extents"]
+        if ex:
+            print(f"  extents about axis {ex['axis']} through ({ex['center'][0]:.4g}, {ex['center'][1]:.4g}): "
+                  f"radial {ex['radial'][0]:.4g} .. {ex['radial'][1]:.4g}, axial {ex['axial'][0]:.4g} .. {ex['axial'][1]:.4g}")
+        for i, L in enumerate(loops[: args.show]):
+            x = L["extents"]
+            print(_loop_line(i, L) + ("" if L["closed"] else "; open chain")
+                  + f"; radial {x['radial'][0]:.4g} .. {x['radial'][1]:.4g}, axial {x['axial'][0]:.4g} .. {x['axial'][1]:.4g}")
+        data["planes"].append(rec)
+    if args.output:
+        print(f"loops.json: {probe.write_json(data, Path(args.output))}")
+
+
 def cmd_probe_section(args):
     """Section loops of a shape on named planes, as loops.json; --arcs reads the lines and arcs in them, --chain N one loop as a literal."""
     import re
     from agentcad import probe
 
+    if Path(args.source).suffix.lower() == ".stl":
+        return _probe_section_mesh(args, Path(args.source))
     shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
     planes = args.planes or ["z=mid"]
     chain_n = getattr(args, "chain", None)
@@ -617,12 +736,7 @@ def cmd_probe_section(args):
         total = loops[0]["total_on_plane"] if loops else 0
         print(f"{spec} (at {coord:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""), file=out)
         for i, L in enumerate(loops[: args.show]):
-            kinds = {}
-            for e in L["edges"]:
-                kinds[e["type"]] = kinds.get(e["type"], 0) + 1
-            desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
-            fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
-            print(f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}", file=out)
+            print(_loop_line(i, L), file=out)
             if want_arcs:
                 for line in curves.render_arcs(L["arcs"], show=args.show):
                     print(f"    {line}", file=out)
@@ -650,13 +764,23 @@ def cmd_probe_inventory(args):
     """bbox, volume, census, cylinder axes and section loops of a shape."""
     from agentcad import probe
 
-    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    try:
+        shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    except ValueError as e:            # a source that is not a program or a STEP file, an STL for one
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     inv = probe.inventory(shape, planes=args.planes or [], max_loops=args.max_loops)
     print(f"bbox_min {inv.get('bbox_min')}  bbox_size {inv.get('bbox_size')}")
     print(f"volume {inv.get('volume')}  area {inv.get('area')}  counts {inv.get('counts')}  valid {inv.get('is_valid')}")
     print(f"census {inv.get('face_census')}")
+    notes = inv.get("census_notes") or []
+    for note in notes:
+        print(f"warning: {note}")
     cyl = inv.get("cylinders") or []
-    print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
+    if notes and not cyl:
+        print("cylindrical/conical faces with axes: none readable (see the warning above)")
+    else:
+        print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
     for c in cyl[: args.show]:
         if "axis_direction" in c:
             o, d = c["axis_origin"], c["axis_direction"]
@@ -742,17 +866,12 @@ def cmd_gcode_thumbnails(args):
 
 def cmd_gcode_summary(args):
     """Layers, filament, and extrusion by object and feature of a sliced file."""
-    from agentcad.gcode import bgcode, model
+    from agentcad.gcode import sliced
 
     path = Path(args.file)
-    meta = bgcode.read(path).metadata if bgcode.is_bgcode(path) else {}
-    slicer = meta.get("slicer_metadata", {})
-    density = float(slicer.get("filament_density", "0").split(",")[0] or 0) or None
-    diameter = float(slicer.get("filament_diameter", "1.75").split(",")[0] or 1.75)
-    s = model.summary(model.parse(bgcode.gcode_text(path)), diameter, density)
-    stated = meta.get("print_metadata", {}).get("filament used [mm]")
-    if stated:
-        s["filament_used_stated_mm"] = float(stated)
+    loaded = sliced.load(path)
+    s = sliced.summary_record(loaded)
+    stated = loaded.metadata.get("print_metadata", {}).get("filament used [mm]")
     if args.json:
         print(json.dumps(s, indent=2))
         return
@@ -798,7 +917,7 @@ def cmd_gcode_check(args):
         return 0
     findings = check.check(cfg, intent, label)
     if args.json:
-        print(json.dumps([f.__dict__ | {"sentence": f.sentence()} for f in findings], indent=2))
+        print(json.dumps([f.to_dict() for f in findings], indent=2))
     else:
         for f in findings:
             mark = {"error": "ERROR", "warning": "warning", "ok": "ok"}[f.severity]
@@ -826,7 +945,7 @@ def _supports_png(out, bands, placement, meshes, stl_root):
         if p and stl_root is not None and (stl_root / p["stl"]).exists():
             mesh = meshes.setdefault(str(stl_root / p["stl"]), pv.read(str(stl_root / p["stl"])))
             if b.object not in placed:
-                pl.add_mesh(mesh.translate(p["bed_offset"], inplace=False), color="lightsteelblue", opacity=0.35)
+                pl.add_mesh(mesh.transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)
             votes = supports.band_enclosure(b, placement, mesh) or {}
             if votes and max(votes, key=votes.get) == "cavity":
@@ -916,10 +1035,27 @@ def cmd_gcode_view(args):
             stl = root / p["stl"] if p.get("stl") else None
             if stl is not None and stl.exists():
                 mesh = pv.read(str(stl)).triangulate()
-                meshes.append((np.asarray(mesh.points) + np.asarray(p["bed_offset"]), mesh.faces.reshape(-1, 4)[:, 1:]))
+                bed = np.c_[np.asarray(mesh.points), np.ones(len(mesh.points))] @ np.asarray(p["transform"]).T
+                meshes.append((bed[:, :3], mesh.faces.reshape(-1, 4)[:, 1:]))
     view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts, meshes=meshes,
                     fragment=bool(getattr(args, "artifact", None)))
     print(f"toolpaths: {out}")
+
+
+def _deviation_detail(label, d):
+    """The rms and where the worst 5% of a one-way deviation lie, as one line."""
+    head = f"  {label}: rms {d['rms']:.4g}; "
+    w = d.get("worst5") or {}
+    if not w.get("n"):
+        return head + "worst 5%: " + w.get("note", "none")
+
+    def point(v):
+        return "(" + ", ".join(f"{x:.4g}" for x in v) + ")"
+
+    clusters = "; ".join(f"{point(c['center'])} n={c['n']} max {c['max']:.4g}" for c in w["clusters"])
+    more = f" (+{w['n_clusters'] - len(w['clusters'])} more)" if w["n_clusters"] > len(w["clusters"]) else ""
+    return (f"{head}worst 5% ({w['n']} of {w['of']} points, from {w['threshold']:.4g}): bbox {point(w['bbox_min'])} .. "
+            f"{point(w['bbox_max'])}; {w['n_clusters']} cluster(s) of cell {w['cell']:.4g}: {clusters}{more}")
 
 
 def cmd_compare(args):
@@ -938,6 +1074,8 @@ def cmd_compare(args):
                 print(f"  window {name}: p95 {w['p95']:.4g}, max {w['max']:.4g}")
             else:
                 print(f"  window {name}: {w.get('note')}")
+            if w.get("overlay"):
+                print(f"    overlay: {w['overlay']}")
         if p.get("overlay"):
             print(f"  overlay: {p['overlay']}")
     if res.get("planes_note"):
@@ -946,8 +1084,12 @@ def cmd_compare(args):
     if dev:
         a, b = dev["candidate_to_original"], dev["original_to_candidate"]
         print(f"deviation candidate->original p95 {a['p95']:.4g} max {a['max']:.4g}; original->candidate p95 {b['p95']:.4g} max {b['max']:.4g}")
+        print(_deviation_detail("candidate->original", a))
+        print(_deviation_detail("original->candidate", b))
     elif res.get("deviation_error"):
         print(f"deviation: {res['deviation_error']}", file=sys.stderr)
+    if args.window and not args.output_dir:
+        print("note: window images are written only with -o DIR", file=sys.stderr)
     if args.output_dir:
         print(f"compare.json: {probe.write_json(res, Path(args.output_dir) / 'compare.json')}")
     if res.get("gate") is False:
@@ -956,10 +1098,12 @@ def cmd_compare(args):
 
 
 def cmd_fit(args):
-    """Pose two parts and measure interference, clearance, windows and insertion."""
+    """Pose two parts and measure interference, clearance, windows, contacts and insertion."""
     from agentcad import fit as fitmod
+    from agentcad import mates
 
     windows = {}
+    nominals = {}
     for item in args.window or []:
         name, _, nums = item.partition("=")
         vals = [float(v) for v in nums.split(",")]
@@ -981,38 +1125,121 @@ def cmd_fit(args):
             if sides and ((pair and pair != sides) or (not pair and cp and cp not in sides)):
                 continue
             windows.setdefault(name, [float(v) for v in m["window"]])
+            nominals.setdefault(name, (m.get("nominal_mm"), m.get("tol_mm")))
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
-    res = fitmod.fit(Path(args.a), Path(args.b),
-                     a_defines=a_defs or None, b_defines=b_defs or None,
-                     offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
-                     sweep_axis=args.sweep, sweep_travel=args.travel,
-                     out_dir=Path(args.output_dir) if args.output_dir else None)
+    transform = None
+    frame = None
+    pose_info = {}
+    if args.mate:
+        if args.map or args.offset or args.spin:
+            print("Error: --mate poses B from declared datums; drop --map, --offset and --spin", file=sys.stderr)
+            sys.exit(2)
+        posed = []
+        for name in args.mate:
+            try:
+                posed.append(mates.pose_for(name, Path(args.a_mates or args.a), Path(args.b_mates or args.b)))
+            except mates.MateError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(2)
+        first = posed[0]
+        transform = first["matrix"]
+        a_side = first["a"]
+        frame = (a_side.axis.point, a_side.key_line.direction if a_side.key_line else (1.0, 0.0, 0.0),
+                 a_side.axis.direction)
+        pose_info = {"mate": args.mate[0], "a_declared_in": str(first["a_path"]),
+                     "b_declared_in": str(first["b_path"]), "notes": first["notes"]}
+        for name, p in zip(args.mate, posed):
+            if p is not first:
+                diff = max(abs(p["matrix"][i][j] - transform[i][j]) for i in range(3) for j in range(4))
+                if diff > 1e-6:
+                    print(f"Warning: mate {name} poses B differently from {args.mate[0]} (largest entry "
+                          f"difference {diff:.3g}); the pose of {args.mate[0]} is used", file=sys.stderr)
+            # the window and nominal are A's side's, or else the enclosing assembly's (in A's frame)
+            above = mates.enclosing(name, p["a_path"])
+            side = p["a"] if p["a"].window else (above[0] if above and above[0].window else None)
+            if side is not None:
+                windows.setdefault(name, side.window)
+            stated = [m for m in (p["a"], side, p["b"]) if m is not None and m.nominal_mm is not None]
+            if side is not None and stated:
+                nominals.setdefault(name, (stated[0].nominal_mm, stated[0].tol_mm))
+        for note in first["notes"]:
+            print(f"  pose: {note}")
+    elif args.map:
+        if args.offset or args.spin:
+            print("Error: --map replaces --offset and --spin; give one or the other", file=sys.stderr)
+            sys.exit(2)
+        fields = dict(item.partition("=")[::2] for item in args.map)
+        unknown = set(fields) - {"axis", "spin", "offset"}
+        if unknown:
+            print(f"Error: --map takes axis=, spin= and offset=, not {', '.join(sorted(unknown))}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            transform = mates.map_transform(fields.get("axis", "z"), float(fields.get("spin", 0)),
+                                            [float(v) for v in fields.get("offset", "0,0,0").split(",")])
+        except (ValueError, mates.MateError) as e:
+            print(f"Error: --map: {e}", file=sys.stderr)
+            sys.exit(2)
+    try:
+        res = fitmod.fit(Path(args.a), Path(args.b), transform=transform,
+                         a_defines=a_defs or None, b_defines=b_defs or None,
+                         offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
+                         sweep_axis=args.sweep, sweep_travel=args.travel,
+                         out_dir=Path(args.output_dir) if args.output_dir else None,
+                         sweep_steps=args.sweep_steps, sample_step=args.step,
+                         contact_mm=None if args.contact_mm < 0 else args.contact_mm, frame=frame)
+    except (ValueError, FileNotFoundError) as e:     # e.g. an OpenSCAD part: fit reads exact shapes only
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+    res["pose"].update(pose_info)
+    if nominals and res.get("windows"):
+        res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)
     print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
+    if "contacts" in res:
+        regions = res["contacts"]
+        print(f"  contacts within {res['contact_mm']:.3g} mm: {len(regions) or 'none'}"
+              + (" region(s)" if regions else ""))
+        for r in regions[:8]:
+            c, lo, hi = r["centroid"], r["min"], r["max"]
+            print(f"    at ({c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f}), box ({lo[0]:.2f}, {lo[1]:.2f}, {lo[2]:.2f})"
+                  f" to ({hi[0]:.2f}, {hi[1]:.2f}, {hi[2]:.2f}), closest {r['min_mm']:.3g} mm")
+        if len(regions) > 8:
+            print(f"    ... {len(regions) - 8} more in fit.json")
     for name, w in (res.get("windows") or {}).items():
         if "min_mm" in w:
             print(f"  window {name}: min {w['min_mm']:.4g} mm (p05 {w['p05_mm']:.4g})")
         else:
             print(f"  window {name}: {w.get('note')}")
+    failed_windows = []
+    for name, v in (res.get("verdicts") or {}).items():
+        measured = f"{v['min_mm']:.3g} mm" if "min_mm" in v else "not measured"
+        print(f"  window {name}: {v['verdict'].upper()} (clearance {measured}; nominal {v['nominal_mm']:.3g} "
+              f"+/- {v['tol_mm']:.3g} mm)")
+        if v["verdict"] == "fail":
+            failed_windows.append(name)
     for row in res.get("insertion") or []:
         print(f"  insertion at {row['offset_mm']:.3g} mm out: interference {row['interference_mm3']:.4g} mm^3")
     for name, path in (res.get("renders") or {}).items():
         print(f"  render {name}: {path}")
     if args.output_dir:
         print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
-    if args.record:
-        from agentcad.manifest import PrintManifest
-        manifests = sorted(Path(args.record).glob("exports/*.print.json"))
-        if manifests:
-            m = PrintManifest.load(manifests[0])
-            key = (res["a"], res["b"], json.dumps(res["a_defines"], sort_keys=True), json.dumps(res["b_defines"], sort_keys=True))
-            m.fit = [f for f in m.fit if (f.get("a"), f.get("b"), json.dumps(f.get("a_defines") or {}, sort_keys=True),
-                                          json.dumps(f.get("b_defines") or {}, sort_keys=True)) != key]
-            m.fit.append({k: res[k] for k in ("a", "b", "a_defines", "b_defines", "pose", "interference_mm3", "clearance_mm") if k in res}
-                         | ({"windows": res["windows"]} if res.get("windows") else {}))
-            m.save(manifests[0])
-            print(f"recorded in {manifests[0]}")
-        else:
-            print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
+    if args.record is not None:
+        record = fitmod.fit_record(res, allow_mm3=args.allow or 0.0)
+        # each part's record goes where the part is declared: the folder of its side of the mate,
+        # or else the project holding its source
+        homes = ((pose_info["a_declared_in"], pose_info["b_declared_in"]) if pose_info else (args.a, args.b))
+        projects = [Path(p) for p in args.record] or [q for q in (fitmod.project_of(Path(h)) for h in homes) if q]
+        if not projects:
+            print("Warning: --record found no project (agentcad.toml) above either part; name one", file=sys.stderr)
+        for project in dict.fromkeys(p.resolve() for p in projects):
+            written = fitmod.record_fit(project, record)
+            if written:
+                print(f"recorded ({record['verdict']}) in {written}")
+            else:
+                print(f"Warning: no print manifest under {project}/exports to record into (finalize it first)",
+                      file=sys.stderr)
+    if failed_windows:
+        print(f"fit: BELOW NOMINAL CLEARANCE in {', '.join(failed_windows)}", file=sys.stderr)
+        sys.exit(1)
     if res["interference_mm3"] and res["interference_mm3"] > (args.allow or 0.0):
         print("fit: INTERFERENCE (the bodies overlap)", file=sys.stderr)
         sys.exit(1)
@@ -1140,15 +1367,24 @@ def _register_probe(sub, groups):
     p_probe = sub.add_parser("probe", help="RECOVER: section loops, arc fits and an inventory of a STEP or build123d source")
     sub_probe = p_probe.add_subparsers(dest="probe_cmd", required=True)
     groups["probe"] = sub_probe
-    for name, func, hlp in (("section", cmd_probe_section, "Closed loops of exact edges on named planes (loops.json)"),
-                            ("inventory", cmd_probe_inventory, "bbox, volume, census, cylinder axes, loops on planes")):
+    for name, func, hlp, source_help in (
+            ("section", cmd_probe_section, "Closed loops of exact edges on named planes (loops.json); an STL gives polylines with extents",
+             "STEP file, build123d program or STL mesh (loops from triangle-plane intersection)"),
+            ("inventory", cmd_probe_inventory, "bbox, volume, census, cylinder axes, loops on planes", "STEP file or build123d program")):
         pp = sub_probe.add_parser(name, help=hlp)
-        pp.add_argument("source", help="STEP file or build123d program")
+        pp.add_argument("source", help=source_help)
         pp.add_argument("--planes", nargs="*", default=None, help="x=|y=|z= followed by a number or mid")
         pp.add_argument("--max-loops", type=int, default=None, help="Keep at most N loops per plane (printed when applied; default none)")
         pp.add_argument("--show", type=int, default=12, help="Lines to print per plane or face list (default 12)")
         pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
         pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
+        if name == "section":
+            pp._negative_number_matcher = SIGNED_NUMBER_LIST      # --axis-center -5,0
+            pp.add_argument("--axis", choices=["x", "y", "z"], default=None,
+                            help="STL only: the axis the radial and axial extents are measured about (default: each plane's own normal)")
+            pp.add_argument("--axis-center", default=None, metavar="A,B",
+                            help="STL only: where the axis passes, as the two coordinates across it in x, y, z order "
+                                 "(default: the middle of the mesh's bounding box)")
         pp.set_defaults(func=func)
 
     ps = sub_probe.choices["section"]
@@ -1215,7 +1451,7 @@ def _register_gcode(sub, groups):
     pg.add_argument("--contact-distance", type=float, default=None,
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
-    pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1): bands in each STL's frame")
+    pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1 or /2): bands in each STL's frame")
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
     pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
@@ -1242,7 +1478,7 @@ def _register_compare_fit(sub, groups):
     p_cmp.add_argument("--planes", nargs="*", default=None,
                        help="Section planes for the loop-count gate: x=|y=|z= followed by a number or mid "
                             "(default: none, so no gate)")
-    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane (repeatable)")
+    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane, and with -o a zoomed overlay image of the window (repeatable)")
     p_cmp.add_argument("-o", "--output-dir", default=None, help="Overlay PNGs and compare.json go here")
     p_cmp.add_argument("--max-loops", type=int, default=None,
                        help="Keep at most N loops per plane (printed when applied; default none)")
@@ -1251,18 +1487,38 @@ def _register_compare_fit(sub, groups):
     p_cmp.set_defaults(func=cmd_compare)
 
     p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
+    p_fit._negative_number_matcher = SIGNED_NUMBER_LIST          # --offset -5,0,0
     p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
-    p_fit.add_argument("b", help="Second part, posed by --offset/--spin")
+    p_fit.add_argument("b", help="Second part, posed by --mate, --map or --offset/--spin")
     p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
     p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
     p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
+    p_fit.add_argument("--map", nargs="+", metavar="KEY=VALUE", default=None,
+                       help="Pose B by axis=x|y|z spin=DEG offset=x,y,z: a turn about the axis, then the offset "
+                            "(instead of --offset/--spin)")
+    p_fit.add_argument("--mate", action="append", metavar="NAME", default=None,
+                       help="Pose B from the datums both parts declare for this mate and measure its window "
+                            "(repeatable; the first poses, the rest are checked against it)")
+    p_fit.add_argument("--a-mates", default=None, metavar="PATH",
+                       help="Where part A declares its mates (toml or folder; default: searched upward from A)")
+    p_fit.add_argument("--b-mates", default=None, metavar="PATH",
+                       help="Where part B declares its mates (toml or folder; default: searched upward from B)")
     p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
     p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
+    p_fit.add_argument("--sweep-steps", type=int, default=10, help="Positions along the insertion sweep (default 10)")
+    p_fit.add_argument("--step", type=float, default=None,
+                       help="Surface sampling spacing in mm for window clearances and contacts "
+                            "(default: part A's diagonal / 100)")
+    p_fit.add_argument("--contact-mm", type=float, default=0.05,
+                       help="Report where the surfaces come within this distance, as regions "
+                            "(default 0.05; a negative value skips it)")
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
-    p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
+    p_fit.add_argument("--record", metavar="PROJECT", nargs="*", default=None,
+                       help="Record the fit (time, both parts' parameters, verdict) in the print manifest of each "
+                            "PROJECT; with no PROJECT, in both parts' own projects")
     p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL", help="Override a parameter of part A (repeatable)")
     p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL", help="Override a parameter of part B (repeatable)")
     p_fit.set_defaults(func=cmd_fit)

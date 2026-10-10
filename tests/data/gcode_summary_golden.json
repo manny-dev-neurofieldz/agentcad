@@ -1,0 +1,316 @@
+{
+  "json": {
+    "plain_a": {
+      "schema": "agentcad.gcode.summary/1",
+      "layers": 5,
+      "top_z": 1.0,
+      "filament_used": {
+        "filament_mm": 30.0,
+        "volume_cm3": 0.072
+      },
+      "features_known": true,
+      "unknown_features": {},
+      "objects": {
+        "0": "peg.stl",
+        "1": "plug.stl"
+      },
+      "by_object": {
+        "(no object)": {
+          "filament_mm": 6.0,
+          "features": {
+            "Custom": {
+              "filament_mm": 5.0,
+              "volume_cm3": 0.012
+            },
+            "Skirt/Brim": {
+              "filament_mm": 1.0,
+              "volume_cm3": 0.002
+            }
+          },
+          "support_share": 0.0
+        },
+        "peg.stl": {
+          "filament_mm": 21.0,
+          "features": {
+            "Support material": {
+              "filament_mm": 4.0,
+              "volume_cm3": 0.01
+            },
+            "External perimeter": {
+              "filament_mm": 15.0,
+              "volume_cm3": 0.036
+            },
+            "Bridge infill": {
+              "filament_mm": 2.0,
+              "volume_cm3": 0.005
+            }
+          },
+          "support_share": 0.1905
+        },
+        "plug.stl": {
+          "filament_mm": 3.0,
+          "features": {
+            "Perimeter": {
+              "filament_mm": 3.0,
+              "volume_cm3": 0.007
+            }
+          },
+          "support_share": 0.0
+        }
+      },
+      "by_feature": {
+        "External perimeter": {
+          "filament_mm": 15.0,
+          "volume_cm3": 0.036,
+          "length_mm": 100.0,
+          "paths": 5
+        },
+        "Custom": {
+          "filament_mm": 5.0,
+          "volume_cm3": 0.012,
+          "length_mm": 3.0,
+          "paths": 1
+        },
+        "Support material": {
+          "filament_mm": 4.0,
+          "volume_cm3": 0.01,
+          "length_mm": 40.0,
+          "paths": 2
+        },
+        "Perimeter": {
+          "filament_mm": 3.0,
+          "volume_cm3": 0.007,
+          "length_mm": 40.0,
+          "paths": 2
+        },
+        "Bridge infill": {
+          "filament_mm": 2.0,
+          "volume_cm3": 0.005,
+          "length_mm": 20.0,
+          "paths": 1
+        },
+        "Skirt/Brim": {
+          "filament_mm": 1.0,
+          "volume_cm3": 0.002,
+          "length_mm": 10.4,
+          "paths": 1
+        }
+      },
+      "support": {
+        "share": 0.1333,
+        "first_layer": 0,
+        "last_layer": 1,
+        "first_z": 0.2,
+        "last_z": 0.4
+      },
+      "brim_area_mm2": 5.2
+    },
+    "plain_b": {
+      "schema": "agentcad.gcode.summary/1",
+      "layers": 3,
+      "top_z": 0.9,
+      "filament_used": {
+        "filament_mm": 20.0,
+        "volume_cm3": 0.048
+      },
+      "features_known": true,
+      "unknown_features": {},
+      "objects": {
+        "0": "peg.stl",
+        "1": "cap.stl"
+      },
+      "by_object": {
+        "(no object)": {
+          "filament_mm": 6.0,
+          "features": {
+            "Custom": {
+              "filament_mm": 5.0,
+              "volume_cm3": 0.012
+            },
+            "Skirt/Brim": {
+              "filament_mm": 1.0,
+              "volume_cm3": 0.002
+            }
+          },
+          "support_share": 0.0
+        },
+        "peg.stl": {
+          "filament_mm": 11.0,
+          "features": {
+            "External perimeter": {
+              "filament_mm": 9.0,
+              "volume_cm3": 0.022
+            },
+            "Solid infill": {
+              "filament_mm": 2.0,
+              "volume_cm3": 0.005
+            }
+          },
+          "support_share": 0.0
+        },
+        "cap.stl": {
+          "filament_mm": 3.0,
+          "features": {
+            "Perimeter": {
+              "filament_mm": 3.0,
+              "volume_cm3": 0.007
+            }
+          },
+          "support_share": 0.0
+        }
+      },
+      "by_feature": {
+        "External perimeter": {
+          "filament_mm": 9.0,
+          "volume_cm3": 0.022,
+          "length_mm": 60.0,
+          "paths": 3
+        },
+        "Custom": {
+          "filament_mm": 5.0,
+          "volume_cm3": 0.012,
+          "length_mm": 3.0,
+          "paths": 1
+        },
+        "Perimeter": {
+          "filament_mm": 3.0,
+          "volume_cm3": 0.007,
+          "length_mm": 60.0,
+          "paths": 3
+        },
+        "Solid infill": {
+          "filament_mm": 2.0,
+          "volume_cm3": 0.005,
+          "length_mm": 20.0,
+          "paths": 1
+        },
+        "Skirt/Brim": {
+          "filament_mm": 1.0,
+          "volume_cm3": 0.002,
+          "length_mm": 10.4,
+          "paths": 1
+        }
+      },
+      "support": {
+        "share": 0.0,
+        "first_layer": null,
+        "last_layer": null,
+        "first_z": null,
+        "last_z": null
+      },
+      "brim_area_mm2": 5.2
+    },
+    "bgcode_b": {
+      "schema": "agentcad.gcode.summary/1",
+      "layers": 3,
+      "top_z": 0.9,
+      "filament_used": {
+        "filament_mm": 20.0,
+        "volume_cm3": 0.048,
+        "mass_g": 0.06
+      },
+      "features_known": true,
+      "unknown_features": {},
+      "objects": {
+        "0": "peg.stl",
+        "1": "cap.stl"
+      },
+      "by_object": {
+        "(no object)": {
+          "filament_mm": 6.0,
+          "features": {
+            "Custom": {
+              "filament_mm": 5.0,
+              "volume_cm3": 0.012,
+              "mass_g": 0.01
+            },
+            "Skirt/Brim": {
+              "filament_mm": 1.0,
+              "volume_cm3": 0.002,
+              "mass_g": 0.0
+            }
+          },
+          "support_share": 0.0
+        },
+        "peg.stl": {
+          "filament_mm": 11.0,
+          "features": {
+            "External perimeter": {
+              "filament_mm": 9.0,
+              "volume_cm3": 0.022,
+              "mass_g": 0.03
+            },
+            "Solid infill": {
+              "filament_mm": 2.0,
+              "volume_cm3": 0.005,
+              "mass_g": 0.01
+            }
+          },
+          "support_share": 0.0
+        },
+        "cap.stl": {
+          "filament_mm": 3.0,
+          "features": {
+            "Perimeter": {
+              "filament_mm": 3.0,
+              "volume_cm3": 0.007,
+              "mass_g": 0.01
+            }
+          },
+          "support_share": 0.0
+        }
+      },
+      "by_feature": {
+        "External perimeter": {
+          "filament_mm": 9.0,
+          "volume_cm3": 0.022,
+          "mass_g": 0.03,
+          "length_mm": 60.0,
+          "paths": 3
+        },
+        "Custom": {
+          "filament_mm": 5.0,
+          "volume_cm3": 0.012,
+          "mass_g": 0.01,
+          "length_mm": 3.0,
+          "paths": 1
+        },
+        "Perimeter": {
+          "filament_mm": 3.0,
+          "volume_cm3": 0.007,
+          "mass_g": 0.01,
+          "length_mm": 60.0,
+          "paths": 3
+        },
+        "Solid infill": {
+          "filament_mm": 2.0,
+          "volume_cm3": 0.005,
+          "mass_g": 0.01,
+          "length_mm": 20.0,
+          "paths": 1
+        },
+        "Skirt/Brim": {
+          "filament_mm": 1.0,
+          "volume_cm3": 0.002,
+          "mass_g": 0.0,
+          "length_mm": 10.4,
+          "paths": 1
+        }
+      },
+      "support": {
+        "share": 0.0,
+        "first_layer": null,
+        "last_layer": null,
+        "first_z": null,
+        "last_z": null
+      },
+      "brim_area_mm2": 5.2,
+      "filament_used_stated_mm": 20.0
+    }
+  },
+  "text": {
+    "plain_a": "a.gcode: 5 layers to z 1.0; filament 30.0 mm\n  (no object): 6.0 mm, support 0.0%\n      Custom: 5.0 mm\n      Skirt/Brim: 1.0 mm\n  peg.stl: 21.0 mm, support 19.1%\n      External perimeter: 15.0 mm\n      Support material: 4.0 mm\n      Bridge infill: 2.0 mm\n  plug.stl: 3.0 mm, support 0.0%\n      Perimeter: 3.0 mm\n  supports: 13.3% of extrusion, layers 0-1 (z 0.2-0.4)\n",
+    "plain_b": "b.gcode: 3 layers to z 0.9; filament 20.0 mm\n  (no object): 6.0 mm, support 0.0%\n      Custom: 5.0 mm\n      Skirt/Brim: 1.0 mm\n  peg.stl: 11.0 mm, support 0.0%\n      External perimeter: 9.0 mm\n      Solid infill: 2.0 mm\n  cap.stl: 3.0 mm, support 0.0%\n      Perimeter: 3.0 mm\n  supports: none\n",
+    "bgcode_b": "b.bgcode: 3 layers to z 0.9; filament 20.0 mm (0.06 g); the file states 20.00 mm\n  (no object): 6.0 mm, support 0.0%\n      Custom: 5.0 mm\n      Skirt/Brim: 1.0 mm\n  peg.stl: 11.0 mm, support 0.0%\n      External perimeter: 9.0 mm\n      Solid infill: 2.0 mm\n  cap.stl: 3.0 mm, support 0.0%\n      Perimeter: 3.0 mm\n  supports: none\n"
+  }
+}

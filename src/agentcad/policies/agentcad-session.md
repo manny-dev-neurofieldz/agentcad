@@ -92,8 +92,11 @@ Its warnings each name a defect a render does not show:
 - short edges, with the shortest length: slivers that break fillets and slicers;
 - the kernel reports the shape invalid;
 - twisted faces: a free-form face whose normal turns sharply along a ruling (a twisted loft);
+- nine faces in ten or more are BSpline surfaces: the representation hides analytic types, so a census of zero cylinders or cones is not evidence the part has none (`agentcad-probe-inspect`, section 3.1);
 - a measurement that failed, named by its key;
 - the source changed but nothing measurable did: the edit did not land.
+
+Each warning is also a finding: the rule that judged it, the limit and the layer that set it (an engine default, or the project's setting), and the usual fix. The session record keeps measurements and judgments apart; whenever a session loads, its judgments are recomputed from the stored measurements against the current settings, so changing `expected_solids` re-judges every iteration without rendering again. The viewer shows each iteration's findings above its tabs, or says that the tray had no warnings.
 
 ### 2.2 The Render Gate
 
@@ -115,6 +118,8 @@ A render cannot show connectivity (a tangent touch and a small gap look the same
 
 The print manifest carries what a print job needs: the parts, the print settings, any `[slice]` intent declared in the project, recorded fit results, and the sliced files found among the exports.
 
+Finalize also fits every mate the project declares between two parts it can name, and records each fit in both parts' manifests and the project's; a mate that cannot be fitted is reported and does not stop the finalize (`agentcad-fit`, section 6).
+
 ## 5 Session Status
 
 `agentcad session status PROJECT` prints the session's state: the engine, the iteration count against the maximum, each iteration's status with its notes, and where the session was finalized if it was. Per-iteration defines are in the session record and the viewer's Parameters tab; tags are folders under `tags/`.
@@ -122,6 +127,7 @@ The print manifest carries what a print job needs: the parts, the print settings
 ## 6 Integration with Other Policies
 
 - `agentcad-gcode`: reading the sliced file a finalized part was printed from.
+- `agentcad-fit`: declaring mates and testing them with both bodies; finalize runs the declared ones.
 - `agentcad-policies`: how this and every other policy is found and read.
 
 ## 7 Anti-Patterns
