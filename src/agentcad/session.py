@@ -502,7 +502,14 @@ class DesignSession:
             engine=self.engine.name,
             agent_notes=[n for it in self.iterations for n in it.notes],
         )
-        # Apply any print params from session
+        # The project's [print] intent fills the fields it states (the class defaults stay for the
+        # rest), then session params override; the intent itself is kept verbatim
+        intent = dict(getattr(self.config, "print_intent", {}) or {})
+        for k in ("material", "layer_height", "infill_percent", "supports", "print_orientation",
+                  "printer_profile", "filament_profile"):
+            if k in intent:
+                setattr(manifest, k, intent[k])
+        manifest.print_intent = intent
         for k in ("material", "layer_height", "infill_percent", "supports",
                    "print_orientation", "printer_profile"):
             if k in self.params:

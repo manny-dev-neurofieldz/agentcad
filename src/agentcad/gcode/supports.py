@@ -111,28 +111,51 @@ def find_contacts(model: GCodeModel, contact_distance: float = 0.25, cell: float
 
 
 def load_placement(path) -> Dict[str, Dict]:
-    """A placement sidecar (schema agentcad.placement/1) as {slicer label: {"bed_offset", "stl", "print_pose"}}.
-    bed point = STL point + bed_offset, for the STL exactly as it was placed (already in its print pose)."""
+    """A placement sidecar as {object label: {"transform", "inverse", "stl", "print_pose"}}, the
+    transform taking the STL's frame to the bed (p_bed = T p_stl, row-major 4x4).
+
+    Schema agentcad.placement/1: a bed offset per instance, the STL already in its print pose.
+    Schema agentcad.placement/2: the full transform per instance (it may turn the part); its label is
+    the instance's ``label`` when given, else its part's name (with the copy number after the first)."""
     import json
+
+    import numpy as np
 
     data = json.loads(open(path).read())
     out = {}
+    if data.get("schema") == "agentcad.placement/2":
+        for inst in data.get("instances", []):
+            label = inst.get("label") or (inst["part"] if int(inst.get("copy", 1)) == 1
+                                          else f"{inst['part']} ({inst['copy']})")
+            T = np.asarray(inst["transform"], dtype=float)
+            out[label] = {"transform": T, "inverse": np.linalg.inv(T), "stl": inst.get("stl"), "print_pose": None}
+        return out
     for obj in data.get("objects", []):
         for inst in obj.get("instances", []):
-            out[inst["label"]] = {"bed_offset": inst["bed_offset"], "stl": obj.get("stl"),
+            T = np.eye(4)
+            T[:3, 3] = inst["bed_offset"]
+            out[inst["label"]] = {"transform": T, "inverse": np.linalg.inv(T), "stl": obj.get("stl"),
                                   "print_pose": obj.get("print_pose")}
     return out
 
 
+def to_part(entry: Dict, point) -> List[float]:
+    """A bed point in the placed part's own frame."""
+    import numpy as np
+    return [float(v) for v in (entry["inverse"] @ np.append(np.asarray(point, dtype=float), 1.0))[:3]]
+
+
 def in_object_frame(band: "Band", placement: Dict[str, Dict]) -> Optional[Dict]:
-    """The band's extent in its object's STL frame (the print-pose STL), or None when the object has no
-    placement: never guessed."""
+    """The band's extent in its object's STL frame (the corners of its bed box carried back through the
+    placement), or None when the object has no placement: never guessed."""
     p = placement.get(band.object or "")
     if not p:
         return None
-    ox, oy, oz = p["bed_offset"]
-    return {"stl": p["stl"], "x": (band.xy_min[0] - ox, band.xy_max[0] - ox),
-            "y": (band.xy_min[1] - oy, band.xy_max[1] - oy), "z": (band.z[0] - oz, band.z[1] - oz),
+    corners = [to_part(p, (x, y, z)) for x in (band.xy_min[0], band.xy_max[0])
+               for y in (band.xy_min[1], band.xy_max[1]) for z in band.z]
+    lo = [min(c[i] for c in corners) for i in range(3)]
+    hi = [max(c[i] for c in corners) for i in range(3)]
+    return {"stl": p["stl"], "x": (lo[0], hi[0]), "y": (lo[1], hi[1]), "z": (lo[2], hi[2]),
             "print_pose": p.get("print_pose")}
 
 
@@ -142,11 +165,10 @@ def band_enclosure(band: "Band", placement: Dict[str, Dict], mesh, samples: int 
     p = placement.get(band.object or "")
     if not p or not band.cells:
         return None
-    ox, oy, oz = p["bed_offset"]
     step = max(1, len(band.cells) // samples)
     votes: Dict[str, int] = {}
-    for x, y, z in band.cells[::step]:
-        v = enclosure((x - ox, y - oy, z - oz), mesh)
+    for cell in band.cells[::step]:
+        v = enclosure(to_part(p, cell), mesh)
         votes[v] = votes.get(v, 0) + 1
     return votes
 
