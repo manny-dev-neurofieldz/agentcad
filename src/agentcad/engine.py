@@ -40,12 +40,14 @@ Defines = Optional[Mapping[str, str]]
 #:   grid_resolution, voxel_size, grid_target, occupied_voxels   (voxel engines)
 #:   kind                  "3d" | "2d" | "1d"
 #:   runtime_s             seconds the engine spent building and measuring
+#:   qc_annotations        the features, suppressions and print pose a Python program declared
+#:                         with ``agentcad.annotate`` (read by QC, not by the tray)
 METADATA_KEYS = frozenset({
     "bbox_min", "bbox_size", "bbox", "volume", "area", "center_of_mass", "counts",
     "is_valid", "face_census", "short_edges", "min_edge_mm", "expected_solids",
     "twisted_faces", "twisted_faces_detail",
     "grid_resolution", "voxel_size", "grid_target", "occupied_voxels", "surface",
-    "kind", "runtime_s", "facet_count",
+    "kind", "runtime_s", "facet_count", "qc_annotations",
     # engine identity lines
     "build123d_version", "openscad_version", "voxelcad_version",
 })

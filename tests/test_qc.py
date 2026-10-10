@@ -140,7 +140,8 @@ def test_qc_and_printers_commands(tmp_path, monkeypatch, capsys):
     assert e.value.code == 1
     report = json.loads(capsys.readouterr().out)
     assert report["printer"]["name"] == "mk4" and report["findings"][0]["rule"] == "build_volume"
-    assert "max_bridge_mm" in report["not_measured"] and "min_wall_mm" not in report["not_measured"]
+    assert not report["not_measured"], "every rule with a limit is measured"
+    assert {"walls", "floors", "bridges"} <= set(report["sampled"])
     cli.main(["printers", "--json"])
     names = {p["name"] for p in json.loads(capsys.readouterr().out)}
     assert {"mk4", "form3"} <= names
