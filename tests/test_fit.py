@@ -141,3 +141,53 @@ def test_fit_cli_with_output_dir_step_and_sweep_steps(tmp_path, monkeypatch, cap
     rec = json.loads((out / "fit.json").read_text())
     assert len(rec["insertion"]) in (3, 4)
     assert rec["clearance_mm"] > 0
+
+
+def test_closest_points_on_triangles_cover_every_region():
+    import numpy as np
+    from agentcad import fit as fitmod
+    A, B, C = np.array([0.0, 0, 0]), np.array([4.0, 0, 0]), np.array([0.0, 4, 0])
+    cases = {(1, 1, 3): (1, 1, 0),        # above the face
+             (-1, -1, 0): (0, 0, 0),      # beyond corner A
+             (6, -1, 0): (4, 0, 0),       # beyond corner B
+             (-1, 6, 0): (0, 4, 0),       # beyond corner C
+             (2, -2, 1): (2, 0, 0),       # outside edge AB
+             (-2, 2, 0): (0, 2, 0),       # outside edge AC
+             (3, 3, 0): (2, 2, 0)}        # outside edge BC
+    P = np.array(list(cases), dtype=float)
+    n = len(P)
+    Q = fitmod._closest_on_triangles(P, np.tile(A, (n, 1)), np.tile(B, (n, 1)), np.tile(C, (n, 1)))
+    assert np.allclose(Q, np.array(list(cases.values()), dtype=float))
+    flat = fitmod._closest_on_triangles(P[:1], A[None], A[None], B[None])    # a degenerate triangle
+    assert np.isfinite(flat).all()
+
+
+def test_contacts_find_where_two_bodies_touch():
+    pytest.importorskip("build123d")
+    pytest.importorskip("scipy")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    base = b3d.Box(10, 10, 2)                                   # top face at z = 1
+    lid = fitmod.pose(b3d.Box(4, 4, 2), (0, 0, 2))               # bottom face at z = 1: touching
+    found = fitmod.contacts(base, lid, threshold=0.05)
+    assert len(found) == 1                                       # one patch, not a grid of cells
+    patch = found[0]
+    assert abs(patch["centroid"][2] - 1.0) < 1e-6 and patch["min_mm"] < 1e-6
+    assert patch["min"][0] == pytest.approx(-2.0, abs=0.3) and patch["max"][0] == pytest.approx(2.0, abs=0.3)
+    assert patch["min"][1] == pytest.approx(-2.0, abs=0.3) and patch["max"][1] == pytest.approx(2.0, abs=0.3)
+    near = fitmod.pose(b3d.Box(4, 4, 2), (0, 0, 2.03))           # 0.03 mm apart: within the threshold
+    assert fitmod.contacts(base, near, threshold=0.05)[0]["min_mm"] == pytest.approx(0.03, abs=0.005)
+    apart = fitmod.pose(b3d.Box(4, 4, 2), (0, 0, 2.2))           # 0.2 mm apart: no contact
+    assert fitmod.contacts(base, apart, threshold=0.05) == []
+
+
+def test_contacts_on_two_ears_are_two_regions():
+    pytest.importorskip("build123d")
+    pytest.importorskip("scipy")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    base = b3d.Box(30, 10, 2)
+    ears = fitmod.pose(b3d.Box(3, 3, 2), (-10, 0, 2)) + fitmod.pose(b3d.Box(3, 3, 2), (10, 0, 2))
+    found = fitmod.contacts(base, ears, threshold=0.05)
+    assert len(found) == 2
+    assert sorted(round(r["centroid"][0]) for r in found) == [-10, 10]

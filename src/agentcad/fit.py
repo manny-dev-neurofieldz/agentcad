@@ -65,48 +65,115 @@ def clearance(a, b) -> float:
         return float("nan")
 
 
-def _points(shape, tol: float, step: Optional[float] = None):
-    """Points ON the surface, not just its tessellation vertices.
+def _lattice(shape, tol: float, step: Optional[float] = None):
+    """Points ON the surface, not just its tessellation vertices, with the triangle each lies on.
 
     A planar face tessellates to a few large triangles whose vertices sit at its corners, so a
     window in the middle of a flat lip would see no points at all and a nearest-vertex distance
     overstates the true gap. Every triangle is covered by a barycentric lattice whose spacing is
     ``step`` (default: the tessellation tolerance times 20), so flat faces are sampled as densely
     as curved ones.
+
+    Returns (points, triangle index per point, vertices, triangles, spacing), where ``spacing``
+    bounds the distance from any point of a triangle to the nearest lattice point on it.
     """
     import numpy as np
     verts, tris = shape.tessellate(tolerance=tol, angular_tolerance=0.1)
-    V = np.array([[v.X, v.Y, v.Z] for v in verts], dtype=float)
-    if len(tris) == 0:
-        return V
+    V = np.array([[v.X, v.Y, v.Z] for v in verts], dtype=float).reshape(-1, 3)
+    T = np.array(tris, dtype=int).reshape(-1, 3)
+    if len(T) == 0:
+        return V, np.zeros(len(V), dtype=int), V, T, 0.0
     step = step or tol * 20.0
-    T = np.array(tris, dtype=int)
     A, B, C = V[T[:, 0]], V[T[:, 1]], V[T[:, 2]]
     longest = np.maximum.reduce([np.linalg.norm(B - A, axis=1), np.linalg.norm(C - B, axis=1), np.linalg.norm(A - C, axis=1)])
-    out = [V]
     n_per = np.clip(np.ceil(longest / step).astype(int), 1, 64)
+    points, owners = [], []
     for n in np.unique(n_per):
-        if n < 2:
-            continue
-        sel = n_per == n
+        sel = np.nonzero(n_per == n)[0]
         i, j = np.meshgrid(np.arange(n + 1), np.arange(n + 1), indexing="ij")
         keep = (i + j) <= n
         u, v = i[keep] / n, j[keep] / n           # barycentric lattice on each selected triangle
         w = 1.0 - u - v
         pts = (w[None, :, None] * A[sel][:, None, :] + u[None, :, None] * B[sel][:, None, :] + v[None, :, None] * C[sel][:, None, :])
-        out.append(pts.reshape(-1, 3))
-    return np.concatenate(out)
+        points.append(pts.reshape(-1, 3))
+        owners.append(np.repeat(sel, len(u)))
+    return np.concatenate(points), np.concatenate(owners), V, T, float((longest / n_per).max())
 
 
-def window_clearances(a, b, windows: Dict[str, Sequence[float]], tol: Optional[float] = None) -> Dict[str, Any]:
-    """Minimum surface-to-surface distance inside each window box (x0,y0,z0,x1,y1,z1), both ways."""
+def _points(shape, tol: float, step: Optional[float] = None):
+    """The surface lattice of :func:`_lattice`, points only."""
+    return _lattice(shape, tol, step)[0]
+
+
+def _closest_on_triangles(P, A, B, C):
+    """The closest point of triangle (A[k], B[k], C[k]) to P[k], row by row (Voronoi regions of
+    the triangle, as in Ericson's Real-Time Collision Detection, 5.1.5)."""
+    import numpy as np
+    ab, ac = B - A, C - A
+    ap, bp, cp = P - A, P - B, P - C
+    d1, d2 = (ab * ap).sum(1), (ac * ap).sum(1)
+    d3, d4 = (ab * bp).sum(1), (ac * bp).sum(1)
+    d5, d6 = (ab * cp).sum(1), (ac * cp).sum(1)
+    va, vb, vc = d3 * d6 - d5 * d4, d5 * d2 - d1 * d6, d1 * d4 - d3 * d2
+    with np.errstate(divide="ignore", invalid="ignore"):
+        denom = va + vb + vc
+        Q = A + ab * (vb / denom)[:, None] + ac * (vc / denom)[:, None]              # inside the face
+        regions = (  # later entries take precedence, so the order is Ericson's tests in reverse
+            ((va <= 0) & (d4 - d3 >= 0) & (d5 - d6 >= 0), B + (C - B) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)))[:, None]),
+            ((vb <= 0) & (d2 >= 0) & (d6 <= 0), A + ac * (d2 / (d2 - d6))[:, None]),
+            ((d6 >= 0) & (d5 <= d6), C),
+            ((vc <= 0) & (d1 >= 0) & (d3 <= 0), A + ab * (d1 / (d1 - d3))[:, None]),
+            ((d3 >= 0) & (d4 <= d3), B),
+            ((d1 <= 0) & (d2 <= 0), A),
+        )
+        for mask, point in regions:
+            Q[mask] = point[mask]
+    bad = ~np.isfinite(Q).all(axis=1)          # a degenerate triangle: its nearest corner
+    if bad.any():
+        corners = np.stack([A[bad], B[bad], C[bad]], axis=1)
+        nearest = np.linalg.norm(corners - P[bad][:, None, :], axis=2).argmin(axis=1)
+        Q[bad] = corners[np.arange(len(corners)), nearest]
+    return Q
+
+
+def _surface_distances(P, lattice, tree=None):
+    """Distance from each point to the tessellated surface of ``lattice`` (exact to the tessellation,
+    not to the lattice's sample points). The nearest lattice point bounds each distance from above;
+    every triangle with a lattice point within that bound plus the lattice spacing is tested, which
+    includes the triangle holding the closest point."""
+    import numpy as np
+    from scipy.spatial import cKDTree
+    pts, owners, V, T, spacing = lattice
+    if len(P) == 0 or len(T) == 0:
+        return np.full(len(P), np.inf)
+    tree = tree if tree is not None else cKDTree(pts)
+    upper = tree.query(P)[0]
+    near = tree.query_ball_point(P, upper + spacing + 1e-9)
+    counts = np.fromiter((len(n) for n in near), dtype=np.int64, count=len(near))
+    pair_point = np.repeat(np.arange(len(P), dtype=np.int64), counts)
+    pair_tri = owners[np.concatenate([np.asarray(n, dtype=np.int64) for n in near])]
+    key = np.unique(pair_point * len(T) + pair_tri)
+    pair_point, pair_tri = key // len(T), key % len(T)
+    tri = T[pair_tri]
+    Q = _closest_on_triangles(P[pair_point], V[tri[:, 0]], V[tri[:, 1]], V[tri[:, 2]])
+    out = upper.copy()
+    np.minimum.at(out, pair_point, np.linalg.norm(Q - P[pair_point], axis=1))
+    return out
+
+
+def window_clearances(a, b, windows: Dict[str, Sequence[float]], tol: Optional[float] = None,
+                      step: Optional[float] = None) -> Dict[str, Any]:
+    """Minimum surface-to-surface distance inside each window box (x0,y0,z0,x1,y1,z1), both ways.
+
+    ``tol`` is the tessellation tolerance (default: A's diagonal / 2000) and ``step`` the lattice
+    spacing (default: 20 times ``tol``)."""
     import numpy as np
     from scipy.spatial import cKDTree
 
     bb = a.bounding_box()
     diag = math.sqrt(bb.size.X ** 2 + bb.size.Y ** 2 + bb.size.Z ** 2)
     tol = tol or diag / 2000.0
-    A, B = _points(a, tol), _points(b, tol)   # surface lattices, both bodies
+    A, B = _points(a, tol, step), _points(b, tol, step)   # surface lattices, both bodies
     out: Dict[str, Any] = {}
     for name, box in windows.items():
         lo, hi = np.array(box[:3], dtype=float), np.array(box[3:], dtype=float)
@@ -120,6 +187,44 @@ def window_clearances(a, b, windows: Dict[str, Sequence[float]], tol: Optional[f
         out[name] = {"min_mm": float(min(d_ab.min(), d_ba.min())), "p05_mm": float(np.percentile(np.concatenate([d_ab, d_ba]), 5)),
                      "n_a": int(len(ia)), "n_b": int(len(ib))}
     return out
+
+
+def contacts(a, b, threshold: float = 0.05, tol: Optional[float] = None, step: Optional[float] = None,
+             link_mm: Optional[float] = None) -> List[Dict[str, Any]]:
+    """Where the two bodies come within ``threshold`` of each other.
+
+    The points of A's surface lattice whose distance to B's surface (exact to B's tessellation) is
+    at most ``threshold``, joined into regions: points closer than ``link_mm`` (default: twice A's
+    lattice spacing) belong to one region. Each region gives its centroid, bounding box, smallest
+    distance and point count, largest first. Overlapping volume is ``interference``'s question;
+    this one answers where the surfaces meet."""
+    import numpy as np
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    from scipy.spatial import cKDTree
+
+    bb = a.bounding_box()
+    diag = math.sqrt(bb.size.X ** 2 + bb.size.Y ** 2 + bb.size.Z ** 2)
+    tol = tol or diag / 2000.0
+    pts_a, _, _, _, spacing_a = _lattice(a, tol, step)
+    lat_b = _lattice(b, tol, step)
+    tree_b = cKDTree(lat_b[0])
+    # the nearest lattice point of B is at most `spacing` farther than B's surface: prune with it
+    candidates = pts_a[tree_b.query(pts_a)[0] <= threshold + lat_b[4]]
+    dist = _surface_distances(candidates, lat_b, tree_b)
+    close, dist = candidates[dist <= threshold], dist[dist <= threshold]
+    if len(close) == 0:
+        return []
+    link = link_mm or 2.0 * max(spacing_a, 1e-6)
+    pairs = cKDTree(close).query_pairs(link, output_type="ndarray")
+    graph = coo_matrix((np.ones(len(pairs)), (pairs[:, 0], pairs[:, 1])), shape=(len(close), len(close)))
+    n_regions, label = connected_components(graph, directed=False)
+    out = []
+    for k in range(n_regions):
+        pts, d = close[label == k], dist[label == k]
+        out.append({"centroid": [float(v) for v in pts.mean(axis=0)], "min": [float(v) for v in pts.min(axis=0)],
+                    "max": [float(v) for v in pts.max(axis=0)], "min_mm": float(d.min()), "points": int(len(pts))})
+    return sorted(out, key=lambda r: -r["points"])
 
 
 DEFAULT_TOL_MM = 0.05
@@ -176,7 +281,8 @@ def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
         offset=(0, 0, 0), spin_deg=0.0, spin_axis="z", transform: Optional[Sequence[Sequence[float]]] = None,
         windows: Optional[Dict[str, Sequence[float]]] = None,
         sweep_axis: Optional[str] = None, sweep_travel: float = 10.0, sweep_steps: int = 10,
-        sample_step: Optional[float] = None, out_dir: Optional[Path] = None) -> Dict[str, Any]:
+        sample_step: Optional[float] = None, contact_mm: Optional[float] = 0.05,
+        out_dir: Optional[Path] = None) -> Dict[str, Any]:
     from agentcad.probe import load_shape
 
     a_defines, b_defines = _assembly_frame(a_source, a_defines), _assembly_frame(b_source, b_defines)
@@ -193,9 +299,15 @@ def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
     }
     if windows:
         try:
-            result["windows"] = window_clearances(a, b, windows, tol=sample_step)
+            result["windows"] = window_clearances(a, b, windows, step=sample_step)
         except ImportError as e:
             result["windows_error"] = f"scipy unavailable: {e}"
+    if contact_mm is not None:
+        try:
+            result["contact_mm"] = float(contact_mm)
+            result["contacts"] = contacts(a, b, threshold=contact_mm, step=sample_step)
+        except ImportError as e:
+            result["contacts_error"] = f"scipy unavailable: {e}"
     if sweep_axis:
         result["insertion"] = insertion_sweep(a, b, sweep_axis, sweep_travel, steps=sweep_steps)
     if out_dir is not None:

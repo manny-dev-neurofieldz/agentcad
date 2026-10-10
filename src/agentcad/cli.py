@@ -976,8 +976,19 @@ def cmd_fit(args):
                      offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
                      sweep_axis=args.sweep, sweep_travel=args.travel,
                      out_dir=Path(args.output_dir) if args.output_dir else None,
-                     sweep_steps=args.sweep_steps, sample_step=args.step)
+                     sweep_steps=args.sweep_steps, sample_step=args.step,
+                     contact_mm=None if args.contact_mm < 0 else args.contact_mm)
     print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
+    if "contacts" in res:
+        regions = res["contacts"]
+        print(f"  contacts within {res['contact_mm']:.3g} mm: {len(regions) or 'none'}"
+              + (" region(s)" if regions else ""))
+        for r in regions[:8]:
+            c, lo, hi = r["centroid"], r["min"], r["max"]
+            print(f"    at ({c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f}), box ({lo[0]:.2f}, {lo[1]:.2f}, {lo[2]:.2f})"
+                  f" to ({hi[0]:.2f}, {hi[1]:.2f}, {hi[2]:.2f}), closest {r['min_mm']:.3g} mm")
+        if len(regions) > 8:
+            print(f"    ... {len(regions) - 8} more in fit.json")
     for name, w in (res.get("windows") or {}).items():
         if "min_mm" in w:
             print(f"  window {name}: min {w['min_mm']:.4g} mm (p05 {w['p05_mm']:.4g})")
@@ -1252,7 +1263,11 @@ def _register_compare_fit(sub, groups):
     p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
     p_fit.add_argument("--sweep-steps", type=int, default=10, help="Positions along the insertion sweep (default 10)")
     p_fit.add_argument("--step", type=float, default=None,
-                       help="Surface sampling spacing for window clearances in mm (default: part diagonal / 2000)")
+                       help="Surface sampling spacing in mm for window clearances and contacts "
+                            "(default: part A's diagonal / 100)")
+    p_fit.add_argument("--contact-mm", type=float, default=0.05,
+                       help="Report where the surfaces come within this distance, as regions "
+                            "(default 0.05; a negative value skips it)")
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
     p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
