@@ -205,27 +205,14 @@ def _render_pair(a, b, out_dir: Path) -> Dict[str, str]:
 
 
 def load_mates(project_dir: Path) -> Dict[str, Any]:
-    """The [mates] table of a project's agentcad.toml, job.toml or part.toml (or a file path):
-    name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, parts: [a, b] or counterpart}.
+    """The raw [mates] table of a project's agentcad.toml, job.toml or part.toml (or a file path):
+    name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, parts: [a, b] or counterpart, and any datums}.
 
     ``parts`` names both bodies of the mate (a job toml lists every pair of an assembly);
-    ``counterpart`` alone is enough in a part.toml, where the owner is the part itself."""
-    try:
-        import tomllib
-    except ImportError:
-        try:
-            import tomli as tomllib  # type: ignore
-        except ImportError:
-            return {}
-    given = Path(project_dir)
-    candidates = [given] if given.is_file() else [given / n for n in ("agentcad.toml", "job.toml", "part.toml")]
-    path = next((c for c in candidates if c.exists()), None)
-    if path is None:
-        print(f"agentcad fit: no agentcad.toml, job.toml or part.toml under {given}; no mates read", file=sys.stderr)
-        return {}
-    with open(path, "rb") as f:
-        data = tomllib.load(f)
-    return dict(data.get("mates") or {})
+    ``counterpart`` alone is enough in a part.toml, where the owner is the part itself.
+    ``agentcad.mates`` holds the one definition; this keeps the raw form for callers that need it."""
+    from agentcad.mates import read_table
+    return read_table(project_dir)
 
 
 def write_json(data: Dict[str, Any], path: Path) -> Path:
