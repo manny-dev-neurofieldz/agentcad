@@ -37,9 +37,14 @@ def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
     path = Path(path)
     if bgcode.is_bgcode(path):
         return dict(bgcode.read(path).metadata.get("slicer_metadata", {}))
-    out: Dict[str, str] = {}
+    return config_from_text(path.read_text(encoding="utf-8", errors="replace"))
+
+
+def _comments(text: str):
+    """(key, value, state) of every ``; key = value`` comment in plain G-code text. ``state`` is None before any
+    configuration block, True inside one and False after it; the block's own begin and end lines are not yielded."""
     in_block = None
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in text.splitlines():
         if not line.startswith(";") or " = " not in line:
             continue
         k, v = line[1:].split(" = ", 1)
@@ -47,9 +52,30 @@ def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
         if k.endswith("_config") and v in ("begin", "end"):
             in_block = v == "begin"
             continue
-        if in_block is None or in_block:
-            out[k] = v
-    return out
+        yield k, v, in_block
+
+
+def config_from_text(text: str, whole: bool = False) -> Dict[str, str]:
+    """Every ``; key = value`` comment of plain G-code text, up to the end of the configuration block.
+
+    Lines before the block count too: a slicer writes its statistics (filament used, estimated printing time)
+    there, and a file without a block is all comments. Telling statistics from settings is the caller's job
+    (a setting's name has no spaces). Nothing after the block's end is read unless ``whole`` is set, which
+    reads the statistics a file writes after its block."""
+    return {k: v for k, v, state in _comments(text) if whole or state is None or state}
+
+
+def config_block(text: str) -> Optional[Dict[str, str]]:
+    """The settings inside the configuration block of plain G-code text, and nothing else; None when the text
+    carries no block."""
+    block: Dict[str, str] = {}
+    seen = False
+    for k, v, state in _comments(text):
+        if state is not None:
+            seen = True
+        if state:
+            block[k] = v
+    return block if seen else None
 
 
 def load_intent(path: Union[str, Path]) -> Dict[str, Any]:
