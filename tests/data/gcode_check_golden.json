@@ -1,0 +1,38 @@
+[
+  {
+    "key": "layer_height",
+    "severity": "ok",
+    "found": "0.2",
+    "intended": "0.2",
+    "why": "",
+    "source": "intent.toml [slice]",
+    "sentence": "layer_height = 0.2, as intent.toml [slice] asks."
+  },
+  {
+    "key": "temperature",
+    "severity": "warning",
+    "found": "280",
+    "intended": "between 270 and 275",
+    "why": "layer bond",
+    "source": "intent.toml [slice]",
+    "sentence": "temperature is 280 in the file; intent.toml [slice] asks for between 270 and 275. Why: layer bond. Fix: re-load the project file in the slicer and re-slice; a preset selected afterwards can override a project's settings."
+  },
+  {
+    "key": "support_material_buildplate_only",
+    "severity": "error",
+    "found": "0",
+    "intended": "1",
+    "why": "supports must not grow inside the bores",
+    "source": "intent.toml [slice]",
+    "sentence": "support_material_buildplate_only is 0 in the file; intent.toml [slice] asks for 1. Why: supports must not grow inside the bores. Fix: re-load the project file in the slicer and re-slice; a preset selected afterwards can override a project's settings."
+  },
+  {
+    "key": "brim_width",
+    "severity": "warning",
+    "found": null,
+    "intended": "5",
+    "why": "",
+    "source": "intent.toml [slice]",
+    "sentence": "brim_width is not in the file's configuration; intent.toml [slice] asks for 5. Fix: check the slicer version writes this setting, or drop it from the intent."
+  }
+]

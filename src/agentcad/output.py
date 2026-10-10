@@ -40,6 +40,9 @@ class DesignVariant:
         self.source_path = source_path
         self.renders: Dict[str, Path] = {}
         self.meshes: List[MeshRef] = []
+        #: The variant's findings as dicts (Finding.to_dict): None when it was never judged,
+        #: an empty list when it was judged and nothing was found.
+        self.findings: Optional[List[Dict[str, Any]]] = None
 
     @property
     def stl_path(self) -> Optional[Path]:
