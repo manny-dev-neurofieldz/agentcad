@@ -81,3 +81,11 @@ def test_pose_without_key_lines_says_the_spin_is_free():
     b = mates.parse("b", {"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}})
     _, notes = mates.pose_from_datums(a, b)
     assert any("spin" in n for n in notes) and any("along the axis" in n for n in notes)
+
+
+def test_map_transform_turns_then_shifts():
+    m = mates.map_transform("z", 90, (10, 0, 0))
+    p = _apply(m, (1, 0, 0))
+    assert math.isclose(p[0], 10, abs_tol=1e-9) and math.isclose(p[1], 1, abs_tol=1e-9)
+    with pytest.raises(mates.MateError, match="axis must be"):
+        mates.map_transform("w")

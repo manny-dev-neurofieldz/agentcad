@@ -194,3 +194,16 @@ def pose_from_datums(a: Mate, b: Mate) -> Tuple[List[List[float]], List[str]]:
         notes.append("no key line on both sides: the spin about the axis is free (a fixed choice was made)")
     matrix = [rot[0] + [t[0]], rot[1] + [t[1]], rot[2] + [t[2]], [0.0, 0.0, 0.0, 1.0]]
     return matrix, notes
+
+
+def map_transform(axis: str = "z", spin_deg: float = 0.0, offset: Sequence[float] = (0.0, 0.0, 0.0)) -> List[List[float]]:
+    """The 4x4 transform of ``fit --map``: a rotation of ``spin_deg`` about the named axis,
+    then a translation by ``offset`` (the same order ``fit``'s offset and spin use)."""
+    c, s = math.cos(math.radians(spin_deg)), math.sin(math.radians(spin_deg))
+    rot = {"x": [[1, 0, 0], [0, c, -s], [0, s, c]],
+           "y": [[c, 0, s], [0, 1, 0], [-s, 0, c]],
+           "z": [[c, -s, 0], [s, c, 0], [0, 0, 1]]}.get(axis.lower())
+    if rot is None:
+        raise MateError(f"--map axis must be x, y or z, got {axis!r}")
+    ox, oy, oz = (float(v) for v in offset)
+    return [rot[0] + [ox], rot[1] + [oy], rot[2] + [oz], [0.0, 0.0, 0.0, 1.0]]
