@@ -1,8 +1,9 @@
 """The output-target contract, for every registered target.
 
-A target declares its capabilities; each declared one works on a small fixture, and each it does
-not declare raises NotSupported naming the target. A stub with no capabilities registers and is
-reported as such. The generic target's plate keeps every placement through a round trip: an
+A target declares its capabilities; each declared one works on a small fixture (tests/targetfixtures.py
+holds one builder per target, and a registered target with capabilities and no builder fails the suite),
+and each it does not declare raises NotSupported naming the target. A stub with no capabilities registers
+and is reported as such. The generic target's plate keeps every placement through a round trip: an
 asymmetric turn and offset come back as written, so a transposed matrix cannot pass.
 """
 
@@ -12,8 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from agentcad import targets
+from agentcad import printers, targets
 from agentcad.targets import CAPABILITIES, Job, JobPart, NotSupported, OutputTarget
+from tests import targetfixtures
 
 
 def _box_stl(path: Path, size=(10.0, 4.0, 2.0)) -> Path:
@@ -41,8 +43,9 @@ def job(tmp_path) -> Job:
     return Job(name="plate", parts=[JobPart("bar", stl, copies=1, transform=_turn_z(30.0, (100.0, 60.0, 0.0)))])
 
 
-@pytest.mark.parametrize("name", targets.list_targets())
-def test_every_capability_is_declared_and_kept(name, job, tmp_path):
+def exercise(name, job, tmp_path):
+    """Every capability the target declares, run on its fixture, and every one it does not declare, refused by
+    name. A target that declares a capability and has no fixture raises MissingFixture."""
     target = targets.get_target(name)
     assert isinstance(target, OutputTarget) and target.name == name
     assert set(target.capabilities) <= set(CAPABILITIES)
@@ -55,9 +58,81 @@ def test_every_capability_is_declared_and_kept(name, job, tmp_path):
         if capability not in target.capabilities:
             with pytest.raises(NotSupported, match=name):
                 call()
+    if not target.capabilities:
+        return
+    case = targetfixtures.case_for(name, tmp_path)
     if "write_job" in target.capabilities:
+        job.options = dict(case.options)
         written = target.write_job(job, tmp_path / name)
-        assert written and all(Path(p).exists() for p in written)
+        assert written and all(Path(p).is_file() and Path(p).stat().st_size > 0 for p in written)
+        if case.readback:
+            kept = [p for p in written if str(p).endswith(case.readback)]
+            assert kept and target.read_settings(kept[0]), "what the target wrote, the target reads back"
+    if "read_output" in target.capabilities:
+        read = target.read_settings(case.sliced)
+        assert read and all(isinstance(k, str) and isinstance(v, str) for k, v in read.items())
+        assert {k: read.get(k) for k in case.expect} == case.expect
+    if "map_intent" in target.capabilities:
+        mapped, notes = target.map_intent(dict(case.intent))
+        assert isinstance(mapped, dict) and all(isinstance(n, str) for n in notes)
+        assert target.map_intent(dict(case.intent)) == (mapped, notes), "the same intent maps the same way"
+        assert target.map_intent({}) == ({}, []), "no stated intent maps to nothing"
+    if "printer_config" in target.capabilities:
+        printer = target.printer(case.config)
+        assert isinstance(printer, printers.Printer) and all(v > 0 for v in printer.build_volume)
+    if "slice" in target.capabilities:
+        assert Path(target.slice(case.project, tmp_path / "sliced")).is_file()
+
+
+@pytest.mark.parametrize("name", targets.list_targets())
+def test_every_capability_is_declared_and_kept(name, job, tmp_path):
+    exercise(name, job, tmp_path)
+
+
+def test_a_registered_target_with_capabilities_and_no_fixture_fails_the_suite(job, tmp_path):
+    class Bare(OutputTarget):
+        name = "bare"
+        capabilities = frozenset({"map_intent"})
+
+        def map_intent(self, intent):
+            return {}, []
+
+    targets.register_target("bare", Bare)
+    try:
+        assert "bare" in targets.list_targets() and "bare" not in targetfixtures.BUILDERS
+        with pytest.raises(targetfixtures.MissingFixture, match="bare"):
+            exercise("bare", job, tmp_path)
+        targetfixtures.BUILDERS["bare"] = lambda tmp: targetfixtures.TargetCase(intent={"layer_height": 0.2})
+        exercise("bare", job, tmp_path)                    # with a builder it passes: the check discriminates
+    finally:
+        targets.unregister_target("bare")
+        targetfixtures.BUILDERS.pop("bare", None)
+
+
+def test_the_suite_runs_slice_for_a_target_that_declares_it_and_fails_one_that_returns_nothing(job, tmp_path):
+    """No registered target slices yet; the suite must already exercise the capability when one does."""
+    class Slicer(OutputTarget):
+        name = "slicer"
+        capabilities = frozenset({"slice"})
+        produce = True
+
+        def slice(self, project_file, out_dir):
+            out = Path(out_dir) / "out.gcode"
+            if self.produce:
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text("G1 X1\n")
+            return out
+
+    targets.register_target("slicer", Slicer)
+    targetfixtures.BUILDERS["slicer"] = lambda tmp: targetfixtures.TargetCase(project=tmp / "project.3mf")
+    try:
+        exercise("slicer", job, tmp_path)                       # a file comes back: it passes
+        Slicer.produce = False
+        with pytest.raises(AssertionError):
+            exercise("slicer", job, tmp_path / "again")         # a path to nothing: it fails
+    finally:
+        targets.unregister_target("slicer")
+        targetfixtures.BUILDERS.pop("slicer", None)
 
 
 def test_a_stub_with_no_capabilities_registers_and_says_so(tmp_path):
@@ -91,6 +166,17 @@ def test_the_generic_plate_keeps_an_asymmetric_placement(job, tmp_path):
     corner = [sum(got[i][j] * v for j, v in enumerate((10.0, 0.0, 0.0, 1.0))) for i in range(3)]
     assert corner[0] == pytest.approx(100 + 10 * math.cos(math.radians(30)), abs=1e-6)
     assert corner[1] == pytest.approx(60 + 10 * math.sin(math.radians(30)), abs=1e-6)
+
+
+def test_copies_of_a_turned_part_are_spaced_by_the_width_it_has_on_the_bed(tmp_path):
+    """Copies sit one posed width and a gap apart along the bed's x: a part turned a quarter is 4 mm wide
+    there, not the 10 mm its mesh is long, and straight it is 10."""
+    from agentcad.targets.generic import instances
+    stl = _box_stl(tmp_path / "bar.stl")                          # 10 x 4 x 2
+    turned = instances(Job("p", [JobPart("bar", stl, copies=2, transform=_turn_z(90.0, (50.0, 50.0, 0.0)))]))
+    straight = instances(Job("p", [JobPart("bar", stl, copies=2, transform=_turn_z(0.0, (50.0, 50.0, 0.0)))]))
+    assert turned[1]["transform"][0][3] - turned[0]["transform"][0][3] == pytest.approx(4.0 + 5.0)
+    assert straight[1]["transform"][0][3] - straight[0]["transform"][0][3] == pytest.approx(10.0 + 5.0)
 
 
 def test_the_generic_target_reads_a_plain_gcode_configuration(tmp_path):

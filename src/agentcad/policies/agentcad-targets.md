@@ -17,6 +17,7 @@ A finished part reaches a machine through a tool: a slicer project, a plate file
 
 **2 The Registry**
 - How are the registered targets and their capabilities listed?
+- Which targets are registered today?
 
 **3 The Generic Target**
 - What does the generic target write and read?
@@ -55,9 +56,11 @@ A capability a target does not declare raises an error that names the target and
 
 `agentcad targets` lists every registered target with its version (when the tool reports one), whether it is available here, and its capabilities; `--json` prints the same as data.
 
+Registered today: `generic`, a plain plate any slicer opens (section 3), and `prusaslicer`, a PrusaSlicer project from a base configuration the user supplies (`agentcad-prusaslicer`). Neither slices; a target that does declares `slice`.
+
 ## 3 The Generic Target
 
-`generic` writes and reads without any slicer installed. Its job writes two files: a core 3MF plate (one object per part, one build item per copy, copies after the first laid out along x with a 5 mm gap) that any slicer opens, and a placement sidecar. It writes no slicer settings. It reads the settings a sliced file carries, plain or binary G-code, through the same reader `agentcad gcode check` uses. The plate is written deterministically: the same job writes the same bytes.
+`generic` writes and reads without any slicer installed. Its job writes two files: a core 3MF plate (one object per part, one build item per copy, copies after the first laid out along the bed's x, each a part's width as posed plus a 5 mm gap) that any slicer opens, and a placement sidecar. It writes no slicer settings. It reads the settings a sliced file carries, plain or binary G-code, through the same reader `agentcad gcode check` uses. The plate is written deterministically: the same job writes the same bytes.
 
 ### 3.1 Placement
 
@@ -67,10 +70,14 @@ A 3MF build item stores the same placement as 12 numbers in the row-vector conve
 
 ## 4 Adding a Target
 
-A target subclasses the target base class, sets its name and the capabilities it declares, implements exactly those, and registers under a short lower-case name. The target contract test runs over every registered target: each declared capability must work on a small fixture, and each undeclared one must raise the error that names the target. A target that cannot work here (its tool is not installed) still registers and reports itself as not available.
+A target subclasses the target base class, sets its name and the capabilities it declares, implements exactly those, and registers under a short lower-case name. The target contract test runs over every registered target: each declared capability must work on a small fixture, and each undeclared one must raise the error that names the target. The fixture is part of the target: a target that declares a capability and has no entry in the fixtures the test reads (what a job's options, a sliced file and a printer configuration look like for it) fails the suite. A target that cannot work here (its tool is not installed) still registers and reports itself as not available.
+
+A target that needs an input the job does not hold names it in `job_options` (the slicer targets name `base_config`); the command line passes it in the job's options and refuses one the target does not name. An input that is missing or unusable raises an error whose message says what to change, which commands print as one line.
 
 ## 5 Integration with Other Policies
 
+- `agentcad-prusaslicer`: the second target, a PrusaSlicer project.
+- `agentcad-print-intent`: the intent a target maps and `agentcad stage`, which runs a target.
 - `agentcad-gcode`: reading what a slicer produced from a target's job.
 - `agentcad-qc`: judging a part before it is staged.
 - `agentcad-policies`: how this policy is found and read.

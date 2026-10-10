@@ -14,7 +14,7 @@ import hashlib
 import json
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 from xml.etree import ElementTree as ET
 
 from agentcad.targets import Job, OutputTarget
@@ -54,15 +54,23 @@ def _mesh(stl: Path):
     return points, index.reshape(-1, 3)
 
 
-def instances(job: Job) -> List[Dict[str, Any]]:
-    """Every copy of every part with its transform: copies after the first sit along +x, each a
-    part's width plus a gap from the last."""
+def mesh_of(stl: Path):
+    """An STL as (unique vertices, triangles as indices into them): what a 3MF stores."""
+    return _mesh(stl)
+
+
+def instances(job: Job, meshes: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """Every copy of every part with its transform: copies after the first sit along +x, each the
+    part's width as posed (its extent along the bed's x) plus a gap from the last. ``meshes`` maps a
+    part's name to its ``mesh_of`` result when the caller has loaded them already."""
+    import numpy as np
     out = []
     for part in job.parts:
         width = 0.0
         if part.copies > 1:
-            points, _ = _mesh(part.stl)
-            width = float(points[:, 0].max() - points[:, 0].min())
+            points = (meshes[part.name] if meshes and part.name in meshes else _mesh(part.stl))[0]
+            across = points @ np.asarray(part.transform, dtype=float)[0, :3]      # each vertex's bed x, less the offset
+            width = float(across.max() - across.min())
         for k in range(max(1, int(part.copies))):
             T = [list(map(float, row)) for row in part.transform]
             T[0][3] += k * (width + _GAP_MM)
@@ -71,9 +79,11 @@ def instances(job: Job) -> List[Dict[str, Any]]:
     return out
 
 
-def placement(job: Job, target: str) -> Dict[str, Any]:
+def placement(job: Job, target: str, insts: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """The placement sidecar (schema agentcad.placement/2); ``insts`` are the job's ``instances`` when the
+    caller has them already."""
     return {"schema": "agentcad.placement/2", "job": job.name, "convention": CONVENTION,
-            "instances": [dict(inst, target=target) for inst in instances(job)]}
+            "instances": [dict(inst, target=target) for inst in (insts if insts is not None else instances(job))]}
 
 
 def write_plate(job: Job, path: Path) -> Path:

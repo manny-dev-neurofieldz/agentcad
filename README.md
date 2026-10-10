@@ -250,6 +250,27 @@ both surfaces with a lattice, so a window in the middle of a flat face still
 reads the gap; a mate is checked only on its own pair. The result is recorded
 in the project's print manifest keyed by the two parts' defines.
 
+## Staging for a slicer
+
+`agentcad stage` writes a finalized project's parts, posed for printing and placed on the bed, for an output
+target, and `agentcad targets` lists the targets and what each can do. `generic` writes a plain 3MF plate any
+slicer opens, with a placement sidecar. `prusaslicer` writes a PrusaSlicer project: the plate with a complete
+configuration, the project's `[print]` intent mapped onto it, and its `[slice.prusaslicer]` overrides over that.
+
+```bash
+agentcad stage my_part --target prusaslicer --base-config my_printer.ini
+```
+
+The configuration a PrusaSlicer project starts from is yours to supply, since any copy shipped here would be
+somebody's printer: a flat `.ini` exported from PrusaSlicer, a project 3MF, or a `.gcode` or `.bgcode` it sliced.
+Pass it with `--base-config`, or name it once under `[prusaslicer]` in `targets.toml` in the agentcad user config
+folder. It stays out of projects, and the credentials and `post_process` it holds are never written. From
+`[print]`, `layer_height`, `walls`, `infill_percent` and `supports` map to `layer_height`, `perimeters`,
+`fill_density` and the support switches; `stage` lists every other key as not mapped, with the reason, and
+reports each place a native value disagrees with the intent. A key the base configuration does not carry is
+refused by name, and so is a placement that leaves the bed, before a file is written. The written 3MF reads
+back through `agentcad gcode check`. `agentcad policy read prusaslicer` has the rest.
+
 ## Reading sliced files
 
 A design is not finished when it is exported: the slicer decides where supports go, which settings
@@ -292,6 +313,8 @@ support_material_buildplate_only = { value = 1, why = "supports must not grow in
 ```bash
 agentcad gcode check part.bgcode --project my_part/      # or --intent job.toml; --json for the findings
 ```
+
+The file may also be a PrusaSlicer project (3MF): `gcode check` compares the configuration the project carries.
 
 Each finding is a sentence: the setting, the value in the file, the value asked for, why it matters, and
 the usual fix. A differing value is an error (exit status 1); a value outside a range, or a setting the file
@@ -485,6 +508,7 @@ The set covers every command and the practice around them:
 | `probe-recover`, `probe-inspect`, `probe-construction` | `probe section`, `sketches`; `rays`, `knobs`, `inventory`; `fillet`, `draft` |
 | `compare`, `fit` | `compare`; `fit` and `[mates]` |
 | `qc`, `printers`, `targets`, `print-intent` | `qc`, `printers`, `targets`, `stage` |
+| `prusaslicer` | the PrusaSlicer target: base configuration, mapping, project file, bed check |
 | `gcode` | every `gcode` command |
 | `printer-hosts` | `printer list`, `files`, `get`, `status`; read-only by contract |
 | `policies` | `policy list`, `navigate`, `read`; the format |

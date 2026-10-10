@@ -14,6 +14,7 @@ The sliced file is the last artifact before plastic and the only one that record
 **1 What the Commands Read**
 - Which files do the gcode commands accept?
 - What does verification of a binary file check?
+- Which command also accepts a project file, and what does it read from it?
 
 **2 Decoding and Inspecting**
 - How is a binary file turned into plain G-code?
@@ -62,7 +63,7 @@ The sliced file is the last artifact before plastic and the only one that record
 
 ## 1 What the Commands Read
 
-Every gcode command accepts a Prusa binary G-code file (`.bgcode`) or a plain G-code file; a plain file passes through decoding unchanged, so the same command works on either.
+Every gcode command accepts a Prusa binary G-code file (`.bgcode`) or a plain G-code file; a plain file passes through decoding unchanged, so the same command works on either. `agentcad gcode check` also accepts a PrusaSlicer project (a 3MF, told by its first bytes): it checks the configuration the project carries, as it checks a sliced file's. A 3MF written by another tool carries none, and the command says so. The other commands read toolpaths, which a project does not hold.
 
 A binary file is a sequence of blocks (file metadata, printer metadata, thumbnails, print metadata, slicer metadata, G-code), each with a checksum. The checksums are verified on every read; `--no-verify` skips them and says so on stderr. Use it only to inspect a file already known to be damaged.
 
