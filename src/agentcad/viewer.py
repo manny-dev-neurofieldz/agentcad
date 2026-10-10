@@ -63,6 +63,8 @@ def generate_html(project: "DesignProject", embed_mb: Optional[float] = None, cd
     page = Page(project.name, cdn=cdn)
     for key, value in project.metadata.items():
         page.metadata(key, value)
+    if getattr(project, "banner", None):
+        page.banner(project.banner)
 
     for index, v in enumerate(project.variants):
         vb = page.variant(v.name)

@@ -92,6 +92,7 @@ Its warnings each name a defect a render does not show:
 - short edges, with the shortest length: slivers that break fillets and slicers;
 - the kernel reports the shape invalid;
 - twisted faces: a free-form face whose normal turns sharply along a ruling (a twisted loft);
+- nine faces in ten or more are BSpline surfaces: the representation hides analytic types, so a census of zero cylinders or cones is not evidence the part has none (`agentcad-probe-inspect`, section 3.1);
 - a measurement that failed, named by its key;
 - the source changed but nothing measurable did: the edit did not land.
 

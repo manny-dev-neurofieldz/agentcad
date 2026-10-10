@@ -310,6 +310,12 @@ class Page:
         self._metadata = Table(css_class="meta")
         self._variants: List[VariantBuilder] = []
         self._cdn = cdn
+        self._banner: Optional[str] = None
+
+    def banner(self, text: str) -> "Page":
+        """A line at the top of the page, above every variant (a QC gate that held a manifest back)."""
+        self._banner = text
+        return self
 
     def metadata(self, key: str, value: Any) -> "Page":
         self._metadata.row(key, value)
@@ -357,6 +363,7 @@ class Page:
 
         return page_tmpl.substitute(
             project_name=_esc(self.title),
+            banner_html=(f'<div class="banner">{_esc(self._banner)}</div>' if self._banner else ""),
             metadata_rows=self._metadata.build(),
             variants_html=variants_html,
             threejs_scripts=self._load_vendor_scripts(),

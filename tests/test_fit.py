@@ -372,3 +372,10 @@ def test_an_unknown_overlap_is_never_a_pass_and_a_mesh_part_is_refused(tmp_path,
     scad.write_text("cube(10);\n")
     assert _fit_cli([scad, scad], monkeypatch) == 2
     assert "STEP or build123d" in capsys.readouterr().err
+
+
+def test_an_offset_may_start_with_a_minus_sign(box, monkeypatch, capsys):
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})
+    cli.main(["fit", str(box), str(box), "--offset", "-12.5,0,0", "--contact-mm", "-1"])
+    assert "clearance 2.5 mm" in capsys.readouterr().out

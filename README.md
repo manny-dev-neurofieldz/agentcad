@@ -122,6 +122,8 @@ the check: the gallery is a test of the tool on every engine.
 ```bash
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
+agentcad probe rays part.py --line -30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
+agentcad probe knobs part.py --knob width=2 --knob wall=10%          # which parameters move the part, which do nothing
 agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
 ```
 
@@ -130,6 +132,81 @@ surface points) are the two exchange formats; every probe writes them and
 `compare` reads them. A cap an instrument applies is printed with its
 value. A cylindrical face reports its axis, never its centroid. Meshes are
 compared in the sampled compartment only, and the output says so.
+
+### Compare detail
+
+`compare` reports the deviation both ways (each sampled point's distance to the nearest sampled point of
+the other part): p50, p95 and max as before, and now the `rms`, and where the worst 5 percent lie as
+`worst5` (with every point tied with the last of them, so equal deviations are never split by sort
+order): the number of points and the smallest distance among them, their bounding box, and clusters.
+The clustering rule is stated in the record (`method`) and printed: the worst points are binned into cells
+of one twentieth of the bounding-box diagonal, cells that touch form a cluster, and each cluster gives
+the mean of its points, its size, its worst distance and its box (the five worst are kept). With
+`--window NAME=x0,y0,x1,y1` and `-o DIR`, each window also gets an overlay image zoomed to it
+(`overlay_<plane>_<window>.png`, listed under the window in the record), the two sections drawn over each
+other.
+
+```bash
+agentcad compare orig.step cand.py --planes z=mid --window hole=-14,-4,-4,4 -o cmp/
+```
+
+### Rays
+
+`probe rays` measures what a render cannot: wall thickness, bore depth, gaps.
+A line is `--line START:DIRECTION[:LEN]` (`x,y,z:dx,dy,dz`); a fan is
+`--fan POINT:AXIS:STEP[:FROM[:TO]]`, lines that leave a point on an axis, square
+to it, every STEP degrees (right-hand rule about the axis; 0 degrees is the
+world axis most nearly square to it). Each line reports its intervals of
+material and void with entry, exit and length along the line, and flags an
+interval cut short by the end of the range (`clipped_start`, `clipped_end`,
+never a thickness) and a void with material on both sides (`enclosed`). A
+build123d program or STEP file is read exactly (face crossings found exactly,
+midpoints classified against the solid, so a tangent opens no gap and a line in a
+face counts as material); an STL is read to its tessellation, with a fixed tie
+rule so a line through a vertex or along an edge is counted once. The record
+(`-o`, schema `agentcad.probe.rays/1`) says which kind it was. For checks built on rays,
+`agentcad.rays.ray_intervals(target, origin, direction)` is the library entry
+point (`load_target` builds the target from a program, STEP or STL).
+
+### Sections of a mesh
+
+`probe section` also takes an STL. The loops come from intersecting each
+triangle with the plane, joined end to end; collinear segments merge, so a flat
+face is one edge and a polylined circle is a run of short ones that `fit` reads
+back as a circle. The records have the keys of the exact loops (`kind` `mesh`
+at the top says whose section it is), and each loop and plane adds `extents`:
+the radial extent (nearest and farthest distance from an axis) and the axial
+extent (lowest and highest position along it). `--axis x|y|z` names the axis
+(default each plane's own normal) and `--axis-center A,B` where it passes
+(default the middle of the bounding box):
+
+```bash
+agentcad probe section turned.stl --planes y=0 --axis z    # a profile through the axis: radii and height
+```
+
+A plane through vertices reads as moved a hair toward lower coordinates, and at
+the mesh's lowest coordinate as moved a hair up, so a part standing on z=0 and
+cut at z=0 gives the outline of its bottom face.
+
+### Knobs
+
+`probe knobs` finds out which parameters of a build123d program (`def build(**params)`) reach the geometry.
+Each `--knob NAME=DELTA` (or `NAME=10%`, a share of the base) builds the program at the base plus and minus
+the delta, so a sweep costs one build for the base and two per knob, and says so. Each side reports its change
+in volume, area, bounding-box size and solid count against the base. A knob is `live` when both sides change
+the part, `saturated` when only one does (a clamp, a limit: the record names the side that does nothing),
+`dead` when neither does, `partial` when a side does not build (the error is recorded), `refused` when
+neither does. `-D NAME=VALUE` moves the base first. A dead verdict names the four measures, not a
+certainty: sweep a larger delta and read the program before removing a knob.
+
+### The census says when it cannot see
+
+A body converted to splines reports every face as a BSpline, so its census
+shows no cylinders, cones, spheres or tori and the cylinder list is empty.
+When 90 percent or more of the faces are BSpline, `probe inventory` (the
+`census_notes` field and a warning line) and the iteration tray say the
+representation hides analytic types, so the zeros are read as unknown, not as
+none.
 
 ## Fit and mates
 
