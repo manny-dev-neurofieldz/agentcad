@@ -1,8 +1,8 @@
 """QC: design rules judged before a print, as findings.
 
 A rule's limit comes from layers: the printer's process defaults (``agentcad.printers``), then
-the project's ``[qc]`` table; a feature's own annotation will be the third. Every finding names
-the layer that set its limit. A rule with a limit but no measurement yet is listed as not
+the project's ``[qc]`` table, then a feature's own annotation (``agentcad.annotate``). Every finding
+names the layer that set its limit. A rule with a limit but no measurement yet is listed as not
 measured, never as a finding: QC never fails a part on a number it did not take.
 
 The ``[qc]`` table::
@@ -28,11 +28,19 @@ Measured, on the part's mesh in its print pose:
   limit along the boundary (two edges meeting, a tessellation step) is not the far side of a wall.
   A thin region is then checked through the part, along the inward normal of the faces it lies
   on: thin there too, it is a wall; thick behind, it is a layer cutting a sloped edge (a sliver),
-  counted in the report but not judged. Until a feature annotation names it, a wall finding is
-  unattributed and never more than a warning.
+  counted in the report but not judged. A wall no feature annotation claims is unattributed and
+  never more than a warning.
+* floors: material along z on a grid of vertical lines; a run thinner than the wall limit, inside a
+  thin area (its rim left out), is judged as a wall is.
 * ``max_overhang``: faces turned down further than ``max_overhang_deg`` from vertical, the face
-  on the bed (within one layer of the lowest point) excepted, grouped into regions that share a
-  vertex.
+  on the bed (within one layer of the lowest point) and bridge ceilings excepted, grouped into
+  regions that share a vertex.
+* ``max_bridge``: a ceiling held at both ends along a principal axis is a bridge; its span, against
+  ``max_bridge_mm`` unless the print intent plans supports.
+
+A program's annotations (features with boxes and limits, suppressions with reasons, a print pose)
+attribute findings: a claimed finding names the feature and its declaring line and may be an
+error; suppressions and loosened limits are listed with their reasons.
 """
 
 import math
@@ -44,9 +52,11 @@ from agentcad import printers
 from agentcad.findings import Finding
 
 #: Rules QC measures, with their default severity.
-RULES = {"build_volume": "error", "min_feature": "error", "min_wall": "warning", "max_overhang": "warning"}
+RULES = {"build_volume": "error", "min_feature": "error", "min_wall": "warning", "max_overhang": "warning",
+         "max_bridge": "warning"}
 #: The limit each measured rule reads.
-LIMIT_OF = {"min_feature": "min_feature_mm", "min_wall": "min_wall_mm", "max_overhang": "max_overhang_deg"}
+LIMIT_OF = {"min_feature": "min_feature_mm", "min_wall": "min_wall_mm", "max_overhang": "max_overhang_deg",
+            "max_bridge": "max_bridge_mm"}
 #: At most this many sections per part: a taller part is cut at a coarser pitch, and the report says so.
 MAX_SECTIONS = 400
 SEVERITIES = ("error", "warning", "off")
@@ -97,9 +107,14 @@ def limits(printer: printers.Printer, qs: QCSettings) -> Dict[str, Tuple[float, 
 
 def pose_rotation(pose: Optional[Dict[str, Any]]):
     """The rotation taking the part to its print pose: ``up`` (default +z) onto +z, then
-    ``spin_deg`` about z."""
+    ``spin_deg`` about z; or the rotation itself, as ``matrix`` (3x3, rows)."""
     import numpy as np
     pose = pose or {}
+    if pose.get("matrix") is not None:
+        M = np.array(pose["matrix"], dtype=float)
+        if M.shape != (3, 3) or not np.allclose(M @ M.T, np.eye(3), atol=1e-6) or np.linalg.det(M) < 0:
+            raise ValueError(f"a pose matrix must be a 3x3 rotation, not {pose['matrix']!r}")
+        return M
     up = np.array(pose.get("up", (0.0, 0.0, 1.0)), dtype=float)
     if up.shape != (3,) or not np.linalg.norm(up):
         raise ValueError(f"[qc] pose up must be a non-zero vector [x, y, z], not {pose.get('up')!r}")
@@ -333,9 +348,9 @@ def _material_depth(mesh, samples, limit: float, n: int = 9) -> Tuple[float, flo
 
 # --- overhangs: faces turned down past the limit --------------------------------------------------
 
-def measure_overhang(mesh, limit_deg: float, first_layer: float = 0.2) -> List[Dict[str, Any]]:
-    """Regions of faces turned down further than ``limit_deg`` from vertical (the face on the bed
-    excepted), joined where they share a vertex: area, worst angle and where."""
+def _face_angles(mesh):
+    """Per triangle: twice its area, its angle from vertical (0 a wall, 90 a face looking straight
+    down, negative facing up) and its centroid height."""
     import numpy as np
     tri = mesh.tri
     n = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) * mesh.orient
@@ -343,9 +358,22 @@ def measure_overhang(mesh, limit_deg: float, first_layer: float = 0.2) -> List[D
     ok = area2 > 1e-12
     down = np.zeros(len(tri))
     down[ok] = -n[ok, 2] / area2[ok]                       # 1 for a face looking straight down
-    angle = np.degrees(np.arcsin(np.clip(down, -1.0, 1.0)))   # from vertical: 0 a wall, 90 a ceiling
-    centroid_z = tri[:, :, 2].mean(axis=1)
-    flagged = np.nonzero(ok & (angle > limit_deg + 1e-6) & (centroid_z > float(mesh.lo[2]) + first_layer))[0]
+    angle = np.degrees(np.arcsin(np.clip(down, -1.0, 1.0)))
+    angle[~ok] = -90.0
+    return area2, angle, tri[:, :, 2].mean(axis=1)
+
+
+def measure_overhang(mesh, limit_deg: float, first_layer: float = 0.2, exclude=None) -> List[Dict[str, Any]]:
+    """Regions of faces turned down further than ``limit_deg`` from vertical (the face on the bed,
+    and any face ``exclude`` marks, excepted), joined where they share a vertex: area, worst angle
+    and where."""
+    import numpy as np
+    tri = mesh.tri
+    area2, angle, centroid_z = _face_angles(mesh)
+    keep = (angle > limit_deg + 1e-6) & (centroid_z > float(mesh.lo[2]) + first_layer)
+    if exclude is not None:
+        keep &= ~exclude
+    flagged = np.nonzero(keep)[0]
     if not len(flagged):
         return []
     points, rows = mesh.welded()
@@ -371,6 +399,131 @@ def _clusters_by_vertex(rows, n_points: int):
     return connected_components(graph, directed=False)[1][:m]
 
 
+# --- bridges: ceilings held at both ends ------------------------------------------------------------
+
+#: A face within this many degrees of looking straight down is a ceiling a bridge can span.
+CEILING_DEG = 5.0
+
+
+def _inside(target, mesh, x: float, y: float, z: float) -> bool:
+    """Whether (x, y, z) is in the part's material, read off a vertical line through it."""
+    from agentcad.rays import ray_intervals
+    lo, hi = float(mesh.lo[2]), float(mesh.hi[2])
+    rec = ray_intervals(target, (x, y, lo - 1.0), (0.0, 0.0, 1.0), length=hi - lo + 2.0)
+    return any(iv["kind"] == "material" and iv["entry_point"][2] - 1e-9 <= z <= iv["exit_point"][2] + 1e-9
+               for iv in rec["intervals"])
+
+
+def measure_bridges(mesh, first_layer: float = 0.2) -> Dict[str, Any]:
+    """Ceilings (faces within ``CEILING_DEG`` of looking straight down, the bed excepted), joined
+    where they share a vertex. Along each principal axis of a ceiling's footprint, material just
+    beyond both ends means the ceiling is held there: a ceiling held along an axis is a bridge whose
+    span is its extent along that axis (the shorter, when held along both, as a roof held all round).
+    A ceiling held at one end or none is a cantilever or a floating roof and stays an overhang.
+    Returns the bridges and the mask of the faces they cover."""
+    import numpy as np
+    from agentcad.rays import MeshTarget
+    tri = mesh.tri
+    area2, angle, centroid_z = _face_angles(mesh)
+    flagged = np.nonzero((angle >= 90.0 - CEILING_DEG) & (centroid_z > float(mesh.lo[2]) + first_layer))[0]
+    mask = np.zeros(len(tri), dtype=bool)
+    bridges: List[Dict[str, Any]] = []
+    if not len(flagged):
+        return {"bridges": bridges, "mask": mask}
+    points, rows = mesh.welded()
+    labels = _clusters_by_vertex(rows[flagged], len(points))
+    target = MeshTarget(mesh)
+    step = max(4.0 * float(mesh.tolerance), 0.3)          # beyond the ceiling's edge, and below it
+    for k in np.unique(labels):
+        idx = flagged[labels == k]
+        P = tri[idx].reshape(-1, 3)
+        xy, z = P[:, :2], float(P[:, 2].mean())
+        # principal axes from the footprint's exact second moments (a triangle's integral of x x^T is
+        # A/12 (sum p p^T + (sum p)(sum p)^T)): vertex statistics would tilt with the triangulation
+        T2 = tri[idx][:, :, :2]
+        A = 0.5 * np.abs((T2[:, 1, 0] - T2[:, 0, 0]) * (T2[:, 2, 1] - T2[:, 0, 1])
+                         - (T2[:, 2, 0] - T2[:, 0, 0]) * (T2[:, 1, 1] - T2[:, 0, 1]))
+        if A.sum() <= 1e-12:
+            continue
+        s = T2.sum(axis=1)
+        c = (A[:, None] * s / 3.0).sum(axis=0) / A.sum()
+        M = (A[:, None, None] / 12.0 * (np.einsum("tki,tkj->tij", T2, T2) + np.einsum("ti,tj->tij", s, s))).sum(axis=0)
+        X = xy - c
+        _, V = np.linalg.eigh(M / A.sum() - np.outer(c, c))
+        held = []
+        for axis in (V[:, 0], V[:, 1]):
+            s = X @ axis
+            # material within reach beyond an end holds it there: a fillet between the ceiling and its
+            # support leaves void just beyond the ceiling's edge, the support itself is a little further
+            reach = max(2.0, 0.2 * float(s.max() - s.min()))
+            offsets = np.arange(step, reach + 1e-9, step)
+
+            def holds(edge, sign):
+                return any(_inside(target, mesh, float(p[0]), float(p[1]), z - step)
+                           for p in (c + (edge + sign * d) * axis for d in offsets))
+
+            if holds(s.min(), -1.0) and holds(s.max(), 1.0):
+                held.append((float(s.max() - s.min()), axis))
+        if not held:
+            continue
+        span, axis = min(held, key=lambda h: h[0])
+        across = X @ np.array([-axis[1], axis[0]])
+        mask[idx] = True
+        bridges.append({"span_mm": span, "width_mm": float(across.max() - across.min()),
+                        "direction": [float(axis[0]), float(axis[1])], "at": [float(c[0]), float(c[1]), z],
+                        "area_mm2": float(area2[idx].sum() / 2.0), "faces": int(len(idx)), "uncertainty_mm": step})
+    bridges.sort(key=lambda b: -b["span_mm"])
+    return {"bridges": bridges, "mask": mask}
+
+
+# --- floors: thin across the layers ---------------------------------------------------------------
+
+#: At most this many vertical lines per side of the floor grid; a larger part is sampled coarser.
+FLOOR_GRID = 120
+
+
+def measure_floors(mesh, limit: float) -> Dict[str, Any]:
+    """Material along z on a grid of vertical lines over the part: a run shorter than ``limit`` is a
+    thin floor or roof at that place, which the in-layer width cannot see (each layer of a thin plate
+    is wide). A run at the edge of a thin area (a grid neighbour with no thin run at that height) is
+    left out, so a chamfer or fillet at a floor's rim is not read as the floor. Each thin area gives
+    the median and the least thickness of its interior, where it is and how much it covers."""
+    import numpy as np
+    from agentcad.rays import MeshTarget, ray_intervals
+    lo, hi = np.asarray(mesh.lo, dtype=float), np.asarray(mesh.hi, dtype=float)
+    spacing = max(float(limit), float(max(hi[0] - lo[0], hi[1] - lo[1])) / FLOOR_GRID, 1e-3)
+    xs = np.arange(lo[0] + spacing / 2.0, hi[0], spacing)
+    ys = np.arange(lo[1] + spacing / 2.0, hi[1], spacing)
+    target = MeshTarget(mesh)
+    runs: Dict[Tuple[int, int], List[Tuple[float, float]]] = {}
+    for i, x in enumerate(xs):
+        for j, y in enumerate(ys):
+            rec = ray_intervals(target, (float(x), float(y), float(lo[2]) - 1.0), (0.0, 0.0, 1.0),
+                                length=float(hi[2] - lo[2]) + 2.0)
+            thin = [((iv["entry_point"][2] + iv["exit_point"][2]) / 2.0, float(iv["length"]))
+                    for iv in rec["intervals"] if iv["kind"] == "material" and iv["length"] < limit]
+            if thin:
+                runs[(i, j)] = thin
+    interior = []
+    for (i, j), found in runs.items():
+        for zm, thickness in found:
+            if all(any(abs(z2 - zm) < limit for z2, _ in runs.get(nb, []))
+                   for nb in ((i - 1, j), (i + 1, j), (i, j - 1), (i, j + 1))):
+                interior.append((float(xs[i]), float(ys[j]), zm, thickness))
+    regions = []
+    if interior:
+        T = np.array(interior)
+        labels = _clusters(T[:, :3], 1.5 * spacing)
+        for k in np.unique(labels):
+            R = T[labels == k]
+            at = R[np.argsort(R[:, 3])[len(R) // 2]]
+            regions.append({"thickness_mm": float(np.median(R[:, 3])), "thinnest_mm": float(R[:, 3].min()),
+                            "at": [float(v) for v in at[:3]], "z_range": [float(R[:, 2].min()), float(R[:, 2].max())],
+                            "area_mm2": float(len(R) * spacing * spacing), "samples": int(len(R))})
+        regions.sort(key=lambda r: r["thickness_mm"])
+    return {"spacing_mm": float(spacing), "lines": int(len(xs) * len(ys)), "regions": regions}
+
+
 # --- judging --------------------------------------------------------------------------------------
 
 def _to_part_frame(point, pose):
@@ -382,94 +535,429 @@ def _fmt_point(p):
     return "(" + ", ".join(f"{v:.2f}" for v in p) + ")"
 
 
-def check_walls(walls: Dict[str, Any], lim: Dict[str, Tuple[float, str]], qs: QCSettings) -> List[Finding]:
-    """A finding per thin region: an error under the minimum feature, a warning under the minimum wall."""
-    out = []
-    feature = lim.get("min_feature_mm")
+@dataclass
+class Annotated:
+    """What a program declared with ``agentcad.annotate``, ready to judge with: its features, its
+    suppressions and its print pose, each with the ``file:line`` that declared it."""
+    features: List[Dict[str, Any]] = field(default_factory=list)
+    suppressions: List[Dict[str, Any]] = field(default_factory=list)
+    pose: Optional[Dict[str, Any]] = None
+    pose_source: str = ""
+
+    @classmethod
+    def from_records(cls, records: Optional[Sequence[Dict[str, Any]]], origin_of: Optional[Dict[str, str]] = None
+                     ) -> "Annotated":
+        """``origin_of`` maps the copy of a source the engine built from to the user's file, so a
+        line is named in the file the user edits."""
+        import os
+        origins = {os.path.realpath(k): v for k, v in (origin_of or {}).items() if k and v}
+        out = cls()
+        for r in records or []:
+            path = str(r.get("file") or "")
+            source = f"{origins.get(os.path.realpath(path), path) if path else '?'}:{r.get('line', '?')}"
+            if r.get("type") == "feature":
+                out.features.append(dict(r, source=source))
+            elif r.get("type") == "suppress":
+                out.suppressions.append(dict(r, source=source))
+            elif r.get("type") == "pose" and out.pose is None:
+                out.pose, out.pose_source = dict(r["pose"]), source
+        return out
+
+    def claim(self, point: Optional[Sequence[float]], tol: float) -> Optional[Dict[str, Any]]:
+        """The feature whose box holds ``point`` (part frame); the smallest box when several do."""
+        if point is None:
+            return None
+        hits = [f for f in self.features
+                if all(f["box"][i] - tol <= point[i] <= f["box"][i + 3] + tol for i in range(3))]
+        return min(hits, key=lambda f: math.prod(max(f["box"][i + 3] - f["box"][i], 1e-9) for i in range(3))) \
+            if hits else None
+
+    @staticmethod
+    def limit(feat: Optional[Dict[str, Any]], key: str, lim: Dict[str, Tuple[float, str]]) -> Optional[Tuple[float, str]]:
+        """A rule's limit for a place: the claiming feature's own, else the limit below it."""
+        if feat is not None and key in feat.get("limits", {}):
+            return float(feat["limits"][key]), f"feature {feat['name']!r} ({feat['source']})"
+        return lim.get(key)
+
+
+def _claimed(kind: str, feat: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    return {"feature": feat["name"], "source": feat["source"]} if feat else {"feature": "", "source": "[qc]"}
+
+
+def _thin(kind: str, measured: float, region: Dict[str, Any], lim, qs: QCSettings, pose, ann: Annotated,
+          tol: float, detail: str):
+    """A thin wall or floor judged at its place: an error under the minimum feature (only when a
+    feature claims it), a warning under the minimum wall. Returns (finding, part-frame point) or None."""
+    point = _to_part_frame(region["at"], pose)
+    feat = ann.claim(point, tol)
+    fmin, fwall = ann.limit(feat, "min_feature_mm", lim), ann.limit(feat, "min_wall_mm", lim)
+    if fwall is None or measured >= fwall[0]:
+        return None
+    is_feature = fmin is not None and measured < fmin[0]
+    rule = "min_feature" if is_feature else "min_wall"
+    value, layer = fmin if is_feature else fwall
+    severity = qs.severity.get(rule, RULES[rule])
+    if severity == "off":
+        return None
+    if severity == "error" and feat is None:
+        severity = "warning"            # no feature annotation claims it, so never an error
+    where = _fmt_point(point)
+    name = f" of {feat['name']!r} ({feat['source']})" if feat else ""
+    what = "narrower than the smallest feature it can print" if is_feature else f"thinner than a {kind} should be"
+    finding = Finding(
+        kind, severity, f"{measured:.3f} mm", f"at least {value:g} mm", "material narrower than the limit prints "
+        "weak, as a seam, or not at all", rule=rule, layer=layer, location=f"{where} in the part's frame",
+        uncertainty=0.0, fix=f"thicken the {kind} there, or move the feature that thins it",
+        message=f"a {kind}{name} {measured:.3f} mm thick at {where} (part frame) is {what} ({value:g} mm); {detail}",
+        **_claimed(kind, feat))
+    return finding, point
+
+
+def check_walls(walls: Dict[str, Any], lim, qs: QCSettings, ann: Optional[Annotated] = None, pose=None, tol: float = 0.05):
+    """A finding per thin wall region (layer slivers are counted, not judged)."""
+    ann, out = ann or Annotated(), []
     for r in walls["regions"]:
         if r.get("kind") != "wall":
-            continue                    # thin only where a layer cuts a sloped edge: counted, not judged
-        w = r["width_mm"]
-        is_feature = feature is not None and w < feature[0]
-        rule = "min_feature" if is_feature else "min_wall"
-        value, layer = feature if is_feature else lim["min_wall_mm"]
-        severity = qs.severity.get(rule, RULES[rule])
-        if severity == "off":
             continue
-        if severity == "error":
-            severity = "warning"        # unattributed: no feature annotation names it, so never an error
-        where = _fmt_point(_to_part_frame(r["at"], qs.pose))
         z0, z1 = r["z_range"]
-        what = "narrower than the smallest feature it can print" if is_feature else "thinner than a wall should be"
-        out.append(Finding(
-            "wall", severity, f"{w:.3f} mm", f"at least {value:g} mm", "material narrower than the limit prints "
-            "weak, as a seam, or not at all", "[qc]", rule=rule, layer=layer,
-            location=f"{where} in the part's frame", uncertainty=0.0,
-            fix="thicken the wall there, or move the feature that thins it",
-            message=(f"a wall {w:.3f} mm wide in its layer at {where} (part frame) is {what} ({value:g} mm); "
-                     f"it runs over {r['layers']} layer(s), z {z0:.2f} to {z1:.2f} in the print pose, "
-                     f"{r['depth_min_mm']:.3f} mm of material through the part at its thinnest "
-                     f"(median {r['depth_mm']:.3f})")))
+        hit = _thin("wall", r["width_mm"], r, lim, qs, pose if pose is not None else qs.pose, ann, tol,
+                    f"it runs over {r['layers']} layer(s), z {z0:.2f} to {z1:.2f} in the print pose, "
+                    f"{r['depth_min_mm']:.3f} mm of material through the part at its thinnest (median {r['depth_mm']:.3f})")
+        if hit:
+            out.append(hit)
     return out
 
 
-def check_overhang(regions: List[Dict[str, Any]], lim: Dict[str, Tuple[float, str]], qs: QCSettings) -> List[Finding]:
-    value, layer = lim["max_overhang_deg"]
+def check_floors(floors: Dict[str, Any], lim, qs: QCSettings, ann: Annotated, pose, tol: float):
+    """A finding per thin floor or roof (its median thickness judged, its thinnest reported)."""
+    out = []
+    for r in floors["regions"]:
+        z0, z1 = r["z_range"]
+        hit = _thin("floor", r["thickness_mm"], r, lim, qs, pose, ann, tol,
+                    f"{r['area_mm2']:.0f} mm2 of it, thinnest {r['thinnest_mm']:.3f} mm, at z {z0:.2f} to {z1:.2f} "
+                    f"in the print pose (vertical lines {floors['spacing_mm']:.2f} mm apart)")
+        if hit:
+            out.append(hit)
+    return out
+
+
+def check_overhang(regions: List[Dict[str, Any]], lim, qs: QCSettings, ann: Optional[Annotated] = None,
+                   pose=None, tol: float = 0.05):
+    ann, pose = ann or Annotated(), pose if pose is not None else qs.pose
     severity = qs.severity.get("max_overhang", RULES["max_overhang"])
     if severity == "off":
         return []
     out = []
     for r in regions:
-        where = _fmt_point(_to_part_frame(r["at"], qs.pose))
-        out.append(Finding(
+        point = _to_part_frame(r["at"], pose)
+        feat = ann.claim(point, tol)
+        value, layer = ann.limit(feat, "max_overhang_deg", lim)
+        if r["worst_deg"] <= value + 1e-6:
+            continue
+        where = _fmt_point(point)
+        name = f" of {feat['name']!r} ({feat['source']})" if feat else ""
+        out.append((Finding(
             "overhang", severity, f"{r['area_mm2']:.0f} mm2 at up to {r['worst_deg']:.0f} deg from vertical",
             f"faces at most {value:g} deg from vertical", "a face turned further down prints in air unless it is "
-            "supported", "[qc]", rule="max_overhang", layer=layer, location=f"{where} in the part's frame",
+            "supported", rule="max_overhang", layer=layer, location=f"{where} in the part's frame",
             uncertainty=0.0, fix="re-pose the part, add a chamfer under the ledge, or plan supports there",
-            message=(f"{r['area_mm2']:.0f} mm2 of faces turned down up to {r['worst_deg']:.0f} deg from vertical "
-                     f"around {where} (part frame), past the {value:g} deg limit")))
+            message=(f"{r['area_mm2']:.0f} mm2 of faces{name} turned down up to {r['worst_deg']:.0f} deg from vertical "
+                     f"around {where} (part frame), past the {value:g} deg limit"), **_claimed("overhang", feat)), point))
     return out
 
 
-def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str] = None) -> Dict[str, Any]:
+def check_bridges(bridges: List[Dict[str, Any]], lim, qs: QCSettings, ann: Annotated, pose, tol: float,
+                  supports_planned: bool) -> Tuple[List[Tuple[Finding, Any]], List[Dict[str, Any]]]:
+    """A finding per bridge longer than the process (or its feature) allows, unless the print intent
+    plans supports; every bridge is also returned as a record with how it was judged."""
+    severity = qs.severity.get("max_bridge", RULES["max_bridge"])
+    out, records = [], []
+    for b in bridges:
+        point = _to_part_frame(b["at"], pose)
+        feat = ann.claim(point, tol)
+        limit = ann.limit(feat, "max_bridge_mm", lim)
+        verdict = "within the limit" if limit is None or b["span_mm"] <= limit[0] else \
+            ("supports planned" if supports_planned else "too long")
+        records.append(dict(b, verdict=verdict, limit_mm=limit[0] if limit else None, **_claimed("bridge", feat)))
+        if verdict != "too long" or severity == "off":
+            continue
+        value, layer = limit
+        where = _fmt_point(point)
+        name = f" of {feat['name']!r} ({feat['source']})" if feat else ""
+        out.append((Finding(
+            "bridge", severity, f"{b['span_mm']:.1f} mm span", f"at most {value:g} mm",
+            "a longer bridge sags between its ends", rule="max_bridge", layer=layer,
+            location=f"{where} in the part's frame", uncertainty=b["uncertainty_mm"],
+            fix="shorten the span, add a support pillar, or plan supports in the print intent",
+            message=(f"a bridge{name} spans {b['span_mm']:.1f} mm (width across its ends) at {where} (part frame), "
+                     f"longer than {value:g} mm; supports are not planned"), **_claimed("bridge", feat)), point))
+    return out, records
+
+
+def _loosened(ann: Annotated, lim) -> Tuple[List[Dict[str, Any]], List[Finding]]:
+    """Each limit a feature sets looser than the layer below it, listed like a suppression; one
+    loosened without a reason is also a warning."""
+    listed, found = [], []
+    for feat in ann.features:
+        for key, value in feat.get("limits", {}).items():
+            below = lim.get(key)
+            if below is None:
+                continue
+            looser = value > below[0] if key.startswith("max_") else value < below[0]
+            if not looser:
+                continue
+            listed.append({"feature": feat["name"], "limit": key, "value": value, "below": below[0],
+                           "below_layer": below[1], "why": feat.get("why", ""), "source": feat["source"]})
+            if not feat.get("why"):
+                found.append(Finding(
+                    "annotation", "warning", f"{key} {value:g}", f"{below[0]:g} ({below[1]})",
+                    "a limit loosened without a reason cannot be reviewed", rule="annotation",
+                    layer="feature annotation", feature=feat["name"], source=feat["source"],
+                    fix="add why=... to the feature saying why it may be thinner or steeper",
+                    message=f"feature {feat['name']!r} ({feat['source']}) loosens {key} to {value:g} from "
+                            f"{below[0]:g} without a reason"))
+    return listed, found
+
+
+def _apply_suppressions(pairs, ann: Annotated, tol: float) -> Tuple[List[Tuple[Finding, Any]], List[Dict[str, Any]]]:
+    kept, suppressed = [], []
+    for finding, point in pairs:
+        hit = next((s for s in ann.suppressions if s["rule"] == finding.rule and (
+            s.get("box") is None or (point is not None and all(
+                s["box"][i] - tol <= point[i] <= s["box"][i + 3] + tol for i in range(3))))), None)
+        if hit is None:
+            kept.append((finding, point))
+        else:
+            suppressed.append({"rule": finding.rule, "why": hit["why"], "source": hit["source"],
+                               "finding": finding.sentence()})
+    return kept, suppressed
+
+
+def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str] = None,
+        annotations: Optional[Sequence[Dict[str, Any]]] = None, origin_of: Optional[Dict[str, str]] = None
+        ) -> Dict[str, Any]:
     """Judge one part's mesh (an STL): the printer, every limit with its layer, the findings, what
-    each measurement sampled, and the rules not measured (with why)."""
+    each measurement sampled, and the rules not measured (with why). ``annotations`` are the records
+    the part's program made with ``agentcad.annotate``; ``origin_of`` maps a built copy to the user's file."""
     printer = printer_for(cfg, qs, printer_override)
     lim = limits(printer, qs)
     layer = float(getattr(getattr(cfg, "print", None), "layer_height", 0.2) or 0.2)
+    ann = Annotated.from_records(annotations, origin_of)
+    pose = ann.pose if ann.pose is not None else qs.pose
+    pose_from = f"annotation at {ann.pose_source}" if ann.pose is not None else ("[qc] pose" if qs.pose else "as modelled")
     mesh = load_mesh(stl)
-    found: List[Finding] = []
+    pairs: List[Tuple[Finding, Any]] = []
     not_measured: Dict[str, str] = {}
     sampled: Dict[str, Any] = {}
+    loosened, loose_findings = _loosened(ann, lim)
     if mesh is None:
         for rule in RULES:
             not_measured[rule] = "no mesh of the part to measure"
     else:
-        part = posed(mesh, qs.pose)
+        part = posed(mesh, pose)
+        tol = max(0.05, 1e-4 * float(part.diag))
         if qs.severity.get("build_volume", RULES["build_volume"]) == "off":
             not_measured["build_volume"] = "turned off in [qc] severity"
         else:
-            found.append(check_build_volume(mesh.tri.reshape(-1, 3), printer, qs.pose,
-                                            qs.severity.get("build_volume", RULES["build_volume"])))
-        wall_limits = [lim[k][0] for k in ("min_feature_mm", "min_wall_mm") if k in lim]
+            pairs.append((check_build_volume(mesh.tri.reshape(-1, 3), printer, pose,
+                                             qs.severity.get("build_volume", RULES["build_volume"])), None))
+        own = [v for f in ann.features for k, v in f.get("limits", {}).items() if k in ("min_feature_mm", "min_wall_mm")]
+        wall_limits = [lim[k][0] for k in ("min_feature_mm", "min_wall_mm") if k in lim] + own
         if wall_limits:
             walls = measure_walls(part, max(wall_limits), layer)
             sampled["walls"] = {k: walls[k] for k in ("pitch_mm", "spacing_mm", "sections")}
             sampled["walls"]["layer_slivers"] = sum(r["kind"] == "layer_sliver" for r in walls["regions"])
-            found += check_walls(walls, lim, qs)
+            pairs += check_walls(walls, lim, qs, ann, pose, tol)
+            floors = measure_floors(part, max(wall_limits))
+            sampled["floors"] = {"spacing_mm": floors["spacing_mm"], "lines": floors["lines"],
+                                 "thin_areas": len(floors["regions"])}
+            pairs += check_floors(floors, lim, qs, ann, pose, tol)
         else:
             not_measured["min_wall"] = "no wall limit for this process"
+        exclude = None
+        if "max_bridge_mm" in lim or any("max_bridge_mm" in f.get("limits", {}) for f in ann.features):
+            bridged = measure_bridges(part, layer)
+            exclude = bridged["mask"]
+            supports = bool((getattr(cfg, "print_intent", None) or {}).get("supports", False))
+            found, sampled["bridges"] = check_bridges(bridged["bridges"], lim, qs, ann, pose, tol, supports)
+            pairs += found
         if "max_overhang_deg" in lim:
-            found += check_overhang(measure_overhang(part, lim["max_overhang_deg"][0], layer), lim, qs)
+            steepest = min([lim["max_overhang_deg"][0]] + [f["limits"]["max_overhang_deg"] for f in ann.features
+                                                          if "max_overhang_deg" in f.get("limits", {})])
+            pairs += check_overhang(measure_overhang(part, steepest, layer, exclude), lim, qs, ann, pose, tol)
         else:
             not_measured["max_overhang"] = "no overhang limit for this process (resin prints on supports)"
+        kept, suppressed = _apply_suppressions(pairs, ann, tol)
+    if mesh is None:
+        kept, suppressed = [], []
+    found = [f for f, _ in kept]
+    by_name = {f["name"]: f for f in ann.features}
+    claimed = [{"finding": i, "feature": f.feature, "rule": f.rule, "kind": f.key, "at": point,
+                "threshold": Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim)[0],
+                "knobs": list(by_name[f.feature].get("knobs", []))}
+               for i, (f, point) in enumerate(kept)
+               if f.feature in by_name and f.rule in LIMIT_OF and point is not None
+               and Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim) is not None]
     measured_limits = set(LIMIT_OF.values()) if mesh is not None else set()
     for key in lim:
         if key not in measured_limits:
             not_measured.setdefault(key, "no measurement for this rule yet")
-    return {"printer": printer.to_dict(), "pose": qs.pose or {"up": [0, 0, 1], "spin_deg": 0}, "gate": qs.gate,
-            "limits": {k: {"value": v, "layer": layer_name} for k, (v, layer_name) in lim.items()},
-            "sampled": sampled, "findings": [f.to_dict() for f in found], "not_measured": not_measured}
+    return {"printer": printer.to_dict(), "pose": pose or {"up": [0, 0, 1], "spin_deg": 0}, "pose_from": pose_from,
+            "gate": qs.gate, "limits": {k: {"value": v, "layer": layer_name} for k, (v, layer_name) in lim.items()},
+            "sampled": sampled, "findings": [f.to_dict() for f in found + loose_findings],
+            "annotations": {"features": [{"name": f["name"], "kind": f["kind"], "source": f["source"]} for f in ann.features],
+                            "suppressions": len(ann.suppressions)},
+            "suppressed": suppressed, "loosened": loosened, "claimed": claimed, "not_measured": not_measured}
+
+
+# --- fixes by sensitivity: which knob moves a failing finding, and by how much ----------------------
+
+#: At most this many rebuilds per ``sensitivity`` call (the base counts as one).
+SENSITIVITY_RUNS = 16
+
+
+def _build_mesh(source: Path, defines: Dict[str, str], out_dir: Path, n: int):
+    """The program built with ``defines`` and tessellated for QC, or the error that stopped it."""
+    from agentcad.fit import _b3d
+    from agentcad.probe import load_shape
+    try:
+        shape = load_shape(source, defines)
+        path = out_dir / f"run_{n}.stl"
+        _b3d().export_stl(shape, str(path), tolerance=0.01, angular_tolerance=0.05)
+        return load_mesh(path)
+    except Exception as e:  # noqa: BLE001 - a knob value can break the program in any way; the error is the answer
+        text = str(e).splitlines()[0][:160] if str(e) else ""
+        return f"{type(e).__name__}: {text}" if text else type(e).__name__
+
+
+def _quantity(claim: Dict[str, Any], mesh, pose, layer: float) -> Dict[str, Any]:
+    """The claimed finding's measure on another build, at the same place: the width of a wall, the
+    thickness of a floor, the worst angle of an overhang, the span of a bridge; ``clear`` when nothing
+    near the place is within twice the limit (or, for an overhang, steeper than 20 degrees under it)."""
+    import numpy as np
+    if isinstance(mesh, str):
+        return {"error": mesh}
+    part = posed(mesh, pose)
+    limit, kind = float(claim["threshold"]), claim["kind"]
+    if kind == "wall":
+        regions = [(r, r["width_mm"]) for r in measure_walls(part, 2.0 * limit, layer)["regions"] if r["kind"] == "wall"]
+    elif kind == "floor":
+        regions = [(r, r["thickness_mm"]) for r in measure_floors(part, 2.0 * limit)["regions"]]
+    elif kind == "overhang":
+        regions = [(r, r["worst_deg"]) for r in measure_overhang(part, max(0.0, limit - 20.0), layer)]
+    elif kind == "bridge":
+        regions = [(b, b["span_mm"]) for b in measure_bridges(part, layer)["bridges"]]
+    else:
+        return {"error": f"no measure for a {kind} finding"}
+    reach = max(3.0 * limit, 2.0) if kind != "overhang" else max(5.0, float(part.diag) / 20.0)
+    near = [(float(np.linalg.norm(np.subtract(_to_part_frame(r["at"], pose), claim["at"]))), q) for r, q in regions]
+    near = [(d, q) for d, q in near if d <= reach]
+    return {"value": float(min(near)[1])} if near else {"clear": True}
+
+
+def _effect(base: Dict[str, Any], side: Dict[str, Any]) -> Tuple[str, Optional[float]]:
+    if "error" in side:
+        return "refused", None
+    if "clear" in side or "clear" in base:
+        return ("unchanged", None) if ("clear" in side) == ("clear" in base) else ("changed", None)
+    change = side["value"] - base["value"]
+    return ("changed" if abs(change) > 1e-3 else "unchanged"), change
+
+
+def sensitivity(report: Dict[str, Any], source: Path, defines: Optional[Dict[str, str]] = None,
+                max_runs: int = SENSITIVITY_RUNS, layer: float = 0.2) -> List[Dict[str, Any]]:
+    """For each error a feature claims, the knobs the feature names, turned by +/- their delta: each
+    rebuild is measured again for the finding's rule at the finding's place. Each knob is ``live``,
+    ``saturated`` (only one direction moves it), ``dead`` or ``refused``; the finding's fix is
+    rewritten to say what each knob does. Rebuilds stop at ``max_runs``, and the records say which
+    knobs that left untried."""
+    import tempfile
+    from agentcad import knobs as knobmod
+    from agentcad.engines.build123d_worker import _execute
+
+    claims = [c for c in report.get("claimed", [])
+              if c["knobs"] and report["findings"][c["finding"]]["severity"] == "error"]
+    if not claims:
+        return []
+    source, defines = Path(source), dict(defines or {})
+    build = _execute(str(source)).get("build")
+    if not callable(build):
+        raise ValueError(f"{source}: fixes need a parametric build(**params)")
+    pose, out, cache = report["pose"], [], {}
+    with tempfile.TemporaryDirectory() as tmp:
+        def measured(overrides):
+            key = tuple(sorted(overrides.items()))
+            if key not in cache:
+                cache[key] = _build_mesh(source, {**defines, **overrides}, Path(tmp), len(cache))
+            return cache[key]
+
+        measured({})
+        for claim in claims:
+            base = _quantity(claim, measured({}), pose, layer)
+            rec = {"finding": claim["finding"], "feature": claim["feature"], "rule": claim["rule"], "kind": claim["kind"],
+                   "threshold": claim["threshold"], "base": base, "knobs": []}
+            for spec in claim["knobs"]:
+                name, amount, relative = knobmod.parse_knob(spec)
+                try:
+                    value = knobmod._base_values(build, [name], defines)[name]
+                except ValueError as e:
+                    rec["knobs"].append({"name": name, "verdict": "refused", "error": str(e)})
+                    continue
+                delta = abs(value) * amount / 100.0 if relative else amount
+                if isinstance(value, int):
+                    delta = max(1, int(round(delta)))
+                moves = {tag: value + sign * delta for tag, sign in (("plus", 1), ("minus", -1))}
+                new = sum(1 for v in moves.values() if tuple(sorted({**{name: repr(v)}}.items())) not in cache)
+                if len(cache) + new > max_runs:
+                    rec["knobs"].append({"name": name, "verdict": "untried", "why": f"the {max_runs}-run budget is spent"})
+                    continue
+                sides = {tag: dict(_quantity(claim, measured({name: repr(v)}), pose, layer), knob=v)
+                         for tag, v in moves.items()}
+                effects = {tag: _effect(base, side) for tag, side in sides.items()}
+                states = [s for s, _ in effects.values()]
+                verdict = ("refused" if states.count("refused") == 2 else "partial" if "refused" in states
+                           else "live" if states.count("changed") == 2 else "dead" if states.count("changed") == 0
+                           else "saturated")
+                rec["knobs"].append({"name": name, "base": value, "delta": delta, "verdict": verdict,
+                                     "plus": dict(sides["plus"], change=effects["plus"][1]),
+                                     "minus": dict(sides["minus"], change=effects["minus"][1])})
+            out.append(rec)
+            finding = report["findings"][claim["finding"]]
+            finding["fix"] = _fix_sentence(rec, finding.get("fix", ""))
+            finding["sentence"] = Finding.from_dict(finding).sentence()
+    return out
+
+
+def _fix_sentence(rec: Dict[str, Any], before: str) -> str:
+    unit = "deg" if rec["rule"] == "max_overhang" else "mm"
+    passes = (lambda v: v <= rec["threshold"]) if rec["rule"].startswith("max_") else (lambda v: v >= rec["threshold"])
+
+    def side(tag, k):
+        s = k[tag]
+        head = f"{k['name']} {'+' if tag == 'plus' else '-'}{k['delta']:g}"
+        if "error" in s:
+            return f"{head} does not build"
+        if "clear" in s:
+            what = "no face steeper than 20 deg under the limit" if unit == "deg" else \
+                f"no {rec.get('kind', 'feature')} under {2 * rec['threshold']:g} mm"
+            return f"{head} leaves {what} near it (cleared, or the material there is gone: look)"
+        verdict = " (passes)" if passes(s["value"]) else ""
+        return f"{head} gives {s['value']:.3f} {unit}" + (f" ({s['change']:+.3f})" if s.get("change") is not None else "") + verdict
+
+    parts = []
+    for k in rec["knobs"]:
+        if k["verdict"] in ("live", "saturated", "partial"):
+            parts.append(", ".join(side(t, k) for t in ("plus", "minus")) +
+                         (" (it moves only one way)" if k["verdict"] == "saturated" else ""))
+        elif k["verdict"] == "dead":
+            parts.append(f"{k['name']} moves nothing here")
+        elif k["verdict"] == "untried":
+            parts.append(f"{k['name']} not tried ({k['why']})")
+        else:
+            parts.append(f"{k['name']} could not be turned ({k.get('error', 'neither side builds')})")
+    base = rec["base"]
+    now = f"at {base['value']:.3f} {unit}" if "value" in base else "here"
+    return f"{before}; measured {now}: " + "; ".join(parts) if parts else before
 
 
 def errors(report: Dict[str, Any]) -> List[Dict[str, Any]]:

@@ -9,12 +9,18 @@ from pathlib import Path
 def _print_report(name, report):
     p = report["printer"]
     pose = report["pose"]
+    stated = f"matrix {pose['matrix']}" if pose.get("matrix") else f"up {pose.get('up', [0, 0, 1])}, spin {pose.get('spin_deg', 0)}"
     print(f"{name} v{report['iteration']} against {p['label']} ({p['name']}, {p['process']}, "
           f"{' x '.join(f'{v:g}' for v in p['build_volume'])} mm; {p['source']}); "
-          f"pose up {pose.get('up', [0, 0, 1])}, spin {pose.get('spin_deg', 0)}")
+          f"pose {stated} ({report.get('pose_from', '[qc] pose')})")
     for f in report["findings"]:
         print(f"  {f['severity'].upper() if f['severity'] == 'error' else f['severity']}: {f['rule']}: "
               f"{f['sentence']} (limit: {f['layer']})")
+    for s in report.get("suppressed", []):
+        print(f"  suppressed: {s['rule']} at {s['source']}, because {s['why']}: {s['finding']}")
+    for item in report.get("loosened", []):
+        print(f"  loosened: {item['limit']} {item['value']:g} (from {item['below']:g}) for {item['feature']!r} at "
+              f"{item['source']}" + (f", because {item['why']}" if item["why"] else ", with no reason given"))
     print("  limits: " + ", ".join(f"{k} {v['value']:g} ({v['layer']})" for k, v in report["limits"].items()))
     if report["not_measured"]:
         print("  not measured: " + "; ".join(f"{k} ({why})" for k, why in report["not_measured"].items()))
@@ -47,11 +53,23 @@ def cmd_qc(args):
             print(f"agentcad qc: no mesh of v{it.number} ({'; '.join(result.errors)}); nothing measured", file=sys.stderr)
             stl = None
     try:
-        report = qcmod.run(cfg, stl, qs, printer_override=args.printer)
+        report = qcmod.run(cfg, stl, qs, printer_override=args.printer, annotations=it.metadata.get("qc_annotations"),
+                           origin_of={str(it.source_path): it.origin} if it.origin else None)
     except (KeyError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
     report.update(iteration=it.number, mesh=str(stl) if stl else None)
+    if getattr(args, "fixes", False):
+        src = Path(it.source_path) if it.source_path else None
+        if src is None or src.suffix.lower() != ".py":
+            print("agentcad qc: --fixes turns the knobs of a build123d program; this iteration has none", file=sys.stderr)
+        else:
+            layer = float(getattr(getattr(cfg, "print", None), "layer_height", 0.2) or 0.2)
+            try:
+                report["sensitivity"] = qcmod.sensitivity(report, src, it.defines or session.defines or None,
+                                                          max_runs=args.max_runs, layer=layer)
+            except (ValueError, RuntimeError) as e:
+                print(f"agentcad qc: no fixes measured: {e}", file=sys.stderr)
     if args.json:
         print(json.dumps(report, indent=2))
     else:
@@ -80,6 +98,10 @@ def register(subparsers, groups):
     pq.add_argument("project", help="Project name (folder under designs_dir) or path")
     pq.add_argument("--printer", default=None, help="Judge against this printer instead of the project's")
     pq.add_argument("--json", action="store_true", help="Print the report as JSON")
+    pq.add_argument("--fixes", action="store_true",
+                    help="For each error a feature claims, turn the knobs the feature names and say what each does")
+    pq.add_argument("--max-runs", type=int, default=16, metavar="N",
+                    help="Rebuilds --fixes may make, the base included (default 16)")
     pq.set_defaults(func=cmd_qc)
 
     pp = subparsers.add_parser("printers", help="The printers QC knows: process, build volume, nozzle, defaults")

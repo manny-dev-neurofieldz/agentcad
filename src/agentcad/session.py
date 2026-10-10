@@ -67,6 +67,9 @@ class Iteration:
     source_hash: str = ""
     #: The feature-effect report against the previous iteration.
     report: Optional[Report] = None
+    #: The file the source was read from (the user's, not the copy kept here): a QC finding that a
+    #: program's annotation claims names its line in this file.
+    origin: Optional[str] = None
     _saved_image_paths: Dict[str, Path] = field(default_factory=dict)
 
     @property
@@ -85,6 +88,7 @@ class Iteration:
             "metadata": dict(self.metadata),
             "defines": dict(self.defines),
             "source_hash": self.source_hash,
+            "origin": self.origin,
             "report": self.report.to_dict() if self.report else None,
             "judgments": {"findings": [f.to_dict() for f in self.report.findings]} if self.report else None,
         }
@@ -108,6 +112,7 @@ class Iteration:
             defines=dict(data.get("defines") or {}),
             source_hash=data.get("source_hash") or (source_hash(code) if code else ""),
             report=report,
+            origin=data.get("origin"),
             _saved_image_paths={k: Path(v) for k, v in (data.get("image_paths") or {}).items()},
         )
 
@@ -174,7 +179,8 @@ class DesignSession:
     def current(self) -> Optional[Iteration]:
         return self.iterations[-1] if self.iterations else None
 
-    def iterate(self, source_code: str, defines: Optional[Dict[str, str]] = None) -> Iteration:
+    def iterate(self, source_code: str, defines: Optional[Dict[str, str]] = None,
+                origin: Optional[Path] = None) -> Iteration:
         """Submit new source code, render it, and record the iteration.
 
         ``defines`` are per-iteration overrides layered on the session's own;
@@ -249,6 +255,7 @@ class DesignSession:
             defines=effective,
             source_hash=digest,
             report=report,
+            origin=str(Path(origin).resolve()) if origin else None,
         )
         self.iterations.append(iteration)
         return iteration
@@ -476,7 +483,8 @@ class DesignSession:
         if qs is not None:
             latest = self.iterations[-1]
             stl = self.project.exports_dir / f"{self.name}_v{latest.number}.stl"
-            self.qc_report = qcmod.run(self.config, stl, qs)
+            self.qc_report = qcmod.run(self.config, stl, qs, annotations=latest.metadata.get("qc_annotations"),
+                                       origin_of={str(latest.source_path): latest.origin} if latest.origin else None)
             if self.project.variants:
                 newest = self.project.variants[0]
                 newest.findings = (newest.findings or []) + self.qc_report["findings"]

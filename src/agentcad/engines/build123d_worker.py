@@ -148,6 +148,11 @@ def _rank(shape):
 
 
 def _execute(source_path: str) -> Dict[str, Any]:
+    """Run a program's module code. Every build starts here, in the worker or in-process (probes, knob
+    sweeps, fit), so this is where the annotation registry is cleared: a build declares its own
+    features, never a previous build's."""
+    from agentcad import annotate
+    annotate.reset()
     code = open(source_path).read()
     namespace: Dict[str, Any] = {"__name__": "__agentcad_source__", "__file__": os.path.abspath(source_path)}
     cwd = os.getcwd()
@@ -503,9 +508,13 @@ def run(job: Dict[str, Any], out: Dict[str, Any]) -> None:
         return
     t0 = time.monotonic()
     b3d = _bootstrap()
+    from agentcad import annotate
     namespace = _execute(job["source_path"])
     shape = _harvest(b3d, namespace, job.get("defines") or {}, out["warnings"])
     out["metadata"] = _measure(b3d, shape, float(job.get("short_edge_mm") or 0.25))
+    notes = annotate.records()
+    if notes:
+        out["metadata"]["qc_annotations"] = notes
     if job.get("expected_solids") is not None:
         out["metadata"]["expected_solids"] = int(job["expected_solids"])
     out["metadata"]["runtime_s"] = round(time.monotonic() - t0, 3)

@@ -387,7 +387,8 @@ def cmd_session_iterate(args):
     if getattr(args, "all", False):
         _iterate_parts(cfg, source, code, args)
     try:
-        it = session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None)
+        it = session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None,
+                             origin=source)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -433,7 +434,8 @@ def _iterate_parts(cfg, source, code, args):
             # the parent is being iterated, so its parts continue too
             part_session.reopen()
         try:
-            it = part_session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None)
+            it = part_session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None,
+                                      origin=source)
         except RuntimeError as e:
             print(f"  part {folder.name}: {e}", file=sys.stderr)
             continue
