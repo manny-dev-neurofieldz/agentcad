@@ -20,12 +20,14 @@ engine did not report prints as "n/a"; nothing is guessed.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Tuple
 
 _CENSUS_ORDER = ("plane", "cylinder", "cone", "sphere", "torus", "bspline", "other")
+_ANALYTIC_CURVED = ("cylinder", "cone", "sphere", "torus")
 _COUNT_ORDER = ("solids", "faces", "edges", "vertices")
 _ZERO_CHANGE_REL = 1e-9
 _TWIST_AREA_FRAC = 0.02   # a twisted face smaller than this share of the part is a thread flank, not a loft
+BSPLINE_HIDES_FRACTION = 0.9   # at or above this share of BSpline faces the census cannot see analytic types
 
 
 @dataclass
@@ -61,6 +63,26 @@ def _delta_scalar(prev: Optional[float], cur: Optional[float]) -> Tuple[str, Opt
     text = f"{_fmt(float(cur))} ({'+' if d >= 0 else ''}{d:.4g}"
     text += f", {'+' if d >= 0 else ''}{pct:.2f}%)" if pct is not None else ")"
     return text, d
+
+
+def census_hides_analytic(census: Optional[Mapping[str, int]], threshold: float = BSPLINE_HIDES_FRACTION) -> Optional[str]:
+    """A sentence when the face census cannot be read for analytic types, else None.
+
+    A STEP converted to splines, a mesh-to-solid result and many swept or lofted bodies describe
+    every surface as a BSpline, so a census of zero cylinders, cones, spheres and tori is the
+    representation talking, not the part. The census reports ``threshold`` (90 percent) or more
+    BSpline faces; below it the analytic counts are reported as they stand.
+    """
+    census = census or {}
+    total = sum(int(v) for v in census.values())
+    bspline = int(census.get("bspline", 0))
+    if total <= 0 or bspline < threshold * total:
+        return None
+    analytic = sum(int(census.get(k, 0)) for k in _ANALYTIC_CURVED)
+    reading = ("zero cylinders, cones, spheres and tori is not evidence that the part has none" if not analytic
+               else f"the {analytic} counted analytic face(s) are a lower bound")
+    return (f"{bspline} of {total} faces ({100.0 * bspline / total:.0f}%) are BSpline surfaces: "
+            f"the representation hides analytic types, so {reading}")
 
 
 def feature_effect(prev: Optional[Dict[str, Any]], cur: Dict[str, Any], *,
@@ -159,6 +181,9 @@ def feature_effect(prev: Optional[Dict[str, Any]], cur: Dict[str, Any], *,
                             f"(shortest {_fmt(cur.get('min_edge_mm'))}): skins, slivers or a skim ridge")
     if cur.get("is_valid") is False:
         rep.warnings.append("kernel reports the shape invalid")
+    hidden = census_hides_analytic(census)
+    if hidden:
+        rep.warnings.append(hidden)
     if cur.get("twisted_faces"):
         # warn about faces that are a body of the part, not thread slivers
         detail = [d for d in (cur.get("twisted_faces_detail") or [])

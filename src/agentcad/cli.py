@@ -625,8 +625,14 @@ def cmd_probe_inventory(args):
     print(f"bbox_min {inv.get('bbox_min')}  bbox_size {inv.get('bbox_size')}")
     print(f"volume {inv.get('volume')}  area {inv.get('area')}  counts {inv.get('counts')}  valid {inv.get('is_valid')}")
     print(f"census {inv.get('face_census')}")
+    notes = inv.get("census_notes") or []
+    for note in notes:
+        print(f"warning: {note}")
     cyl = inv.get("cylinders") or []
-    print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
+    if notes and not cyl:
+        print("cylindrical/conical faces with axes: none readable (see the warning above)")
+    else:
+        print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
     for c in cyl[: args.show]:
         if "axis_direction" in c:
             o, d = c["axis_origin"], c["axis_direction"]

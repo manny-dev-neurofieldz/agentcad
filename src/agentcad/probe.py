@@ -200,6 +200,7 @@ def inventory(shape, planes: Sequence[str] = (), max_loops: Optional[int] = None
             rec["radius"] = None
         cylinders.append(rec)
     out["cylinders"] = cylinders
+    out["census_notes"] = _census_notes(b3d, shape, out.get("face_census"))
     out["planes"] = []
     for spec in planes:
         plane, coord = parse_plane(spec, shape)
@@ -209,6 +210,26 @@ def inventory(shape, planes: Sequence[str] = (), max_loops: Optional[int] = None
         out["planes"].append({"plane": spec, "coordinate": coord, "n_loops": loops[0]["total_on_plane"] if loops else 0,
                               "loops": loops})
     return out
+
+
+def _census_notes(b3d, shape, census) -> List[str]:
+    """Sentences saying a zero in the census may be the representation's: the whole shape first,
+    then each solid of a compound (a spline body beside an analytic one)."""
+    from agentcad.engines.build123d_worker import _face_census
+    from agentcad.report import census_hides_analytic
+
+    whole = census_hides_analytic(census)
+    if whole:
+        return [whole]
+    solids = list(shape.solids())
+    if len(solids) < 2:
+        return []
+    notes = []
+    for i, solid in enumerate(solids, 1):
+        note = census_hides_analytic(_face_census(b3d, solid))
+        if note:
+            notes.append(f"solid {i} of {len(solids)}: {note}")
+    return notes
 
 
 # --- sampled points ---------------------------------------------------------------
