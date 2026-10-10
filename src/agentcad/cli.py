@@ -1,7 +1,9 @@
 """AgentCAD command-line interface."""
 
 import argparse
+import importlib
 import json
+import pkgutil
 import sys
 from pathlib import Path
 
@@ -1034,29 +1036,31 @@ def cmd_check(args):
     sys.exit(0 if result.success else 1)
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        prog="agentcad",
-        description="Agentic feedback loop for parametric 3D CAD design",
-    )
-    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    sub = parser.add_subparsers(dest="command")
+# --- the command tree -----------------------------------------------------------
+#
+# Each command group registers its own subparsers in a function below, and
+# command modules in ``agentcad.commands`` register more without editing this
+# file. ``build_parser()`` returns the whole tree so other code (tests, the
+# policy contract, exporters) can walk it.
 
-    # render
+DEFINE_HELP = "Override a model parameter (repeatable)"
+SLICED_FILE_HELP = "Sliced file: Prusa binary G-code (.bgcode) or plain G-code"
+
+
+def _register_render_export(sub, groups):
     p_render = sub.add_parser("render", help="Render CAD source to PNG images")
     p_render.add_argument("source_file", help="Path to CAD source file")
     p_render.add_argument("-o", "--output-dir", help="Output directory (default: ./output)")
-    p_render.add_argument("-v", "--views", nargs="+", choices=list(STANDARD_PRESETS.keys()))
+    p_render.add_argument("-v", "--views", nargs="+", choices=list(STANDARD_PRESETS.keys()),
+                          help="Camera presets to render (default: the standard multi-view set)")
     p_render.add_argument("-s", "--size", type=int, default=1024, help="Image size (default: 1024)")
     p_render.add_argument("-e", "--engine", default=None,
                           help="CAD engine (default: the project's agentcad.toml, else openscad)")
     p_render.add_argument("--report", action="store_true",
                           help="Print the measured report (the tray) instead of raw metadata")
-    p_render.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
-                          help="Override a model parameter (repeatable)")
+    p_render.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
     p_render.set_defaults(func=cmd_render)
 
-    # export
     p_export = sub.add_parser("export", help="Export CAD source to STL or another format")
     p_export.add_argument("source_file", help="Path to CAD source file")
     p_export.add_argument("-o", "--output", help="Output path (default: source name with the format's extension)")
@@ -1066,15 +1070,14 @@ def main():
                           help="CAD engine (default: the project's agentcad.toml, else openscad)")
     p_export.add_argument("--variants", metavar="KNOB=v1,v2,...", default=None,
                           help="Export one file per value of KNOB, the value in each filename (a clearance plate)")
-    p_export.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
-                          help="Override a model parameter (repeatable)")
+    p_export.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
     p_export.set_defaults(func=cmd_export)
 
-    # info
+
+def _register_projects(sub, groups):
     p_info = sub.add_parser("info", help="Show engine and environment info")
     p_info.set_defaults(func=cmd_info)
 
-    # new-project
     p_newproj = sub.add_parser("new-project", help="Create a design project folder")
     p_newproj.add_argument("name", help="Project name")
     p_newproj.add_argument("-b", "--base-dir", help="Override output base directory")
@@ -1082,34 +1085,31 @@ def main():
     p_newproj.add_argument("-e", "--engine", default="openscad", help="CAD engine")
     p_newproj.set_defaults(func=cmd_new_project)
 
-    # projects
     p_projects = sub.add_parser("projects", help="List all AgentCAD projects")
     p_projects.set_defaults(func=cmd_projects)
 
-    # status
     p_status = sub.add_parser("status", help="Show project status")
     p_status.add_argument("project", help="Project name or path")
     p_status.set_defaults(func=cmd_status)
 
-    # open
     p_open = sub.add_parser("open", help="Print project path")
     p_open.add_argument("project", help="Project name")
     p_open.set_defaults(func=cmd_open)
 
-    # config init
     p_cinit = sub.add_parser("config-init", help="Create agentcad.toml in current dir")
     p_cinit.add_argument("-n", "--name", help="Project name (default: dir name)")
     p_cinit.add_argument("-d", "--description", default="", help="Description")
     p_cinit.add_argument("-f", "--force", action="store_true", help="Overwrite existing")
     p_cinit.set_defaults(func=cmd_config_init)
 
-    # config show
     p_cshow = sub.add_parser("config-show", help="Show resolved project config")
     p_cshow.set_defaults(func=cmd_config_show)
 
-    # viewer (regenerate HTML from existing files)
+
+def _register_probe(sub, groups):
     p_probe = sub.add_parser("probe", help="RECOVER: section loops, arc fits and an inventory of a STEP or build123d source")
     sub_probe = p_probe.add_subparsers(dest="probe_cmd", required=True)
+    groups["probe"] = sub_probe
     for name, func, hlp in (("section", cmd_probe_section, "Closed loops of exact edges on named planes (loops.json)"),
                             ("inventory", cmd_probe_inventory, "bbox, volume, census, cylinder axes, loops on planes")):
         pp = sub_probe.add_parser(name, help=hlp)
@@ -1118,7 +1118,7 @@ def main():
         pp.add_argument("--max-loops", type=int, default=None, help="Keep at most N loops per plane (printed when applied; default none)")
         pp.add_argument("--show", type=int, default=12, help="Lines to print per plane or face list (default 12)")
         pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
-        pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+        pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
         pp.set_defaults(func=func)
 
     pf = sub_probe.add_parser("fillet", help="Why a fillet fails: the selected chain on the LIVE part at the call, steps under 0.2 mm, sizes each edge takes")
@@ -1128,7 +1128,7 @@ def main():
     pf.add_argument("--radii", default=None, help="Comma-separated sizes to try (default 1.0,0.6,0.4,0.25)")
     pf.add_argument("--short", type=float, default=0.2, help="Edges and steps shorter than this are flagged (mm)")
     pf.add_argument("-o", "--output", default=None, help="Write the JSON record here")
-    pf.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    pf.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
     pf.set_defaults(func=cmd_probe_fillet)
 
     pd = sub_probe.add_parser("draft", help="Draft per face against a pull direction: release, drag, undercut; faces along the pull reported, not judged")
@@ -1138,32 +1138,35 @@ def main():
     pd.add_argument("--samples", type=int, default=7, help="Grid samples per face side (default 7)")
     pd.add_argument("--show", type=int, default=12, help="Failing faces to list (default 12)")
     pd.add_argument("-o", "--output", default=None, help="Write draft.json here")
-    pd.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    pd.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
     pd.set_defaults(func=cmd_probe_draft)
 
+
+def _register_gcode(sub, groups):
     p_gcode = sub.add_parser("gcode", help="READ what the slicer produced: decode .bgcode, block table, metadata, thumbnails")
     sub_gcode = p_gcode.add_subparsers(dest="gcode_cmd", required=True)
+    groups["gcode"] = sub_gcode
     pg = sub_gcode.add_parser("decode", help="A .bgcode as plain G-code (plain files pass through)")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("-o", "--output", default=None, help="Write here instead of stdout")
     pg.add_argument("--no-verify", action="store_true", help="Skip the CRC32 checks (says so on stderr)")
     pg.set_defaults(func=cmd_gcode_decode)
     pg = sub_gcode.add_parser("info", help="Header, block table, printer and print metadata, thumbnails")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("--no-verify", action="store_true", help="Skip the CRC32 checks")
     pg.set_defaults(func=cmd_gcode_info)
     pg = sub_gcode.add_parser("summary", help="Layers, filament, extrusion by object and feature, where supports are")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("--json", action="store_true", help="Print the summary record (schema agentcad.gcode.summary/1)")
     pg.set_defaults(func=cmd_gcode_summary)
     pg = sub_gcode.add_parser("check", help="Compare a sliced file's settings with the [slice] intent; exit 1 on an error")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("--project", default=None, help="Project folder or agentcad.toml carrying the [slice] table")
     pg.add_argument("--intent", default=None, help="Any TOML file with a [slice] table (a job.toml, for one)")
     pg.add_argument("--json", action="store_true", help="Findings as JSON, each with its sentence")
     pg.set_defaults(func=cmd_gcode_check)
     pg = sub_gcode.add_parser("supports", help="Where supports touch each object: contact bands (bed frame)")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("--contact-distance", type=float, default=None,
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
@@ -1173,7 +1176,7 @@ def main():
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     pg.set_defaults(func=cmd_gcode_supports)
     pg = sub_gcode.add_parser("view", help="A standalone page of the toolpaths: feature colours, toggles, layer range")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("-o", "--output", default=None, help="Page path (default: <file>.toolpaths.html)")
     pg.add_argument("--budget-mb", type=float, default=8.0, help="Embedded toolpath budget; over it, every Nth layer")
     pg.add_argument("--placement", default=None, help="Placement sidecar: mark support contact cells (red in a cavity)")
@@ -1182,26 +1185,32 @@ def main():
                     help="Write DIR/index.html as a page fragment (no document shell) plus files.json, for an artifact host")
     pg.set_defaults(func=cmd_gcode_view)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
-    pg.add_argument("file")
+    pg.add_argument("file", help=SLICED_FILE_HELP)
     pg.add_argument("-o", "--output", required=True, help="Directory to write into")
     pg.set_defaults(func=cmd_gcode_thumbnails)
 
+
+def _register_compare_fit(sub, groups):
     p_cmp = sub.add_parser("compare", help="COMPARE: loop counts per plane (a gate), sampled deviation, overlays")
-    p_cmp.add_argument("original")
-    p_cmp.add_argument("candidate")
-    p_cmp.add_argument("--planes", nargs="*", default=None)
+    p_cmp.add_argument("original", help="The reference part: STEP file or build123d program")
+    p_cmp.add_argument("candidate", help="The part compared with it: STEP file or build123d program")
+    p_cmp.add_argument("--planes", nargs="*", default=None,
+                       help="Section planes for the loop-count gate: x=|y=|z= followed by a number or mid "
+                            "(default: none, so no gate)")
     p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane (repeatable)")
     p_cmp.add_argument("-o", "--output-dir", default=None, help="Overlay PNGs and compare.json go here")
-    p_cmp.add_argument("--max-loops", type=int, default=None)
-    p_cmp.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
+    p_cmp.add_argument("--max-loops", type=int, default=None,
+                       help="Keep at most N loops per plane (printed when applied; default none)")
+    p_cmp.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
+                       help="Override a model parameter of a program input (repeatable)")
     p_cmp.set_defaults(func=cmd_compare)
 
     p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
     p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
     p_fit.add_argument("b", help="Second part, posed by --offset/--spin")
-    p_fit.add_argument("--offset", default=None, metavar="X,Y,Z")
+    p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
     p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
-    p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"])
+    p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
     p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
@@ -1209,22 +1218,25 @@ def main():
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
     p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
-    p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL")
-    p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL")
+    p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL", help="Override a parameter of part A (repeatable)")
+    p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL", help="Override a parameter of part B (repeatable)")
     p_fit.set_defaults(func=cmd_fit)
 
+
+def _register_viewers(sub, groups):
     p_gallery = sub.add_parser("gallery", help="Build or check a static gallery of project viewers")
     sub_gallery = p_gallery.add_subparsers(dest="gallery_cmd", required=True)
+    groups["gallery"] = sub_gallery
     p_gb = sub_gallery.add_parser("build", help="Build the gallery page and copy the viewers under it")
     p_gb.add_argument("-o", "--output", default="site", help="Gallery folder (default: site)")
     p_gb.add_argument("--projects", nargs="*", default=None, help="Project folder globs (default: every project under designs_dir)")
     p_gb.add_argument("--designs-dir", default=None, help="Designs directory to scan when --projects is not given")
-    p_gb.add_argument("--title", default="agentcad gallery")
+    p_gb.add_argument("--title", default="agentcad gallery", help="Page title (default: agentcad gallery)")
     p_gb.add_argument("--no-copy", action="store_true", help="Link the viewers in place instead of copying them")
     p_gb.add_argument("--max-mb", type=float, default=200.0, help="Size budget for copied viewers (default 200)")
     p_gb.set_defaults(func=cmd_gallery_build)
     p_gc = sub_gallery.add_parser("check", help="Verify every link and thumbnail of a built gallery")
-    p_gc.add_argument("gallery_dir")
+    p_gc.add_argument("gallery_dir", help="A gallery folder written by `agentcad gallery build`")
     p_gc.set_defaults(func=cmd_gallery_check)
 
     p_viewer = sub.add_parser("viewer", help="Regenerate HTML viewer from project files")
@@ -1235,15 +1247,16 @@ def main():
     p_viewer.add_argument("--title", default=None, help="Artifact title (default: the project name)")
     p_viewer.set_defaults(func=cmd_viewer)
 
-    # check
     p_check = sub.add_parser("check", help="Check HTML viewer for JS errors")
     p_check.add_argument("html_file", help="Path to index.html")
     p_check.add_argument("-t", "--timeout", type=int, default=10000, help="Timeout in ms (default: 10000)")
     p_check.set_defaults(func=cmd_check)
 
-    # session (nested subcommands)
+
+def _register_session(sub, groups):
     p_session = sub.add_parser("session", help="Manage design sessions (iterative feedback loop)")
     sub_session = p_session.add_subparsers(dest="session_command")
+    groups["session"] = sub_session
 
     p_ss = sub_session.add_parser("start", help="Start a new design session")
     p_ss.add_argument("project", help="Project name (folder under designs_dir) or path")
@@ -1292,13 +1305,58 @@ def main():
     p_sst.add_argument("project", help="Project name or path")
     p_sst.set_defaults(func=cmd_session_status)
 
-    args = parser.parse_args()
+
+_REGISTRARS = (
+    _register_render_export,
+    _register_projects,
+    _register_probe,
+    _register_gcode,
+    _register_compare_fit,
+    _register_viewers,
+    _register_session,
+)
+
+
+def _register_command_modules(sub, groups, packages):
+    """Let each module in ``packages`` add commands; report and skip a module that fails."""
+    for package in packages:
+        for info in sorted(pkgutil.iter_modules(package.__path__), key=lambda m: m.name):
+            name = f"{package.__name__}.{info.name}"
+            try:
+                module = importlib.import_module(name)
+                register = getattr(module, "register", None)
+                if callable(register):
+                    register(sub, groups)
+            except Exception as e:  # a broken command module must not take the whole CLI down
+                print(f"Warning: command module {name} was skipped: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def build_parser(command_packages=None):
+    """The whole command tree. ``command_packages`` defaults to ``agentcad.commands``."""
+    parser = argparse.ArgumentParser(
+        prog="agentcad",
+        description="Agentic feedback loop for parametric 3D CAD design",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    sub = parser.add_subparsers(dest="command")
+    groups = {}
+    for register in _REGISTRARS:
+        register(sub, groups)
+    if command_packages is None:
+        from agentcad import commands
+        command_packages = [commands]
+    _register_command_modules(sub, groups, command_packages)
+    return parser
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
         sys.exit(0)
     if args.command == "session" and not getattr(args, "session_command", None):
-        p_session.print_help()
-        sys.exit(0)
+        parser.parse_args(["session", "--help"])
     rc = args.func(args)
     if isinstance(rc, int) and rc:     # a command may return an exit status (gcode check: 1 on an error)
         sys.exit(rc)

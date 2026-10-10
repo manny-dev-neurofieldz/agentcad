@@ -5,12 +5,14 @@ packed (``toolpaths.pack``) within the budget; when layers were dropped to fit, 
 """
 
 import json
+from importlib import resources
 from pathlib import Path
 
 from agentcad.gcode.model import GCodeModel
 from agentcad.gcode.toolpaths import pack
 
-VENDOR = Path(__file__).resolve().parent.parent / "templates" / "vendor"
+# Package data located by the package's name, not by climbing from this file.
+VENDOR = resources.files("agentcad.templates") / "vendor"
 
 COLOURS = {
     "Perimeter": "#f2a03d", "External perimeter": "#e8661c", "Overhang perimeter": "#2a6fdb",
