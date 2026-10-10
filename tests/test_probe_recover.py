@@ -1,0 +1,1102 @@
+"""RECOVER curves: arcs inside section loops, loops as pasteable chains, drawn intent.
+
+Every fixture is synthetic and built here: polylines sampled exactly on known
+circles, so the radius, centre and sweep a recovery must return are known to
+rounding, and a deliberately broken tangent joint has a known size. Pure
+geometry tests need no CAD backend; the ones that section a real shape skip
+without build123d.
+"""
+
+import argparse
+import ast
+import json
+import math
+import random
+import re
+import sys
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from agentcad import cli, curves, policy as pol, probe
+from agentcad.engines import get_engine, list_engines
+
+# --- builders -----------------------------------------------------------------------------------
+
+def rad(deg):
+    return math.radians(deg)
+
+
+def arc_vertices(c, r, a0, sweep, step_deg):
+    """Vertices on the circle (centre c, radius r) from angle a0 through a signed sweep (degrees,
+    negative is clockwise): the start included, the end left to the next arc."""
+    n = max(2, int(math.ceil(abs(sweep) / step_deg)))
+    return [(c[0] + r * math.cos(rad(a0 + sweep * k / n)), c[1] + r * math.sin(rad(a0 + sweep * k / n)))
+            for k in range(n)]
+
+
+def trefoil_arcs(r_t=4.0, r_v=6.0, big_r=10.0, valley_radius=None, broken=0):
+    """Three convex lobes (radius r_t, counter-clockwise) and three concave valleys (radius r_v,
+    clockwise) around a ring of radius big_r, every neighbouring pair externally tangent. With
+    ``valley_radius`` the valley number ``broken`` keeps its end points but is drawn on a circle of that
+    radius, so both of its joints stop being tangent. Returns [(kind, centre, radius, start angle, sweep)]
+    in counter-clockwise loop order."""
+    order = [("lobe", 90), ("valley", 150), ("lobe", 210), ("valley", 270), ("lobe", 330), ("valley", 30)]
+    centres = [(big_r * math.cos(rad(a)), big_r * math.sin(rad(a))) for _, a in order]
+    radii = [r_t if kind == "lobe" else r_v for kind, _ in order]
+    n = len(order)
+    tangent = []
+    for k in range(n):
+        here, there = centres[k], centres[(k + 1) % n]
+        d = math.dist(here, there)
+        assert abs(d - (radii[k] + radii[(k + 1) % n])) < 1e-9, "the fixture must be tangent before it is broken"
+        tangent.append((here[0] + radii[k] * (there[0] - here[0]) / d, here[1] + radii[k] * (there[1] - here[1]) / d))
+    arcs = []
+    valley_seen = 0
+    for k, (kind, _) in enumerate(order):
+        c, r = centres[k], radii[k]
+        p0, p1 = tangent[k - 1], tangent[k]
+        if kind == "valley":
+            if valley_radius is not None and valley_seen == broken:
+                mid = ((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
+                half = math.dist(p0, p1) / 2
+                h = math.sqrt(valley_radius ** 2 - half ** 2)
+                away = (c[0] - mid[0], c[1] - mid[1])
+                norm = math.hypot(*away)
+                c = (mid[0] + h * away[0] / norm, mid[1] + h * away[1] / norm)
+                r = valley_radius
+            valley_seen += 1
+        a0 = math.degrees(math.atan2(p0[1] - c[1], p0[0] - c[0]))
+        a1 = math.degrees(math.atan2(p1[1] - c[1], p1[0] - c[0]))
+        sweep = (a1 - a0) % 360 if kind == "lobe" else -((a0 - a1) % 360)
+        arcs.append((kind, c, r, a0, sweep))
+    return arcs
+
+
+def ring_vertices(arcs, step_deg=1.0):
+    pts = []
+    for _, c, r, a0, sweep in arcs:
+        pts += arc_vertices(c, r, a0, sweep, step_deg)
+    return pts
+
+
+def lift(p, spec):
+    """A 2D point as the 3D point a section on ``spec`` would carry."""
+    axis, _, value = spec.partition("=")
+    v = float(value)
+    return {"x": [v, p[0], p[1]], "y": [p[0], v, p[1]], "z": [p[0], p[1], v]}[axis]
+
+
+def line_edge(p, q, spec="z=0"):
+    a, b = lift(p, spec), lift(q, spec)
+    return {"type": "line", "start": a, "end": b, "length": math.dist(a, b),
+            "center": None, "radius": None, "sweep_deg": None, "via": None}
+
+
+def arc_edge(c, r, a0, sweep, spec="z=0"):
+    """An exact circular edge as section_loops records it: start, end, centre, radius, the length-derived
+    sweep and a point a quarter of the way along, which fixes the direction."""
+    def at(a):
+        return (c[0] + r * math.cos(rad(a)), c[1] + r * math.sin(rad(a)))
+    return {"type": "circle", "start": lift(at(a0), spec), "end": lift(at(a0 + sweep), spec),
+            "length": abs(rad(sweep)) * r, "center": lift(c, spec), "radius": r, "sweep_deg": abs(sweep),
+            "via": lift(at(a0 + sweep / 4), spec)}
+
+
+def loop_of(edges, closed=True):
+    return {"edges": edges, "closed": closed, "n_edges": len(edges),
+            "length": sum(e["length"] for e in edges), "fit": None}
+
+
+def polyline_loop(points, spec="z=0", closed=True):
+    n = len(points)
+    last = n if closed else n - 1
+    return loop_of([line_edge(points[k], points[(k + 1) % n], spec) for k in range(last)], closed)
+
+
+def shoelace(points):
+    return 0.5 * sum(points[k][0] * points[(k + 1) % len(points)][1] - points[(k + 1) % len(points)][0] * points[k][1]
+                     for k in range(len(points)))
+
+
+def slot_vertices(half=5.0, r=3.0, step_deg=2.0):
+    """A stadium: a line along the bottom, a semicircle round each end, a line along the top; counter-clockwise."""
+    return (arc_vertices((half, 0), r, -90, 180, step_deg) + [(half, r)]
+            + arc_vertices((-half, 0), r, 90, 180, step_deg) + [(-half, -r)])
+
+
+def match(arcs, kind, centre, radius):
+    """The one recovered arc near a drawn one (by centre and rough radius); the caller then checks its numbers."""
+    near = [s for s in arcs if s["kind"] == "arc" and math.dist(s["center"], centre) < 0.05 and abs(s["radius"] - radius) < 0.5]
+    assert len(near) == 1, f"{kind} arc at {centre}: {len(near)} candidates in {arcs}"
+    return near[0]
+
+
+# --- the builders themselves ----------------------------------------------------------------------
+
+def test_the_trefoil_fixture_is_closed_and_enclosed_counter_clockwise():
+    arcs = trefoil_arcs()
+    assert [round(a[4]) for a in arcs] == [240, -120, 240, -120, 240, -120]
+    assert sum(a[4] for a in arcs) == pytest.approx(360.0)           # the tangent turns add to one revolution
+    assert shoelace(ring_vertices(arcs)) > 0
+
+
+# --- arcs -----------------------------------------------------------------------------------------
+
+def test_a_polylined_trefoil_comes_back_as_six_arcs_of_the_radii_it_was_drawn_with():
+    arcs = trefoil_arcs()
+    rec = curves.recover_loop(polyline_loop(ring_vertices(arcs)), "z=0")
+    got = rec["segments"]
+    assert [s["kind"] for s in got] == ["arc"] * 6 and rec["closed"] and rec["orientation"] == "ccw"
+    for kind, c, r, a0, sweep in arcs:
+        s = match(got, kind, c, r)
+        assert abs(s["radius"] - r) < 1e-3                             # the spec's gate
+        assert abs(s["radius"] - r) < 1e-6                             # exact vertices give exact fits
+        assert math.dist(s["center"], c) < 1e-6
+        assert abs(s["sweep_deg"] - abs(sweep)) < 0.05
+        assert s["direction"] == ("ccw" if kind == "lobe" else "cw")
+        assert s["convex"] == (kind == "lobe")
+        assert s["rms"] < 1e-6 and s["source"] == "fit"
+
+
+def test_every_joint_of_a_correct_trefoil_is_judged_tangent_and_the_gap_is_stated():
+    rec = curves.recover_loop(polyline_loop(ring_vertices(trefoil_arcs())), "z=0", tangent_tol=0.01)
+    assert len(rec["joints"]) == 6
+    for j in rec["joints"]:
+        assert j["verdict"] == "tangent" and j["kind"] == "arc-arc"
+        assert j["expected"] == "external"                              # a lobe turns the other way from a valley
+        assert abs(j["gap"]) < 1e-6 and j["kink_deg"] < 0.01 and j["tol"] == 0.01
+    assert rec["params"]["tangent_tol"] == 0.01
+    assert curves.joint_counts(rec) == {"tangent": 6, "kinked": 0, "not tangent": 0, "corner": 0, "skipped": 0}
+
+
+@pytest.mark.parametrize("valley_radius,verdict", [(7.0, "not tangent"), (6.1, "kinked")])
+def test_a_deliberately_broken_joint_is_flagged_and_its_neighbours_are_not(valley_radius, verdict):
+    arcs = trefoil_arcs(valley_radius=valley_radius, broken=0)
+    rec = curves.recover_loop(polyline_loop(ring_vertices(arcs)), "z=0", tangent_tol=0.01)
+    segs, joints = rec["segments"], rec["joints"]
+    k = [i for i, s in enumerate(segs) if abs(s["radius"] - valley_radius) < 1e-3]
+    assert len(k) == 1, "the re-drawn valley is recovered at the radius it was drawn with"
+    k = k[0]
+    flagged = {j["index"] for j in joints if j["verdict"] != "tangent"}
+    assert flagged == {(k - 1) % 6, k}                                 # exactly the two joints on that valley
+    for j in joints:
+        if j["index"] in flagged:
+            assert j["verdict"] == verdict
+        else:
+            assert j["verdict"] == "tangent" and abs(j["gap"]) < 1e-6 and j["kink_deg"] < 0.01
+    if verdict == "kinked":
+        # the gap is second order in the crossing angle: these circles cross at 1.6 degrees and their
+        # centres are under a thousandth of a millimetre off the tangent distance, so by the gap alone
+        # both joints would pass. They are not called "not tangent" (the stated test), but they are not
+        # called tangent either.
+        assert all(abs(j["gap"]) < 0.001 and 1.0 < j["kink_deg"] < 2.5 for j in joints if j["index"] in flagged)
+    else:
+        assert all(abs(j["gap"]) > 0.01 for j in joints if j["index"] in flagged)
+    shown = curves.render_arcs(rec)
+    word = "NOT TANGENT" if verdict == "not tangent" else "KINKED"
+    assert sum(word in line for line in shown) == 2                    # one line per flagged joint, no more
+    assert sum("NOT TANGENT" in line for line in shown) == (2 if verdict == "not tangent" else 0)
+
+
+def test_a_hundredth_of_a_millimetre_of_radius_is_inside_the_stated_tolerance():
+    """The opposite polarity: a gate that refuses everything is not a gate. A valley drawn 0.01 mm off
+    crosses its lobes at 0.16 degrees with a gap of 1e-5 mm: tangent at the default tolerance, and not
+    tangent at a tighter stated one."""
+    arcs = trefoil_arcs(valley_radius=6.01, broken=0)
+    loop = polyline_loop(ring_vertices(arcs))
+    assert all(j["verdict"] == "tangent" for j in curves.recover_loop(loop, "z=0")["joints"])
+    tight = curves.recover_loop(loop, "z=0", tangent_tol=1e-6)["joints"]
+    assert sum(j["verdict"] == "not tangent" for j in tight) == 2
+
+
+def test_the_vertex_order_and_the_start_do_not_change_the_answer():
+    pts = ring_vertices(trefoil_arcs())
+    base = curves.recover_loop(polyline_loop(pts), "z=0")["segments"]
+    for variant in (list(reversed(pts)), pts[37:] + pts[:37], list(reversed(pts[91:] + pts[:91]))):
+        rec = curves.recover_loop(polyline_loop(variant), "z=0")
+        assert rec["orientation"] == "ccw"
+        key = lambda segs: sorted((round(s["center"][0], 4), round(s["center"][1], 4), round(s["radius"], 4), s["direction"])
+                                  for s in segs)
+        assert key(rec["segments"]) == key(base)
+
+
+def test_a_slot_is_two_lines_and_two_end_arcs_with_line_to_arc_tangency():
+    pts = slot_vertices()
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    kinds = sorted(s["kind"] for s in rec["segments"])
+    assert kinds == ["arc", "arc", "line", "line"]
+    for s in rec["segments"]:
+        if s["kind"] == "arc":
+            assert abs(s["radius"] - 3.0) < 1e-3 and s["direction"] == "ccw" and s["convex"]
+            assert abs(s["sweep_deg"] - 180.0) < 0.5
+        else:
+            assert abs(s["length"] - 10.0) < 1e-6 and s["rms"] < 1e-9
+    assert all(j["verdict"] == "tangent" for j in rec["joints"])
+    assert {j["kind"] for j in rec["joints"]} == {"arc-line", "line-arc"}
+
+
+def test_a_polylined_circle_is_one_full_arc():
+    pts = arc_vertices((3.0, -2.0), 7.5, 17.0, 360.0, 3.0)
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    (s,) = rec["segments"]
+    assert s["kind"] == "arc" and abs(s["radius"] - 7.5) < 1e-3 and math.dist(s["center"], (3.0, -2.0)) < 1e-3
+    assert abs(s["sweep_deg"] - 360.0) < 1e-6 and s["direction"] == "ccw"
+    assert s["p0"] == s["p1"]                                          # a full circle starts and ends at one point
+    assert rec["joints"][0]["verdict"] == "tangent"                    # the circle meets itself smoothly
+
+
+def test_a_rectangle_is_four_lines_and_four_corners_never_an_arc():
+    rec = curves.recover_loop(polyline_loop([(0, 0), (20, 0), (20, 10), (0, 10)]), "z=0")
+    assert [s["kind"] for s in rec["segments"]] == ["line"] * 4
+    assert [j["verdict"] for j in rec["joints"]] == ["corner"] * 4
+    assert all(abs(j["kink_deg"] - 90.0) < 1e-6 for j in rec["joints"])
+
+
+def test_a_regular_octagon_is_eight_lines_because_its_turns_are_corners():
+    pts = [(10 * math.cos(rad(45 * k)), 10 * math.sin(rad(45 * k))) for k in range(8)]
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    assert [s["kind"] for s in rec["segments"]] == ["line"] * 8
+
+
+def test_noise_leaves_the_structure_and_shows_up_as_rms():
+    rng = random.Random(7)
+    pts = [(x + rng.gauss(0, 2e-5), y + rng.gauss(0, 2e-5)) for x, y in ring_vertices(trefoil_arcs())]
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    assert [s["kind"] for s in rec["segments"]] == ["arc"] * 6
+    for kind, c, r, a0, sweep in trefoil_arcs():
+        s = match(rec["segments"], kind, c, r)
+        assert abs(s["radius"] - r) < 5e-3
+        assert 5e-6 < s["rms"] < 1e-4
+    assert all(j["verdict"] == "tangent" for j in rec["joints"])
+
+
+def test_the_section_planes_own_axes_decide_the_2d_frame():
+    arcs = trefoil_arcs()
+    spec = "y=2.5"
+    rec = curves.recover_loop(polyline_loop(ring_vertices(arcs), spec=spec), spec)
+    assert rec["axes"] == ["x", "z"]                                    # y= keeps (x, z), as the overlay draws it
+    for kind, c, r, a0, sweep in arcs:
+        s = match(rec["segments"], kind, c, r)
+        assert abs(s["radius"] - r) < 1e-6
+    assert curves.recover_loop(polyline_loop(ring_vertices(arcs), spec="x=-1"), "x=-1")["axes"] == ["y", "z"]
+    assert rec["segments"][0]["p0"] is not None and len(rec["segments"][0]["p0"]) == 2
+
+
+# --- exact edges ------------------------------------------------------------------------------------
+
+def slot_edges(clockwise=False, spec="z=0"):
+    """The slot of a plate as the section records it: two lines and two exact semicircles."""
+    ccw = [arc_edge((5, 0), 3, -90, 180, spec), line_edge((5, 3), (-5, 3), spec),
+           arc_edge((-5, 0), 3, 90, 180, spec), line_edge((-5, -3), (5, -3), spec)]
+    if not clockwise:
+        return ccw
+    return [arc_edge((5, 0), 3, 90, -180, spec), line_edge((5, -3), (-5, -3), spec),
+            arc_edge((-5, 0), 3, -90, -180, spec), line_edge((-5, 3), (5, 3), spec)]
+
+
+@pytest.mark.parametrize("clockwise", [False, True])
+def test_exact_arcs_keep_their_numbers_and_the_loop_is_read_counter_clockwise(clockwise):
+    rec = curves.recover_loop(loop_of(slot_edges(clockwise)), "z=0")
+    assert rec["orientation"] == "ccw"
+    arcs = [s for s in rec["segments"] if s["kind"] == "arc"]
+    assert len(arcs) == 2 and all(s["source"] == "edge" and s["rms"] == 0.0 for s in arcs)
+    for s in arcs:
+        assert s["radius"] == 3.0 and s["direction"] == "ccw" and s["convex"]
+        assert abs(s["sweep_deg"] - 180.0) < 1e-9                       # a semicircle: the endpoints cannot say which way
+    assert sorted(round(s["center"][0], 6) for s in arcs) == [-5.0, 5.0]
+    assert all(j["verdict"] == "tangent" and abs(j["gap"]) < 1e-9 for j in rec["joints"])
+
+
+def test_a_full_circle_edge_is_read_in_the_loops_direction():
+    hole_cw = loop_of([arc_edge((1, 2), 4, 0, -360)])
+    hole_ccw = loop_of([arc_edge((1, 2), 4, 0, 360)])
+    for loop in (hole_cw, hole_ccw):
+        (s,) = curves.recover_loop(loop, "z=0")["segments"]
+        assert s["kind"] == "arc" and s["direction"] == "ccw" and abs(s["sweep_deg"] - 360.0) < 1e-9
+        assert s["p0"] == s["p1"] and s["radius"] == 4.0
+
+
+def test_a_half_disc_is_one_fitted_arc_and_the_long_edge_across_it():
+    """A polylined semicircle and one long exact line: the run is fitted, the single edge passes through."""
+    pts = arc_vertices((0, 0), 5, 0, 180, 2.0) + [(-5.0, 0.0)]
+    edges = [line_edge(pts[k], pts[k + 1]) for k in range(len(pts) - 1)]
+    edges.append(line_edge((-5, 0), (5, 0)))
+    rec = curves.recover_loop(loop_of(edges), "z=0")
+    assert sorted(s["kind"] for s in rec["segments"]) == ["arc", "line"]
+    arc = [s for s in rec["segments"] if s["kind"] == "arc"][0]
+    assert abs(arc["radius"] - 5.0) < 1e-6 and abs(arc["sweep_deg"] - 180.0) < 0.5
+
+
+# --- what is reported rather than guessed ---------------------------------------------------------------
+
+def test_an_edge_that_is_neither_a_line_nor_an_arc_is_reported_and_its_joints_are_skipped():
+    edges = [line_edge((0, 0), (10, 0)),
+             {"type": "bspline", "start": [10, 0, 0], "end": [10, 6, 0], "length": 6.4,
+              "center": None, "radius": None, "sweep_deg": None, "via": None},
+             line_edge((10, 6), (0, 6)), line_edge((0, 6), (0, 0))]
+    rec = curves.recover_loop(loop_of(edges), "z=0")
+    assert [u["type"] for u in rec["unsupported"]] == ["bspline"]
+    assert rec["unsupported"][0]["start"] == [10.0, 0.0] and rec["unsupported"][0]["length"] == 6.4
+    assert sorted(s["kind"] for s in rec["segments"]) == ["line", "line", "line", "other"]
+    assert curves.joint_counts(rec) == {"tangent": 0, "kinked": 0, "not tangent": 0, "corner": 2, "skipped": 2}
+    assert any("bspline" in line and "REPORTED" in line for line in curves.render_arcs(rec))
+
+
+def test_a_circle_edge_without_a_direction_point_is_reported_not_guessed():
+    e = arc_edge((0, 0), 3, 0, 180)
+    e["via"] = None
+    rec = curves.recover_loop(loop_of([e, line_edge((-3, 0), (3, 0))]), "z=0")
+    assert [u["type"] for u in rec["unsupported"]] == ["circle"] and "direction" in rec["unsupported"][0]["why"]
+
+
+def test_edges_that_do_not_close_are_said_to_be_open():
+    rec = curves.recover_loop(polyline_loop([(0, 0), (4, 0), (4, 3)], closed=False), "z=0")
+    assert rec["closed"] is False and rec["orientation"] is None
+    assert any("open" in n for n in rec["notes"])
+    assert [s["kind"] for s in rec["segments"]] == ["line", "line"]
+    assert all(s.get("convex") is None for s in rec["segments"])
+
+
+def test_the_report_names_each_arc_with_its_numbers_and_never_hides_a_cap():
+    rec = curves.recover_loop(polyline_loop(ring_vertices(trefoil_arcs())), "z=0")
+    text = "\n".join(curves.render_arcs(rec, show=3))
+    assert "r 4.0000" in text and "ccw" in text and "cw" in text and "rms" in text and "convex" in text
+    assert "3 more segment" in text and "not listed" in text           # six arcs, three shown: the cap is stated
+    assert "fit-tol 0.005" in text and "tangent-tol 0.01" in text      # and so are the tolerances
+
+
+def filleted_polygon(corners, radii, step_deg):
+    """A counter-clockwise convex polygon with a circular fillet of the stated radius at every corner:
+    the outline's vertices (arcs sampled every step_deg, each side left as one edge) and the arcs drawn."""
+    k = len(corners)
+    pts, arcs = [], []
+    for i in range(k):
+        before, here, after = (math.hypot(0, 0),) * 0 or (corners[i - 1], corners[i], corners[(i + 1) % k])
+        u = (before[0] - here[0], before[1] - here[1])
+        w = (after[0] - here[0], after[1] - here[1])
+        u = (u[0] / math.hypot(*u), u[1] / math.hypot(*u))
+        w = (w[0] / math.hypot(*w), w[1] / math.hypot(*w))
+        phi = math.acos(max(-1.0, min(1.0, u[0] * w[0] + u[1] * w[1])))
+        reach = radii[i] / math.tan(phi / 2)
+        bis = (u[0] + w[0], u[1] + w[1])
+        bis = (bis[0] / math.hypot(*bis), bis[1] / math.hypot(*bis))
+        centre = (here[0] + bis[0] * radii[i] / math.sin(phi / 2), here[1] + bis[1] * radii[i] / math.sin(phi / 2))
+        t1 = (here[0] + u[0] * reach, here[1] + u[1] * reach)
+        t2 = (here[0] + w[0] * reach, here[1] + w[1] * reach)
+        a0 = math.degrees(math.atan2(t1[1] - centre[1], t1[0] - centre[0]))
+        sweep = (math.degrees(math.atan2(t2[1] - centre[1], t2[0] - centre[0])) - a0) % 360
+        pts += arc_vertices(centre, radii[i], a0, sweep, step_deg) + [t2]
+        arcs.append((centre, radii[i], sweep))
+    return pts, arcs
+
+
+def read_counts(points):
+    rec = curves.recover_loop(polyline_loop(points), "z=0")
+    arcs = [s for s in rec["segments"] if s["kind"] == "arc"]
+    lines = [s for s in rec["segments"] if s["kind"] == "line"]
+    return rec, arcs, lines
+
+
+def test_a_short_side_between_coarsely_sampled_arcs_is_a_line_and_needs_both_its_boundaries_moved_together(monkeypatch):
+    """At 5 degree steps the short side and one vertex from each neighbour fit one shallow arc of four
+    vertices, and giving back either vertex alone leaves three that fit nothing."""
+    pts, drawn = filleted_polygon([(10, 2), (0, 6), (-5, -5), (5, -5)], [4.0, 2.5, 5.0, 2.0], 5.0)
+    rec, arcs, lines = read_counts(pts)
+    assert (len(arcs), len(lines)) == (4, 4) and all(j["verdict"] == "tangent" for j in rec["joints"])
+    for centre, radius, sweep in drawn:
+        s = match(arcs, "fillet", centre, radius)
+        assert abs(s["radius"] - radius) < 1e-3 and abs(s["sweep_deg"] - sweep) < 1e-3
+    monkeypatch.setattr(curves, "_refine_short", lambda *a, **k: False)         # the control
+    rec, arcs, lines = read_counts(pts)
+    assert not ((len(arcs), len(lines)) == (4, 4) and all(j["verdict"] == "tangent" for j in rec["joints"]))
+
+
+def random_rounded_polygon(rng, step_deg, scatter):
+    """A random convex polygon of 4 to 7 corners, each filleted at a random radius that leaves part of both
+    sides straight, sampled every ``step_deg`` with ``scatter`` mm of noise on every vertex; None if the draw
+    is not convex enough to fillet."""
+    k = rng.randint(4, 7)
+    angles = sorted(rng.uniform(0, 2 * math.pi) for _ in range(k))
+    gaps = [(angles[(i + 1) % k] - angles[i]) % (2 * math.pi) for i in range(k)]
+    if max(gaps) > 0.85 * math.pi or min(gaps) < 0.35:
+        return None
+    ax, by = rng.uniform(8, 20), rng.uniform(8, 20)
+    corners = [(ax * math.cos(a), by * math.sin(a)) for a in angles]
+    radii = []
+    for i in range(k):
+        before, here, after = corners[i - 1], corners[i], corners[(i + 1) % k]
+        u = (before[0] - here[0], before[1] - here[1])
+        w = (after[0] - here[0], after[1] - here[1])
+        phi = math.acos(max(-1.0, min(1.0, (u[0] * w[0] + u[1] * w[1]) / (math.hypot(*u) * math.hypot(*w)))))
+        if not math.radians(35) < phi < math.radians(150):
+            return None
+        radii.append(rng.uniform(0.3, 1.0) * 0.45 * min(math.hypot(*u), math.hypot(*w)) * math.tan(phi / 2))
+    pts, arcs = filleted_polygon(corners, radii, step_deg)
+    return [(x + rng.gauss(0, scatter), y + rng.gauss(0, scatter)) for x, y in pts], arcs
+
+
+@pytest.mark.parametrize("seed", list(range(24)) + [29, 221, 575])
+def test_generated_rounded_polygons_come_back_with_their_arcs_lines_radii_and_tangent_joints(seed):
+    """Ground truth nobody tuned the algorithm against: each seed is a different random polygon, step
+    (0.25 to 5 degrees) and scatter (0 to 3e-5 mm). The hand-made fixtures above missed 30 failing
+    configurations of this generator; a fixed set of seeds keeps that from coming back. Seeds 29 and 221
+    (exact data) and 575 (with scatter) are loops at 5 degrees where a long straight side and one vertex of
+    each neighbour fitted a four-vertex arc of radius 100 to 300 mm."""
+    rng = random.Random(seed)
+    step, scatter = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0][seed % 6], [0.0, 0.0, 1e-5, 3e-5][seed % 4]
+    drawn = None
+    while drawn is None:
+        drawn = random_rounded_polygon(rng, step, scatter)
+    pts, arcs = drawn
+    rec, got_arcs, got_lines = read_counts(pts)
+    assert (len(got_arcs), len(got_lines)) == (len(arcs), len(arcs)), f"seed {seed}: {rec['segments']}"
+    for centre, radius, sweep in arcs:
+        nearest = min(got_arcs, key=lambda s: math.dist(s["center"], centre) + abs(s["radius"] - radius))
+        assert math.dist(nearest["center"], centre) < 0.3, f"seed {seed}: no arc near the one of radius {radius}"
+        assert abs(nearest["radius"] - radius) < 2e-3 + 400 * scatter, f"seed {seed}: radius {radius}"
+    assert [j["verdict"] for j in rec["joints"]] == ["tangent"] * len(rec["joints"])
+
+
+def test_a_bend_under_the_corner_angle_that_is_not_an_arc_stays_two_lines():
+    """Three vertices cannot show an arc, so a 20 degree bend between long edges is two lines and a joint
+    that says how far they turn, not a corner and not a circle."""
+    pts = [(0, 0), (10, 0), (20, 3.6), (20, 10), (0, 10)]
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    assert [s["kind"] for s in rec["segments"]] == ["line"] * 5
+    turns = sorted(round(j["kink_deg"]) for j in rec["joints"])
+    assert 20 in turns and all(j["verdict"] == "corner" for j in rec["joints"])
+
+
+def test_repeated_vertices_and_zero_length_edges_change_nothing():
+    pts = arc_vertices((3.0, -2.0), 7.5, 17.0, 360.0, 3.0)
+    doubled = [p for p in pts for _ in (0, 1)]
+    (a,) = curves.recover_loop(polyline_loop(doubled), "z=0")["segments"]
+    assert abs(a["radius"] - 7.5) < 1e-6 and abs(a["sweep_deg"] - 360.0) < 1e-6
+    closed_twice = curves.recover_loop(polyline_loop(pts + [pts[0]]), "z=0")["segments"]
+    assert len(closed_twice) == 1 and abs(closed_twice[0]["radius"] - 7.5) < 1e-6
+    nothing = curves.recover_loop(polyline_loop([(1, 1), (1, 1)]), "z=0")
+    assert nothing["segments"] == [] and nothing["joints"] == [] and "no length" in nothing["notes"][-1]
+
+
+def test_an_empty_loop_and_a_stray_edge_are_said_to_be_so():
+    empty = curves.recover_loop(loop_of([]), "z=0")
+    assert empty["segments"] == [] and "no edges" in empty["notes"][0]
+    out = curves.chain_literal(empty)
+    assert out["complete"] is False and literal_of(out["text"]) == []
+    square = polyline_loop([(0, 0), (4, 0), (4, 4), (0, 4)])
+    square["edges"].append(line_edge((50, 50), (60, 60)))
+    rec = curves.recover_loop(square, "z=0")
+    assert len(rec["segments"]) == 4 and any("1 of 5 edge(s) did not join" in n and "edges 4" in n for n in rec["notes"])
+    assert any(line.strip().startswith("note:") and "did not join" in line for line in curves.render_arcs(rec))
+
+
+def test_signed_curvature_is_one_over_the_radius_and_negative_when_turning_right():
+    ccw = np.array(arc_vertices((1.0, 2.0), 4.0, 0.0, 360.0, 10.0))
+    assert curves.signed_curvature(ccw, cyclic=True) == pytest.approx(np.full(len(ccw), 0.25))
+    assert curves.signed_curvature(ccw[::-1], cyclic=True) == pytest.approx(np.full(len(ccw), -0.25))
+    open_chain = np.array(arc_vertices((0.0, 0.0), 4.0, 0.0, 90.0, 10.0))
+    k = curves.signed_curvature(open_chain)
+    assert k[0] == k[1] and k[-1] == k[-2] and k == pytest.approx(np.full(len(k), 0.25))
+    assert curves.signed_curvature(np.array([[0.0, 0.0], [1.0, 0.0]])).tolist() == [0.0, 0.0]
+
+
+# --- chains -------------------------------------------------------------------------------------------
+
+HAS_B123D = "build123d" in list_engines() and get_engine("build123d").available()
+needs_build123d = pytest.mark.skipif(not HAS_B123D, reason="build123d backend not available")
+
+
+def policy_recipe():
+    """The ``chain_face`` function printed in the policy, compiled: what the policy tells a reader to run is
+    what these tests run."""
+    code = re.search(r"^```python\n(.*?)^```", pol.get_policy("probe-recover").text, flags=re.S | re.M).group(1)
+    namespace = {}
+    exec(code, namespace)
+    return namespace["chain_face"]
+
+
+def chain_face(chain, plane=None):
+    """A Face from a chain literal, by the policy's recipe."""
+    recipe = policy_recipe()
+    return recipe(chain) if plane is None else recipe(chain, plane)
+
+
+def literal_of(text, name="LOOP"):
+    """The list a chain literal assigns, parsed (not executed) so the test reads exactly what a program would."""
+    tree = ast.parse(text)
+    (assign,) = [n for n in tree.body if isinstance(n, ast.Assign) and n.targets[0].id == name]
+    return ast.literal_eval(assign.value)
+
+
+def test_a_chain_literal_is_python_whose_segments_share_end_points_exactly():
+    rec = curves.recover_loop(polyline_loop(slot_vertices()), "z=0")
+    out = curves.chain_literal(rec, name="SLOT", header="loop 1 of z=0")
+    chain = literal_of(out["text"], "SLOT")
+    assert sorted(seg[0] for seg in chain) == ["arc", "arc", "line", "line"] and out["complete"]
+    end = lambda seg: seg[2] if seg[0] == "line" else seg[4]
+    start = lambda seg: seg[1] if seg[0] == "line" else seg[3]
+    for k, seg in enumerate(chain):
+        assert end(seg) == start(chain[(k + 1) % len(chain)])           # equal as numbers, wrap-around included
+    arcs = [s for s in chain if s[0] == "arc"]
+    assert all(abs(s[2] - 3.0) < 1e-3 and s[5] == "ccw" for s in arcs) and out["text"].startswith("# loop 1 of z=0")
+    assert "Plane.XY" in out["text"]
+
+
+def test_the_chain_names_the_plane_its_coordinates_belong_to():
+    spec = "y=2.5"
+    rec = curves.recover_loop(polyline_loop(slot_vertices(), spec=spec), spec)
+    assert "Plane.XZ" in curves.chain_literal(rec)["text"]
+    spec = "x=-1"
+    rec = curves.recover_loop(polyline_loop(slot_vertices(), spec=spec), spec)
+    assert "Plane.YZ" in curves.chain_literal(rec)["text"]
+
+
+@needs_build123d
+@pytest.mark.parametrize("make", ["trefoil", "slot", "exact_slot", "circle"])
+def test_a_chain_literal_fed_to_build123d_closes_into_a_face_of_the_loops_area(make):
+    if make == "trefoil":
+        pts = ring_vertices(trefoil_arcs())
+        loop, area = polyline_loop(pts), shoelace(pts)
+    elif make == "slot":
+        pts = slot_vertices()
+        loop, area = polyline_loop(pts), shoelace(pts)
+    elif make == "circle":
+        pts = arc_vertices((3.0, -2.0), 7.5, 17.0, 360.0, 3.0)
+        loop, area = polyline_loop(pts), shoelace(pts)
+    else:
+        loop, area = loop_of(slot_edges(clockwise=True)), math.pi * 9 + 60.0
+    rec = curves.recover_loop(loop, "z=0")
+    chain = literal_of(curves.chain_literal(rec)["text"])
+    face = chain_face(chain)
+    assert face.is_valid and abs(face.area - area) / area < 1e-3          # the gate: within 0.1 percent
+    assert len(face.wires()) == 1 and face.wire().is_closed
+
+
+@needs_build123d
+def test_the_chain_of_a_plane_other_than_z_lands_on_the_sections_own_coordinates():
+    from build123d import Plane
+    spec = "y=2.5"
+    rec = curves.recover_loop(polyline_loop(slot_vertices(), spec=spec), spec)
+    face = chain_face(literal_of(curves.chain_literal(rec)["text"]), Plane.XZ)
+    bb = face.bounding_box()
+    assert (bb.min.X, bb.max.X) == pytest.approx((-8.0, 8.0), abs=1e-3)
+    assert (bb.min.Z, bb.max.Z) == pytest.approx((-3.0, 3.0), abs=1e-3)       # (x, z): the slot lies along x
+
+
+def chamfered_rectangle(c=0.01):
+    """A 20 x 10 rectangle whose four corners each carry a 45 degree chamfer of leg ``c``: four long sides and
+    four slivers of length c * sqrt(2)."""
+    return [(c, 0), (20 - c, 0), (20, c), (20, 10 - c), (20 - c, 10), (c, 10), (0, 10 - c), (0, c)]
+
+
+def test_slivers_shorter_than_the_stated_length_are_merged_and_counted():
+    rec = curves.recover_loop(polyline_loop(chamfered_rectangle()), "z=0")
+    assert len(rec["segments"]) == 8                                    # recovery keeps them: they are edges
+    out = curves.chain_literal(rec, min_len=0.02)
+    assert len(literal_of(out["text"])) == 4 and len(out["slivers"]) == 4
+    assert all(s["length"] < 0.02 and s["kind"] == "line" for s in out["slivers"])
+    assert "4 sliver(s) shorter than 0.02 mm merged" in out["text"]
+    for k, seg in enumerate(out["segments"]):
+        assert seg["p1"] == out["segments"][(k + 1) % 4]["p0"]
+    kept = curves.chain_literal(rec, min_len=0.005)
+    assert len(literal_of(kept["text"])) == 8 and kept["slivers"] == []
+
+
+@needs_build123d
+def test_a_chain_with_its_slivers_merged_still_makes_the_same_face():
+    pts = chamfered_rectangle()
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    face = chain_face(literal_of(curves.chain_literal(rec, min_len=0.02)["text"]))
+    assert abs(face.area - shoelace(pts)) / shoelace(pts) < 1e-3
+
+
+BSPLINE = {"type": "bspline", "center": None, "radius": None, "sweep_deg": None, "via": None}
+
+
+def bspline_edge(p, q, length):
+    return dict(BSPLINE, start=[p[0], p[1], 0], end=[q[0], q[1], 0], length=length)
+
+
+def test_a_sliver_after_an_unsupported_edge_is_covered_by_the_line_that_follows_not_stretched_over_the_gap():
+    edges = [line_edge((0, 0), (10, 0)), bspline_edge((10, 0), (10, 5), 5.2), line_edge((10, 5), (10.005, 5.005)),
+             line_edge((10.005, 5.005), (10, 10)), line_edge((10, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    rec = curves.recover_loop(loop_of(edges), "z=0")
+    out = curves.chain_literal(rec, min_len=0.02)
+    chain = literal_of(out["text"])
+    assert len(out["slivers"]) == 1 and out["complete"] is False
+    follows = [seg for seg in chain if seg[0] == "line" and seg[2][1] == 10.0 and seg[2][0] == 10.0]
+    assert follows and follows[0][1] == (10.0, 5.0)         # it now starts where the spline ended, not 0.005 mm past it
+
+
+def test_a_sliver_before_an_unsupported_edge_is_covered_by_the_line_before_it():
+    edges = [line_edge((0, 0), (10, 0)), line_edge((10, 0), (10.005, 0.005)), bspline_edge((10.005, 0.005), (10, 10), 10.1),
+             line_edge((10, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    out = curves.chain_literal(curves.recover_loop(loop_of(edges), "z=0"), min_len=0.02)
+    chain = literal_of(out["text"])
+    assert len(out["slivers"]) == 1
+    first = [seg for seg in chain if seg[0] == "line" and seg[1] == (0.0, 0.0)][0]
+    assert first[2] == (10.005, 0.005)                    # it runs on to where the spline begins
+
+
+def test_a_sliver_between_two_unsupported_edges_stays_and_is_listed():
+    edges = [line_edge((0, 0), (10, 0)), bspline_edge((10, 0), (10, 5), 5.2), line_edge((10, 5), (10.005, 5.005)),
+             bspline_edge((10.005, 5.005), (10, 10), 5.2), line_edge((10, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    out = curves.chain_literal(curves.recover_loop(loop_of(edges), "z=0"), min_len=0.02)
+    assert out["slivers"] == [] and out["complete"] is False
+    assert any(seg[0] == "line" and seg[1] == (10.0, 5.0) and seg[2] == (10.005, 5.005) for seg in literal_of(out["text"]))
+
+
+def test_a_sliver_at_the_start_of_an_open_chain_is_covered_by_the_segment_after_it():
+    rec = curves.recover_loop(polyline_loop([(0, 0), (0.01, 0), (0.01, 5), (5, 5)], closed=False), "z=0")
+    assert len(rec["segments"]) == 3 and rec["segments"][0]["length"] < 0.02
+    out = curves.chain_literal(rec, min_len=0.02)
+    chain = literal_of(out["text"])
+    assert len(chain) == 2 and len(out["slivers"]) == 1 and chain[0][1] == (0.0, 0.0) and chain[0][2] == (0.01, 5.0)
+    notes = curves.chain_notes(out)
+    assert any("merged a line" in n for n in notes) and any("do not close" in n for n in notes)
+    assert out["closed"] is False
+
+
+def test_a_sliver_between_a_line_and_an_arc_is_removed_without_changing_the_area():
+    edges = [line_edge((0, 0), (9, 0)), line_edge((9, 0), (9.01, 0.01)), arc_edge((9.01, 3.01), 3, -90, 90),
+             line_edge((12.01, 3.01), (12.01, 10)), line_edge((12.01, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    rec = curves.recover_loop(loop_of(edges), "z=0")
+    out = curves.chain_literal(rec, min_len=0.02)
+    chain = literal_of(out["text"])
+    assert sorted(seg[0] for seg in chain) == ["arc", "line", "line", "line", "line"] and len(out["slivers"]) == 1
+    arc = [seg for seg in chain if seg[0] == "arc"][0]
+    assert abs(arc[2] - 3.0) < 1e-3 and arc[5] == "ccw"
+    outline = [(0, 0), (9, 0), (9.01, 0.01)] + arc_vertices((9.01, 3.01), 3, -90, 90, 0.25) + [(12.01, 3.01), (12.01, 10), (0, 10)]
+    if HAS_B123D:
+        face = chain_face(chain)
+        assert face.is_valid and abs(face.area - shoelace(outline)) / shoelace(outline) < 1e-3
+
+
+def test_an_edge_that_is_neither_a_line_nor_an_arc_is_reported_in_the_chain_and_never_straightened():
+    edges = [line_edge((0, 0), (10, 0)),
+             {"type": "bspline", "start": [10, 0, 0], "end": [10, 6, 0], "length": 6.4,
+              "center": None, "radius": None, "sweep_deg": None, "via": None},
+             line_edge((10, 6), (0, 6)), line_edge((0, 6), (0, 0))]
+    rec = curves.recover_loop(loop_of(edges), "z=0")
+    out = curves.chain_literal(rec)
+    chain = literal_of(out["text"])
+    assert out["complete"] is False and len(chain) == 3                  # three lines; the spline is NOT one of them
+    assert not any(seg[0] == "line" and seg[1] == (10.0, 0.0) and seg[2] == (10.0, 6.0) for seg in chain)
+    assert "REPORTED" in out["text"] and "bspline" in out["text"] and "INCOMPLETE" in out["text"]
+    notes = curves.chain_notes(out)
+    assert any("bspline" in n and "not turned into a line" in n for n in notes)
+    gaps = [k for k, seg in enumerate(chain)
+            if (seg[2] if seg[0] == "line" else seg[4]) != (chain[(k + 1) % 3][1] if chain[(k + 1) % 3][0] == "line" else chain[(k + 1) % 3][3])]
+    assert len(gaps) == 1                                                 # the gap is where the spline was, and only there
+
+
+def test_an_open_chain_is_emitted_with_the_word_open_and_no_wrap_around():
+    rec = curves.recover_loop(polyline_loop([(0, 0), (4, 0), (4, 3)], closed=False), "z=0")
+    out = curves.chain_literal(rec)
+    assert "OPEN" in out["text"] and out["closed"] is False
+    chain = literal_of(out["text"])
+    assert chain[0][2] == chain[1][1] and chain[0][1] != chain[-1][2]
+
+
+# --- the command: probe section --arcs / --chain on real shapes ----------------------------------------------
+
+SLOT_PLATE = ("from build123d import *\n\n"
+              "def build():\n"
+              "    return Box(40, 20, 6) - extrude(SlotOverall(16, 6), amount=10, both=True)\n")
+POLY_HOLE_PLATE = ("import math\n"
+                   "from build123d import *\n\n"
+                   "def build(n=120, r=7.5):\n"
+                   "    pts = [(r * math.cos(2 * math.pi * i / n), r * math.sin(2 * math.pi * i / n)) for i in range(n)]\n"
+                   "    with BuildPart() as hole:\n"
+                   "        with BuildSketch():\n"
+                   "            Polygon(*pts)\n"
+                   "        extrude(amount=10, both=True)\n"
+                   "    return Box(40, 30, 6) - hole.part\n")
+TILTED_CYLINDER = "from build123d import *\n\ndef build():\n    return Cylinder(5, 30).rotate(Axis.X, 30)\n"
+CHAMFERED_BAR = ("from build123d import *\n\n"
+                 "def build():\n"
+                 "    bar = Box(20, 10, 5)\n"
+                 "    return chamfer(bar.edges().filter_by(Axis.Z), 0.01)\n")
+
+
+@pytest.fixture
+def program(tmp_path):
+    def write(name, text):
+        path = tmp_path / name
+        path.write_text(text)
+        return str(path)
+    return write
+
+
+@needs_build123d
+def test_arcs_on_exact_edges_prints_each_arc_and_judges_its_joints(program, capsys):
+    cli.main(["probe", "section", program("slot.py", SLOT_PLATE), "--planes", "z=0", "--arcs"])
+    out = capsys.readouterr().out
+    assert "z=0 (at 0): 2 loop(s)" in out and "recovered: 2 arc(s), 2 line(s)" in out
+    assert len(re.findall(r"arc +ccw +convex +r 3\.0000", out)) == 2 and "exact edge" in out
+    assert "joints: 4 tangent, 0 kinked, 0 not tangent" in out and "NOT TANGENT" not in out
+    assert "recovered: 0 arc(s), 4 line(s)" in out and "joints: 0 tangent, 0 kinked, 0 not tangent, 4 corner" in out
+
+
+@needs_build123d
+def test_arcs_reads_a_hole_of_120_short_lines_as_one_arc_of_its_radius(program, tmp_path, capsys):
+    out_json = tmp_path / "loops.json"
+    cli.main(["probe", "section", program("holed.py", POLY_HOLE_PLATE), "--planes", "z=0", "--arcs", "-o", str(out_json)])
+    text = capsys.readouterr().out
+    assert "120 line" in text and "recovered: 1 arc(s), 0 line(s)" in text
+    data = json.loads(out_json.read_text())
+    hole = data["planes"][0]["loops"][1]
+    (arc,) = hole["arcs"]["segments"]
+    assert arc["kind"] == "arc" and abs(arc["radius"] - 7.5) < 1e-3 and abs(arc["sweep_deg"] - 360.0) < 1e-6
+    assert math.dist(arc["center"], (0.0, 0.0)) < 1e-6 and arc["source"] == "fit" and arc["n"] >= 120
+    assert hole["arcs"]["params"]["fit_tol"] == 0.005 and data["planes"][0]["loops"][0]["arcs"]["segments"][0]["kind"] == "line"
+
+
+@needs_build123d
+def test_the_loop_records_carry_the_point_that_gives_an_arc_its_direction(program, tmp_path, capsys):
+    out_json = tmp_path / "loops.json"
+    cli.main(["probe", "section", program("slot.py", SLOT_PLATE), "--planes", "z=0", "-o", str(out_json)])
+    capsys.readouterr()
+    edges = json.loads(out_json.read_text())["planes"][0]["loops"][1]["edges"]
+    circles = [e for e in edges if e["type"] == "circle"]
+    assert len(circles) == 2 and all(e["via"] is not None for e in circles)
+    assert all(e["via"] is None for e in edges if e["type"] == "line")
+    assert "arcs" not in json.loads(out_json.read_text())["planes"][0]["loops"][1]      # only asked for with --arcs
+
+
+@needs_build123d
+def test_chain_writes_only_the_literal_to_stdout_and_the_summary_to_stderr(program, capsys):
+    rc = cli.main(["probe", "section", program("slot.py", SLOT_PLATE), "--planes", "z=0", "--chain", "2"])
+    captured = capsys.readouterr()
+    assert rc is None
+    ast.parse(captured.out)                                              # stdout is a program, nothing else
+    chain = literal_of(captured.out)
+    assert sorted(seg[0] for seg in chain) == ["arc", "arc", "line", "line"]
+    assert "loop(s)" in captured.err and "loop(s)" not in captured.out
+    face = chain_face(chain)
+    assert abs(face.area - (math.pi * 9 + 60.0)) / (math.pi * 9 + 60.0) < 1e-3
+
+
+@needs_build123d
+def test_chain_of_a_loop_that_does_not_exist_is_an_error_naming_the_count(program, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["probe", "section", program("slot.py", SLOT_PLATE), "--planes", "z=0", "--chain", "9"])
+    assert exc.value.code == 2
+    assert "z=0 has 2 loop(s); there is no loop 9" in capsys.readouterr().err
+
+
+@needs_build123d
+def test_chain_of_an_elliptical_section_is_reported_and_fails_instead_of_inventing_lines(program, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["probe", "section", program("tilt.py", TILTED_CYLINDER), "--planes", "z=0", "--chain", "1"])
+    assert exc.value.code == 1
+    captured = capsys.readouterr()
+    assert "REPORTED" in captured.out and "ellipse" in captured.out and "INCOMPLETE" in captured.out
+    assert "not turned into a line" in captured.err
+    assert literal_of(captured.out) == []                                # nothing was made up for it
+
+
+@needs_build123d
+def test_min_len_decides_which_slivers_a_chain_merges(program, capsys):
+    path = program("bar.py", CHAMFERED_BAR)
+    cli.main(["probe", "section", path, "--planes", "z=0", "--chain", "1", "--min-len", "0.02"])
+    merged = capsys.readouterr()
+    assert len(literal_of(merged.out)) == 4 and "4 sliver(s) shorter than 0.02 mm merged" in merged.out
+    assert "merged a line of 0.0141 mm" in merged.err
+    cli.main(["probe", "section", path, "--planes", "z=0", "--chain", "1", "--min-len", "0.005"])
+    kept = capsys.readouterr()
+    assert len(literal_of(kept.out)) == 8 and "0 sliver(s)" in kept.out
+
+
+@needs_build123d
+def test_with_several_planes_each_literal_is_named_for_its_plane(program, capsys):
+    cli.main(["probe", "section", program("slot.py", SLOT_PLATE), "--planes", "z=0", "y=0", "--chain", "1"])
+    out = capsys.readouterr().out
+    assert "LOOP_Z_0 = [" in out and "LOOP_Y_0 = [" in out and "Plane.XZ" in out
+
+
+@needs_build123d
+def test_a_run_without_the_new_options_is_what_it_was(program, capsys):
+    cli.main(["probe", "section", program("slot.py", SLOT_PLATE), "--planes", "z=0"])
+    out = capsys.readouterr().out
+    assert "recovered" not in out and "LOOP" not in out and "loop 2: length" in out
+
+
+def test_the_tolerance_defaults_in_the_help_are_the_ones_the_code_uses():
+    parser = cli.build_parser()
+    section = [a for a in parser._actions if hasattr(a, "choices") and a.choices and "probe" in a.choices][0].choices["probe"]
+    section = [a for a in section._actions if hasattr(a, "choices") and a.choices and "section" in a.choices][0].choices["section"]
+    helps = {a.dest: a.help for a in section._actions}
+    assert f"{curves.FIT_TOL:g}" in helps["fit_tol"] and f"{curves.TANGENT_TOL:g}" in helps["tangent_tol"]
+    assert f"{curves.MIN_LEN:g}" in helps["min_len"]
+
+
+# --- the policy and the commands it governs ---------------------------------------------------------------------
+
+def command_parser(words):
+    parser = cli.build_parser()
+    for word in words:
+        (sub,) = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
+        parser = sub.choices[word]
+    return parser
+
+
+@pytest.mark.parametrize("words", pol.get_policy("probe-recover").commands, ids=lambda w: " ".join(w))
+def test_every_flag_of_a_command_the_policy_governs_appears_in_it(words):
+    text = pol.get_policy("probe-recover").text
+    parser = command_parser(words)
+    flags = [o for a in parser._actions if not isinstance(a, argparse._HelpAction) for o in a.option_strings]
+    assert flags, "the walk found the command's arguments"
+    assert [f for f in flags if f not in text] == []
+
+
+def test_the_policy_recipe_is_the_one_the_tests_run():
+    recipe = policy_recipe()
+    assert callable(recipe) and recipe.__name__ == "chain_face"
+
+
+# --- design dumps: probe sketches ----------------------------------------------------------------------------
+
+DUMP = Path(__file__).resolve().parent / "data" / "design_dump_synthetic.json"
+
+
+def sketches(argv, capsys):
+    """Run ``probe sketches`` and return (exit code, stdout, stderr)."""
+    rc = cli.main(["probe", "sketches"] + [str(a) for a in argv])
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
+
+
+def dims_of(record, sketch, curve_type=None):
+    """{(kind, rounded value): labels} for the dimensions of one sketch in a -o record."""
+    (s,) = [s for s in record["sketches"] if s["name"] == sketch]
+    return {(c["kind"], d["name"], round(d["value"], 4)): d for c in s["curves"] if curve_type in (None, c["type"])
+            for d in c["dimensions"]}
+
+
+@pytest.fixture(scope="module")
+def plate_step(tmp_path_factory):
+    """A 40 x 20 x 6 plate with one corner rounded at r 4 and a hole of r 2 at (10, 5): the solid the
+    synthetic dump's first sketch describes (and a stray circle and a construction circle it does not)."""
+    from build123d import Axis, Box, Cylinder, Pos, export_step, fillet
+    part = Box(40, 20, 6)
+    corner = part.edges().filter_by(Axis.Z).filter_by(lambda e: e.center().X > 19 and e.center().Y > 9)
+    part = fillet(corner, 4) - Pos(10, 5, 0) * Cylinder(2, 10)
+    path = tmp_path_factory.mktemp("step") / "plate.step"
+    export_step(part, str(path))
+    return path
+
+
+def test_the_dump_is_printed_in_millimetres_with_construction_flags(capsys):
+    rc, out, err = sketches([DUMP], capsys)
+    assert rc is None and err == ""
+    assert "design demo_plate" in out and "centimetres" in out and "millimetres" in out
+    assert "parameters: 4" in out and "plate_length = 40 mm" in out and "corner_r = plate_width / 5" in out
+    assert "mounting hole" in out                                               # a comment is kept
+    assert "timeline: 4" in out and "Extrude1" in out and "NewBodyFeatureOperation" in out and "suppressed" in out
+    assert "== Plate sketch" in out and "== Side profile" in out and "== Tilted note" in out
+    assert "length 40.0000" in out and "length 16.0000" in out and "sweep 90.00" in out    # the file said 4.0, 1.6, ... cm
+    lines = out.splitlines()
+    (construction,) = [l for l in lines if "r 7.0000" in l]
+    assert construction.startswith("  C ") and "circle" in construction
+    (stray,) = [l for l in lines if "r 3.0000" in l]
+    assert stray.startswith("    ") and not stray.startswith("  C ")
+    assert "plane z=0" in out and "plane x=0" in out and "not axis-aligned" in out
+
+
+def test_every_dimension_is_labelled_drawn_and_none_is_applied_without_a_part(capsys, tmp_path):
+    out_json = tmp_path / "dump.json"
+    rc, out, _ = sketches([DUMP, "-o", out_json], capsys)
+    assert "APPLIED" not in out
+    record = json.loads(out_json.read_text())
+    every = [d for s in record["sketches"] for c in s["curves"] for d in c["dimensions"]]
+    assert len(every) >= 14 and all(d["labels"] == ["DRAWN"] for d in every)
+    assert all(p["labels"] == ["DRAWN"] for p in record["parameters"])
+    assert "[DRAWN]" in out and all("[DRAWN]" in l for l in out.splitlines() if "length " in l or " r " in l)
+    assert record["against"] is None
+
+
+def test_the_dump_is_read_without_touching_any_cad_backend(capsys, monkeypatch):
+    monkeypatch.setitem(sys.modules, "build123d", None)                  # an import of it now raises
+    monkeypatch.setitem(sys.modules, "OCP", None)
+
+    def touched(*a, **k):
+        raise AssertionError("a CAD backend was asked for")
+    monkeypatch.setattr(probe, "_b3d", touched)
+    rc, out, err = sketches([DUMP], capsys)
+    assert rc is None and "== Plate sketch" in out
+
+
+def test_an_unknown_curve_type_is_listed_not_dropped(capsys):
+    _, out, _ = sketches([DUMP, "--sketch", "side"], capsys)
+    (spline,) = [l for l in out.splitlines() if "SketchFittedSpline" in l]
+    assert "not read" in spline and "fitPoints" in spline
+
+
+@needs_build123d
+def test_against_a_part_labels_applied_exactly_the_dimensions_its_section_carries(capsys, plate_step, tmp_path):
+    out_json = tmp_path / "against.json"
+    rc, out, err = sketches([DUMP, "--against", plate_step, "-o", out_json], capsys)
+    assert rc is None
+    record = json.loads(out_json.read_text())
+    plate = dims_of(record, "Plate sketch")
+    applied = lambda key: "APPLIED" in plate[key]["labels"]
+    for length in (40.0, 16.0, 36.0, 20.0):
+        assert applied(("line", "length", length))                               # the four sides of the outline
+    assert applied(("arc", "radius", 4.0)) and applied(("arc", "sweep", 90.0))    # the rounded corner
+    assert applied(("circle", "radius", 2.0))                                     # the hole
+    assert not applied(("circle", "radius", 3.0))                                 # drawn, but the part has no such hole
+    assert plate[("circle", "radius", 3.0)]["labels"] == ["DRAWN"]
+    assert plate[("circle", "radius", 7.0)]["labels"] == ["DRAWN"]                # construction: never matched
+    side = dims_of(record, "Side profile")
+    assert all("APPLIED" in side[("line", "length", v)]["labels"] for v in (20.0, 6.0))
+    tilted = dims_of(record, "Tilted note")
+    assert all(d["labels"] == ["DRAWN"] for d in tilted.values())
+    assert "not axis-aligned" in out
+    assert record["against"]["source"] == str(plate_step) and record["against"]["tol"] == 0.01
+    shown = {l.strip() for l in out.splitlines()}
+    assert any("r 2.0000 [DRAWN APPLIED loop 2]" in l for l in shown)
+    assert any("r 3.0000 [DRAWN, absent from the section]" in l for l in shown)
+    assert not any("APPLIED" in l for l in out.splitlines() if "r 7.0000" in l or "r 3.0000" in l)
+
+
+@needs_build123d
+def test_a_changed_part_changes_the_labels(capsys, tmp_path):
+    """The control: the same dump against a plate whose hole is r 2.5 must no longer carry the drawn r 2."""
+    from build123d import Axis, Box, Cylinder, Pos, export_step, fillet
+    part = Box(40, 20, 6)
+    corner = part.edges().filter_by(Axis.Z).filter_by(lambda e: e.center().X > 19 and e.center().Y > 9)
+    part = fillet(corner, 4) - Pos(10, 5, 0) * Cylinder(2.5, 10)
+    step = tmp_path / "wider.step"
+    export_step(part, str(step))
+    out_json = tmp_path / "wider.json"
+    sketches([DUMP, "--against", step, "-o", out_json], capsys)
+    plate = dims_of(json.loads(out_json.read_text()), "Plate sketch")
+    assert plate[("circle", "radius", 2.0)]["labels"] == ["DRAWN"]
+    assert "APPLIED" in plate[("arc", "radius", 4.0)]["labels"]                     # the rest still matches
+
+
+@needs_build123d
+def test_tol_decides_how_close_a_dimension_must_be(capsys, plate_step, tmp_path):
+    data = json.loads(DUMP.read_text())
+    hole = [c for c in data["sketches"][0]["curves"] if c["type"] == "SketchCircle" and not c["isConstruction"]][0]
+    hole["radius"] = 0.205                                                         # 2.05 mm drawn, 2.00 in the part
+    drawn = tmp_path / "drawn.json"
+    drawn.write_text(json.dumps(data))
+    for tol, expect in ((0.01, False), (0.1, True)):
+        out_json = tmp_path / f"tol{tol}.json"
+        sketches([drawn, "--against", plate_step, "--tol", tol, "-o", out_json], capsys)
+        hole_dim = dims_of(json.loads(out_json.read_text()), "Plate sketch")[("circle", "radius", 2.05)]
+        assert ("APPLIED" in hole_dim["labels"]) is expect
+
+
+def test_against_without_the_backend_says_so_and_still_prints_the_drawn_numbers(capsys, monkeypatch, tmp_path):
+    def missing(*a, **k):
+        raise ImportError("No module named 'build123d'")
+    monkeypatch.setattr(probe, "load_shape", missing)
+    rc, out, err = sketches([DUMP, "--against", tmp_path / "anything.step"], capsys)
+    assert rc is None and "== Plate sketch" in out and "APPLIED" not in out.replace("APPLIED labels", "")
+    assert "needs the build123d backend" in err and "APPLIED labels were not computed" in err
+
+
+def test_against_a_file_that_does_not_exist_is_an_error(capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--against", tmp_path / "missing.step"], capsys)
+    assert exc.value.code == 1
+    assert "missing.step" in capsys.readouterr().err
+
+
+def test_sketch_filters_by_name_and_says_what_it_matched(capsys):
+    _, out, _ = sketches([DUMP, "--sketch", "SIDE"], capsys)
+    assert "== Side profile" in out and "== Plate sketch" not in out
+    assert "sketches: 3 in the dump, 1 shown (--sketch 'SIDE')" in out
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--sketch", "nothing"], capsys)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "no sketch matches 'nothing'" in err and "Plate sketch" in err and "Side profile" in err
+
+
+@pytest.mark.parametrize("content,message", [("{not json", "not valid JSON"), ('{"designName": "x"}', "not a design dump"),
+                                             ("[1, 2]", "not a design dump")])
+def test_a_file_that_is_not_a_design_dump_is_an_error_naming_why(capsys, tmp_path, content, message):
+    bad = tmp_path / "bad.json"
+    bad.write_text(content)
+    with pytest.raises(SystemExit) as exc:
+        sketches([bad], capsys)
+    assert exc.value.code == 1 and message in capsys.readouterr().err
+
+
+def test_a_missing_dump_is_an_error(capsys, tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        sketches([tmp_path / "nope.json"], capsys)
+    assert exc.value.code == 1 and "nope.json" in capsys.readouterr().err
+
+
+def test_the_command_is_registered_under_probe_without_editing_the_cli_module():
+    parser = command_parser(("probe", "sketches"))
+    flags = {o for a in parser._actions for o in a.option_strings}
+    assert {"--sketch", "--against", "--tol", "-o", "--output"} <= flags
+
+
+def test_a_curve_that_lacks_the_fields_its_type_needs_is_listed_not_read(capsys, tmp_path):
+    data = json.loads(DUMP.read_text())
+    broken = [c for c in data["sketches"][0]["curves"] if c["type"] == "SketchCircle"][0]
+    del broken["radius"]
+    path = tmp_path / "broken.json"
+    path.write_text(json.dumps(data))
+    _, out, _ = sketches([path, "--sketch", "plate"], capsys)
+    assert any("SketchCircle" in l and "not read" in l for l in out.splitlines())
+
+
+def test_a_sketch_without_an_origin_has_no_plane_and_says_so(capsys, tmp_path):
+    data = json.loads(DUMP.read_text())
+    del data["sketches"][0]["origin"]
+    path = tmp_path / "no_origin.json"
+    path.write_text(json.dumps(data))
+    _, out, _ = sketches([path, "--sketch", "plate"], capsys)
+    assert "plane unknown (the sketch carries no usable origin and directions)" in out
+
+
+@needs_build123d
+def test_against_a_mesh_is_an_error_that_names_the_formats(capsys, tmp_path):
+    stl = tmp_path / "part.stl"
+    stl.write_text("solid x\nendsolid x\n")
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--against", stl], capsys)
+    assert exc.value.code == 1 and "STEP or build123d programs" in capsys.readouterr().err
+
+
+@needs_build123d
+def test_against_a_file_that_is_not_a_step_is_an_error_not_a_part_with_nothing_applied(capsys, tmp_path):
+    junk = tmp_path / "junk.step"
+    junk.write_text("this is not a STEP file\n")
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--against", junk], capsys)
+    assert exc.value.code == 1 and "no geometry could be read" in capsys.readouterr().err
+
+
+@needs_build123d
+def test_a_plane_that_does_not_cut_the_part_is_noted_and_its_dimensions_are_absent(capsys, plate_step, tmp_path):
+    data = json.loads(DUMP.read_text())
+    data["sketches"] = [dict(data["sketches"][0], name="Far away", origin=[0.0, 0.0, 10.0])]       # 100 mm up
+    far = tmp_path / "far.json"
+    far.write_text(json.dumps(data))
+    _, out, err = sketches([far, "--against", plate_step], capsys)
+    assert "plane z=100" in out and "the part has no loops there" in err
+    assert "[DRAWN, absent from the section]" in out and "APPLIED" not in out
+
+
+@needs_build123d
+def test_a_build123d_program_is_a_part_too(capsys, program, tmp_path):
+    source = program("plate.py", "from build123d import *\n\n"
+                                 "def build():\n"
+                                 "    part = Box(40, 20, 6)\n"
+                                 "    corner = part.edges().filter_by(Axis.Z).filter_by(lambda e: e.center().X > 19 and e.center().Y > 9)\n"
+                                 "    return fillet(corner, 4) - Pos(10, 5, 0) * Cylinder(2, 10)\n")
+    out_json = tmp_path / "program.json"
+    sketches([DUMP, "--against", source, "-o", out_json], capsys)
+    plate = dims_of(json.loads(out_json.read_text()), "Plate sketch")
+    assert "APPLIED" in plate[("circle", "radius", 2.0)]["labels"] and "APPLIED" in plate[("arc", "radius", 4.0)]["labels"]

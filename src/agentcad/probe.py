@@ -6,8 +6,13 @@ feed any comparison:
 ``loops.json``   {"source": str, "planes": [{"plane": "y=3.2", "loops": [{"edges": [
                  {"type": "line"|"circle"|"bspline"|..., "start": [x,y,z], "end": [x,y,z],
                   "length": L, "center": [x,y,z]|null, "radius": r|null, "sweep_deg": a|null,
-                  "midpoint": [x,y,z]}],
-                 "closed": bool, "n_edges": n, "length": L, "fit": {...}|null}]}]}
+                  "via": [x,y,z]|null, "midpoint": [x,y,z]}],
+                 "closed": bool, "n_edges": n, "length": L, "fit": {...}|null,
+                 "arcs": {...}  (only with --arcs; see agentcad.curves)}]}]}
+                 ``via`` is a point a quarter of the way along a circular edge: start, via, end fix the
+                 direction the arc is traversed, which the two end points alone cannot for a semicircle or a
+                 full circle.
+                 ``midpoint`` is the point half way along any edge (the overlays draw an arc through it).
 ``points.json``  {"source": str, "sampler": {"kind": "tessellation", "tolerance": t}, "points": [[x,y,z], ...]}
 
 A cap an instrument applies is printed with its value; none is silent
@@ -99,7 +104,7 @@ def _edge_record(b3d, e) -> Dict[str, Any]:
     kind = str(e.geom_type).split(".")[-1].lower()
     s, t, m = e.position_at(0), e.position_at(1), e.position_at(0.5)
     rec: Dict[str, Any] = {"type": kind, "start": [s.X, s.Y, s.Z], "end": [t.X, t.Y, t.Z],
-                           "length": float(e.length), "center": None, "radius": None, "sweep_deg": None,
+                           "length": float(e.length), "center": None, "radius": None, "sweep_deg": None, "via": None,
                            "midpoint": [m.X, m.Y, m.Z]}
     if kind == "circle":
         try:
@@ -107,6 +112,8 @@ def _edge_record(b3d, e) -> Dict[str, Any]:
             rec["center"] = [c.X, c.Y, c.Z]
             rec["radius"] = float(e.radius)
             rec["sweep_deg"] = math.degrees(float(e.length) / float(e.radius)) if float(e.radius) else None
+            q = e.position_at(0.25)
+            rec["via"] = [q.X, q.Y, q.Z]
         except Exception:  # an arc that refuses its centre stays a plain edge
             pass
     return rec
@@ -193,7 +200,7 @@ def fit_circle(points: Sequence[Sequence[float]]) -> Optional[Dict[str, Any]]:
         return None
     # project to the plane of best fit
     centroid = P.mean(axis=0)
-    _, _, vt = np.linalg.svd(P - centroid)
+    _, _, vt = np.linalg.svd(P - centroid, full_matrices=False)   # only vt is used; the full U is n x n
     u, v = vt[0], vt[1]
     x = (P - centroid) @ u
     y = (P - centroid) @ v
@@ -442,6 +449,14 @@ def compare(original: Path, candidate: Path, planes: Sequence[str] = (), windows
     return result
 
 
+def plane_axes(spec: str) -> Tuple[int, int]:
+    """The two coordinates kept when a section on ``spec`` is drawn flat: x= keeps (y, z), y= keeps
+    (x, z), z= keeps (x, y). Overlays, arc fits and chains all use this one table, so a direction
+    (clockwise or counter-clockwise) means the same thing in each."""
+    axis = spec.partition("=")[0].strip().lower()
+    return {"x": (1, 2), "y": (0, 2), "z": (0, 1)}[axis]
+
+
 def _arc_angles(e, keep, n: int) -> List[float]:
     """Angles (radians, about the edge's centre in the section plane's axes) sampling a circle edge.
 
@@ -466,8 +481,7 @@ def _arc_angles(e, keep, n: int) -> List[float]:
 
 def _loop_points_2d(loops, spec: str, n_per_edge: int = 24):
     """Points of every loop projected to the section plane's 2D axes."""
-    axis = spec.partition("=")[0].strip().lower()
-    keep = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}[axis]
+    keep = plane_axes(spec)
     pts = []
     for L in loops:
         for e in L["edges"]:

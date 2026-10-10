@@ -27,7 +27,7 @@ GOLDENS = json.loads((DATA / "policy_golden" / "goldens.json").read_text())
 # with its policy.
 UNCLAIMED_ALLOWED = {
     ("render",), ("export",), ("info",), ("new-project",), ("projects",), ("status",), ("open",),
-    ("config-init",), ("config-show",), ("probe", "section"),
+    ("config-init",), ("config-show",),
     ("probe", "fillet"), ("probe", "draft"), ("compare",), ("gallery", "build"),
     ("gallery", "check"), ("viewer",), ("check",),
 }

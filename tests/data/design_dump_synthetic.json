@@ -1,0 +1,66 @@
+{
+  "designName": "demo_plate",
+  "designType": "ParametricDesignType",
+  "isParametric": true,
+  "displayUnits": "mm",
+  "_meta": {
+    "units_note": "Synthetic fixture. JSON geometry is centimetres. Parameters: trust 'expression' only; 'value_internal_cm' is centimetres."
+  },
+  "parameters": [
+    {"name": "plate_length", "expression": "40 mm", "role": "user", "comment": "overall length", "value_internal_cm": 4.0},
+    {"name": "plate_width", "expression": "20 mm", "role": "user", "comment": "", "value_internal_cm": 2.0},
+    {"name": "hole_d", "expression": "4 mm", "role": "user", "comment": "mounting hole", "value_internal_cm": 0.4},
+    {"name": "corner_r", "expression": "plate_width / 5", "role": "derived", "comment": "", "value_internal_cm": 0.4}
+  ],
+  "timeline": [
+    {"index": 0, "name": "Plate sketch", "entityType": "Sketch", "isSuppressed": false},
+    {"index": 1, "name": "Extrude1", "entityType": "ExtrudeFeature", "isSuppressed": false,
+     "operation": "NewBodyFeatureOperation", "extentType": "OneSideFeatureExtentType"},
+    {"index": 2, "name": "Side profile", "entityType": "Sketch", "isSuppressed": false},
+    {"index": 3, "name": "Fillet1", "entityType": "FilletFeature", "isSuppressed": true}
+  ],
+  "sketches": [
+    {
+      "name": "Plate sketch",
+      "origin": [0.0, 0.0, 0.0],
+      "xDirection": [1.0, 0.0, 0.0],
+      "yDirection": [0.0, 1.0, 0.0],
+      "profileCount": 2,
+      "curves": [
+        {"type": "SketchLine", "isConstruction": false, "start": [-2.0, -1.0, 0.0], "end": [2.0, -1.0, 0.0]},
+        {"type": "SketchLine", "isConstruction": false, "start": [2.0, -1.0, 0.0], "end": [2.0, 0.6, 0.0]},
+        {"type": "SketchArc", "isConstruction": false, "center": [1.6, 0.6, 0.0], "radius": 0.4,
+         "start": [2.0, 0.6, 0.0], "end": [1.6, 1.0, 0.0]},
+        {"type": "SketchLine", "isConstruction": false, "start": [1.6, 1.0, 0.0], "end": [-2.0, 1.0, 0.0]},
+        {"type": "SketchLine", "isConstruction": false, "start": [-2.0, 1.0, 0.0], "end": [-2.0, -1.0, 0.0]},
+        {"type": "SketchCircle", "isConstruction": false, "center": [1.0, 0.5, 0.0], "radius": 0.2},
+        {"type": "SketchCircle", "isConstruction": false, "center": [-1.0, -0.5, 0.0], "radius": 0.3},
+        {"type": "SketchCircle", "isConstruction": true, "center": [0.0, 0.0, 0.0], "radius": 0.7}
+      ]
+    },
+    {
+      "name": "Side profile",
+      "origin": [0.0, 0.0, 0.0],
+      "xDirection": [0.0, 1.0, 0.0],
+      "yDirection": [0.0, 0.0, 1.0],
+      "profileCount": 1,
+      "curves": [
+        {"type": "SketchLine", "isConstruction": false, "start": [-1.0, -0.3, 0.0], "end": [1.0, -0.3, 0.0]},
+        {"type": "SketchLine", "isConstruction": false, "start": [1.0, -0.3, 0.0], "end": [1.0, 0.3, 0.0]},
+        {"type": "SketchLine", "isConstruction": false, "start": [1.0, 0.3, 0.0], "end": [-1.0, 0.3, 0.0]},
+        {"type": "SketchLine", "isConstruction": false, "start": [-1.0, 0.3, 0.0], "end": [-1.0, -0.3, 0.0]},
+        {"type": "SketchFittedSpline", "isConstruction": false, "fitPoints": [[0.0, 0.0, 0.0], [0.2, 0.1, 0.0], [0.4, 0.0, 0.0]]}
+      ]
+    },
+    {
+      "name": "Tilted note",
+      "origin": [0.0, 0.0, 1.0],
+      "xDirection": [1.0, 0.0, 0.0],
+      "yDirection": [0.0, 0.7071067811865476, 0.7071067811865476],
+      "profileCount": 0,
+      "curves": [
+        {"type": "SketchLine", "isConstruction": false, "start": [0.0, 0.0, 0.0], "end": [1.0, 0.0, 0.0]}
+      ]
+    }
+  ]
+}
