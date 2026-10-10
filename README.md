@@ -207,6 +207,25 @@ bed. With it, each band is located in its object's own frame and checked against
 or walled in on every side (a bore or pocket), which is an error (exit status 1): such supports are hard to
 remove and foul the fit.
 
+`gcode view` writes a standalone page of the toolpaths, offline (three.js inlined): lines coloured by
+feature with a toggle per feature and a layer-range slider. Toolpaths are embedded within a budget
+(`--budget-mb`, default 8, counted as embedded base64; the inlined three.js adds about 0.6 MB); over it,
+every Nth layer is kept, first and last always, and the page says so.
+
+With `--placement` (and `--stl-root` when the STLs are elsewhere) the placed parts are drawn translucent
+under the paths, and support contacts as dots: green on an outer surface, red walled in a cavity.
+
+```bash
+agentcad gcode view plate.bgcode -o plate.toolpaths.html --placement plate.placement.json
+```
+
+`--artifact DIR` writes the same page as `DIR/index.html` without its document shell, plus an empty
+`files.json` (everything is inline), for an artifact host that supplies the shell.
+
+`session finalize` writes a toolpath page beside every `.bgcode` or `.gcode` file in the project's exports
+folder (`<name>.toolpaths.html`, within `[output] viewer_embed_mb`) and lists them in the print manifest
+under `sliced`; a file it cannot read is warned about and skipped.
+
 Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
 its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
 compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code encodings (none, MeatPack,

@@ -855,6 +855,41 @@ def cmd_gcode_supports(args):
         return 1
 
 
+def cmd_gcode_view(args):
+    """Write a standalone page showing a sliced file's toolpaths."""
+    from agentcad.gcode import bgcode, model, view
+
+    path = Path(args.file)
+    out = (Path(args.artifact) / "index.html" if getattr(args, "artifact", None)
+           else Path(args.output) if args.output else path.with_suffix(".toolpaths.html"))
+    m = model.parse(bgcode.gcode_text(path))
+    contacts = []
+    if args.placement:
+        import pyvista as pv
+        from agentcad.gcode import supports
+        from agentcad.gcode.check import embedded_config
+        cd = float(embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
+        placement = supports.load_placement(Path(args.placement))
+        root = Path(args.stl_root or Path(args.placement).parent)
+        for b in supports.find_contacts(m, contact_distance=cd):
+            p = placement.get(b.object or "")
+            stl = root / p["stl"] if p and p.get("stl") else None
+            votes = supports.band_enclosure(b, placement, pv.read(str(stl))) if stl is not None and stl.exists() else None
+            kind = "cavity" if votes and max(votes, key=votes.get) == "cavity" else "outside"
+            contacts += [(x, y, z, kind) for x, y, z in (b.cells or [])]
+    meshes = []
+    if args.placement:
+        import numpy as np
+        for label, p in placement.items():
+            stl = root / p["stl"] if p.get("stl") else None
+            if stl is not None and stl.exists():
+                mesh = pv.read(str(stl)).triangulate()
+                meshes.append((np.asarray(mesh.points) + np.asarray(p["bed_offset"]), mesh.faces.reshape(-1, 4)[:, 1:]))
+    view.write_page(m, out, title=path.stem, budget_mb=args.budget_mb, contacts=contacts, meshes=meshes,
+                    fragment=bool(getattr(args, "artifact", None)))
+    print(f"toolpaths: {out}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -1137,6 +1172,15 @@ def main():
     pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     pg.set_defaults(func=cmd_gcode_supports)
+    pg = sub_gcode.add_parser("view", help="A standalone page of the toolpaths: feature colours, toggles, layer range")
+    pg.add_argument("file")
+    pg.add_argument("-o", "--output", default=None, help="Page path (default: <file>.toolpaths.html)")
+    pg.add_argument("--budget-mb", type=float, default=8.0, help="Embedded toolpath budget; over it, every Nth layer")
+    pg.add_argument("--placement", default=None, help="Placement sidecar: mark support contact cells (red in a cavity)")
+    pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to")
+    pg.add_argument("--artifact", metavar="DIR", default=None,
+                    help="Write DIR/index.html as a page fragment (no document shell) plus files.json, for an artifact host")
+    pg.set_defaults(func=cmd_gcode_view)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")
     pg.add_argument("-o", "--output", required=True, help="Directory to write into")
