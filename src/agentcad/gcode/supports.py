@@ -44,6 +44,15 @@ def _samples(points: List[Tuple[float, float]], step: float):
         yield points[-1]
 
 
+def contact_distance_from(config: Dict[str, str], default: float = 0.25) -> float:
+    """The support-to-part gap a file was sliced with (its ``support_material_contact_distance``, the first value
+    of a list), in mm; ``default`` when the configuration does not say or says something unreadable."""
+    try:
+        return float(config.get("support_material_contact_distance", "").split(",")[0] or default)
+    except ValueError:
+        return default
+
+
 def find_contacts(model: GCodeModel, contact_distance: float = 0.25, cell: float = 0.25) -> List[Band]:
     """Contact bands between support extrusion and the object printed directly above it. "Directly above" is a
     Z window, not a layer count: the slicer leaves ``contact_distance`` (its support_material_contact_distance)

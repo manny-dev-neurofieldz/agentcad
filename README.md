@@ -232,6 +232,7 @@ agentcad gcode info part.bgcode           # header, block table, printer and pri
 agentcad gcode decode part.bgcode -o part.gcode   # plain G-code (a plain .gcode passes through)
 agentcad gcode thumbnails part.bgcode -o thumbs/
 agentcad gcode summary part.bgcode [--json]       # layers, filament, extrusion by object and feature, supports
+agentcad gcode compare a.bgcode b.gcode [--json]  # two slices side by side, and the settings that differ
 ```
 
 `gcode summary` models the sliced file by layer (`;LAYER_CHANGE`/`;Z:`/`;HEIGHT:`), object (`M486` labels)
@@ -244,8 +245,9 @@ types the model does not recognise are counted, never dropped.
 `--json` prints a record with schema `agentcad.gcode.summary/1`: `layers`, `top_z`, `filament_used`
 (`filament_mm`, `volume_cm3`, `mass_g` when the density is known), `filament_used_stated_mm` (from the
 file's metadata), `features_known`, `unknown_features`, `objects` (id to name), `by_object` (filament,
-per-feature amounts, `support_share`), `by_feature`, `support` (`share`, first and last layer and Z) and
-`brim_area_mm2`.
+per-feature amounts, `support_share`), `by_feature`, `support` (`share`, first and last layer and Z),
+`brim_area_mm2` and `estimated_time` (the printing time the file states, as `seconds` and the file's own
+`text`, or null; it is read from the file's metadata or its estimate comment, never computed).
 
 `gcode check` compares the slicer settings the file carries with what the project intended, declared as a
 `[slice]` table in `agentcad.toml` (or any TOML file, such as a print job's `job.toml`), keyed by the
@@ -298,6 +300,16 @@ agentcad gcode view plate.bgcode -o plate.toolpaths.html --placement plate.place
 
 `--artifact DIR` writes the same page as `DIR/index.html` without its document shell, plus an empty
 `files.json` (everything is inline), for an artifact host that supplies the shell.
+
+`gcode compare A B` reads two sliced files, `.bgcode` or plain G-code in any mix, and reports for A, for B and
+as B minus A: the stated printing time, the filament used (the summary's total beside the total the file
+states, in mm and in grams), layers and top height, the support share, the contact bands that `gcode supports`
+finds (count and area; bands under `--min-area`, 1 mm2 by default, are counted apart and said so), and the
+extrusion of each object, where an object in only one file gets a row of its own. Under the table it lists the
+settings that differ between the two embedded configurations (the first 20, with a count of the rest;
+`--all-settings` lists every one). Credentials and local paths in a configuration are never compared or shown.
+`--json` prints the record, schema `agentcad.gcode.compare/1`: `a`, `b`, `delta` (B minus A) and `settings`.
+A comparison gives no verdict: it exits 0 when both files were read, 1 when one could not be.
 
 `session finalize` writes a toolpath page beside every `.bgcode` or `.gcode` file in the project's exports
 folder (`<name>.toolpaths.html`, within `[output] viewer_embed_mb`) and lists them in the print manifest

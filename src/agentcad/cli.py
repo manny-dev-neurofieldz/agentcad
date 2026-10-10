@@ -836,17 +836,12 @@ def cmd_gcode_thumbnails(args):
 
 def cmd_gcode_summary(args):
     """Layers, filament, and extrusion by object and feature of a sliced file."""
-    from agentcad.gcode import bgcode, model
+    from agentcad.gcode import sliced
 
     path = Path(args.file)
-    meta = bgcode.read(path).metadata if bgcode.is_bgcode(path) else {}
-    slicer = meta.get("slicer_metadata", {})
-    density = float(slicer.get("filament_density", "0").split(",")[0] or 0) or None
-    diameter = float(slicer.get("filament_diameter", "1.75").split(",")[0] or 1.75)
-    s = model.summary(model.parse(bgcode.gcode_text(path)), diameter, density)
-    stated = meta.get("print_metadata", {}).get("filament used [mm]")
-    if stated:
-        s["filament_used_stated_mm"] = float(stated)
+    loaded = sliced.load(path)
+    s = sliced.summary_record(loaded)
+    stated = loaded.metadata.get("print_metadata", {}).get("filament used [mm]")
     if args.json:
         print(json.dumps(s, indent=2))
         return
