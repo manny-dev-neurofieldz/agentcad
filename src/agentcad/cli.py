@@ -4,11 +4,18 @@ import argparse
 import importlib
 import json
 import pkgutil
+import re
 import sys
 from pathlib import Path
 
 from agentcad import __version__
 from agentcad.camera import MULTI_VIEW_DEFAULT, STANDARD_PRESETS
+
+
+# argparse reads a bare "-30,0,0:1,0,0" as an unknown option, because only a lone number counts as negative.
+# A parser whose options take coordinate lists sets this as its _negative_number_matcher, so a leading
+# minus sign is a number there and `--line -30,0,0:1,0,0` works as `--line=-30,0,0:1,0,0` does.
+SIGNED_NUMBER_LIST = re.compile(r"^-\d*\.?\d+(?:[eE][-+]?\d+)?[-+\d.eE,:]*$")
 
 
 def _parse_defines(define_list):
@@ -653,10 +660,59 @@ def _windows_arg(items):
     return out
 
 
+def _loop_line(i, L):
+    kinds = {}
+    for e in L["edges"]:
+        kinds[e["type"]] = kinds.get(e["type"], 0) + 1
+    desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
+    fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
+    return f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}"
+
+
+def _probe_section_mesh(args, source):
+    """Section loops of an STL: polylines from triangle-plane intersection, with radial and axial extents."""
+    from agentcad import meshprobe, probe
+
+    if args.define:
+        print("agentcad probe: -D ignored: a mesh has no parameters", file=sys.stderr)
+    center = None
+    if args.axis_center:
+        try:
+            center = [float(v) for v in args.axis_center.split(",")]
+        except ValueError:
+            center = []
+        if len(center) != 2:
+            print(f"Error: --axis-center {args.axis_center!r}: expected two numbers A,B (the coordinates across the axis, "
+                  f"in x, y, z order)", file=sys.stderr)
+            sys.exit(2)
+    mesh = meshprobe.load_mesh(source)
+    data = {"source": str(source), "kind": "mesh",
+            "note": "loops are polylines from triangle-plane intersection: the tessellation's section, not exact edges",
+            "planes": []}
+    print(f"{source}: mesh, {mesh.n_triangles} triangles; {data['note']}")
+    for spec in args.planes or ["z=mid"]:
+        rec = probe.mesh_section_plane(mesh, spec, axis=args.axis, center=center, max_loops=args.max_loops)
+        total, loops = rec["n_loops"], rec["loops"]
+        print(f"{spec} (at {rec['coordinate']:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""))
+        ex = rec["extents"]
+        if ex:
+            print(f"  extents about axis {ex['axis']} through ({ex['center'][0]:.4g}, {ex['center'][1]:.4g}): "
+                  f"radial {ex['radial'][0]:.4g} .. {ex['radial'][1]:.4g}, axial {ex['axial'][0]:.4g} .. {ex['axial'][1]:.4g}")
+        for i, L in enumerate(loops[: args.show]):
+            x = L["extents"]
+            print(_loop_line(i, L) + ("" if L["closed"] else "; open chain")
+                  + f"; radial {x['radial'][0]:.4g} .. {x['radial'][1]:.4g}, axial {x['axial'][0]:.4g} .. {x['axial'][1]:.4g}")
+        data["planes"].append(rec)
+    if args.output:
+        print(f"loops.json: {probe.write_json(data, Path(args.output))}")
+
+
 def cmd_probe_section(args):
     """Section loops of a shape on named planes, as loops.json."""
     from agentcad import probe
 
+    if Path(args.source).suffix.lower() == ".stl":
+        return _probe_section_mesh(args, Path(args.source))
     shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
     planes = args.planes or ["z=mid"]
     data = {"source": str(args.source), "planes": []}
@@ -668,12 +724,7 @@ def cmd_probe_section(args):
         total = loops[0]["total_on_plane"] if loops else 0
         print(f"{spec} (at {coord:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""))
         for i, L in enumerate(loops[: args.show]):
-            kinds = {}
-            for e in L["edges"]:
-                kinds[e["type"]] = kinds.get(e["type"], 0) + 1
-            desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
-            fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
-            print(f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}")
+            print(_loop_line(i, L))
         data["planes"].append({"plane": spec, "coordinate": coord, "n_loops": total, "loops": loops})
     if args.output:
         print(f"loops.json: {probe.write_json(data, Path(args.output))}")
@@ -683,13 +734,23 @@ def cmd_probe_inventory(args):
     """bbox, volume, census, cylinder axes and section loops of a shape."""
     from agentcad import probe
 
-    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    try:
+        shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    except ValueError as e:            # a source that is not a program or a STEP file, an STL for one
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     inv = probe.inventory(shape, planes=args.planes or [], max_loops=args.max_loops)
     print(f"bbox_min {inv.get('bbox_min')}  bbox_size {inv.get('bbox_size')}")
     print(f"volume {inv.get('volume')}  area {inv.get('area')}  counts {inv.get('counts')}  valid {inv.get('is_valid')}")
     print(f"census {inv.get('face_census')}")
+    notes = inv.get("census_notes") or []
+    for note in notes:
+        print(f"warning: {note}")
     cyl = inv.get("cylinders") or []
-    print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
+    if notes and not cyl:
+        print("cylindrical/conical faces with axes: none readable (see the warning above)")
+    else:
+        print(f"{len(cyl)} cylindrical/conical face(s) with axes:")
     for c in cyl[: args.show]:
         if "axis_direction" in c:
             o, d = c["axis_origin"], c["axis_direction"]
@@ -955,6 +1016,22 @@ def cmd_gcode_view(args):
     print(f"toolpaths: {out}")
 
 
+def _deviation_detail(label, d):
+    """The rms and where the worst 5% of a one-way deviation lie, as one line."""
+    head = f"  {label}: rms {d['rms']:.4g}; "
+    w = d.get("worst5") or {}
+    if not w.get("n"):
+        return head + "worst 5%: " + w.get("note", "none")
+
+    def point(v):
+        return "(" + ", ".join(f"{x:.4g}" for x in v) + ")"
+
+    clusters = "; ".join(f"{point(c['center'])} n={c['n']} max {c['max']:.4g}" for c in w["clusters"])
+    more = f" (+{w['n_clusters'] - len(w['clusters'])} more)" if w["n_clusters"] > len(w["clusters"]) else ""
+    return (f"{head}worst 5% ({w['n']} of {w['of']} points, from {w['threshold']:.4g}): bbox {point(w['bbox_min'])} .. "
+            f"{point(w['bbox_max'])}; {w['n_clusters']} cluster(s) of cell {w['cell']:.4g}: {clusters}{more}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -971,6 +1048,8 @@ def cmd_compare(args):
                 print(f"  window {name}: p95 {w['p95']:.4g}, max {w['max']:.4g}")
             else:
                 print(f"  window {name}: {w.get('note')}")
+            if w.get("overlay"):
+                print(f"    overlay: {w['overlay']}")
         if p.get("overlay"):
             print(f"  overlay: {p['overlay']}")
     if res.get("planes_note"):
@@ -979,8 +1058,12 @@ def cmd_compare(args):
     if dev:
         a, b = dev["candidate_to_original"], dev["original_to_candidate"]
         print(f"deviation candidate->original p95 {a['p95']:.4g} max {a['max']:.4g}; original->candidate p95 {b['p95']:.4g} max {b['max']:.4g}")
+        print(_deviation_detail("candidate->original", a))
+        print(_deviation_detail("original->candidate", b))
     elif res.get("deviation_error"):
         print(f"deviation: {res['deviation_error']}", file=sys.stderr)
+    if args.window and not args.output_dir:
+        print("note: window images are written only with -o DIR", file=sys.stderr)
     if args.output_dir:
         print(f"compare.json: {probe.write_json(res, Path(args.output_dir) / 'compare.json')}")
     if res.get("gate") is False:
@@ -1258,15 +1341,24 @@ def _register_probe(sub, groups):
     p_probe = sub.add_parser("probe", help="RECOVER: section loops, arc fits and an inventory of a STEP or build123d source")
     sub_probe = p_probe.add_subparsers(dest="probe_cmd", required=True)
     groups["probe"] = sub_probe
-    for name, func, hlp in (("section", cmd_probe_section, "Closed loops of exact edges on named planes (loops.json)"),
-                            ("inventory", cmd_probe_inventory, "bbox, volume, census, cylinder axes, loops on planes")):
+    for name, func, hlp, source_help in (
+            ("section", cmd_probe_section, "Closed loops of exact edges on named planes (loops.json); an STL gives polylines with extents",
+             "STEP file, build123d program or STL mesh (loops from triangle-plane intersection)"),
+            ("inventory", cmd_probe_inventory, "bbox, volume, census, cylinder axes, loops on planes", "STEP file or build123d program")):
         pp = sub_probe.add_parser(name, help=hlp)
-        pp.add_argument("source", help="STEP file or build123d program")
+        pp.add_argument("source", help=source_help)
         pp.add_argument("--planes", nargs="*", default=None, help="x=|y=|z= followed by a number or mid")
         pp.add_argument("--max-loops", type=int, default=None, help="Keep at most N loops per plane (printed when applied; default none)")
         pp.add_argument("--show", type=int, default=12, help="Lines to print per plane or face list (default 12)")
         pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
         pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
+        if name == "section":
+            pp._negative_number_matcher = SIGNED_NUMBER_LIST      # --axis-center -5,0
+            pp.add_argument("--axis", choices=["x", "y", "z"], default=None,
+                            help="STL only: the axis the radial and axial extents are measured about (default: each plane's own normal)")
+            pp.add_argument("--axis-center", default=None, metavar="A,B",
+                            help="STL only: where the axis passes, as the two coordinates across it in x, y, z order "
+                                 "(default: the middle of the mesh's bounding box)")
         pp.set_defaults(func=func)
 
     pf = sub_probe.add_parser("fillet", help="Why a fillet fails: the selected chain on the LIVE part at the call, steps under 0.2 mm, sizes each edge takes")
@@ -1345,7 +1437,7 @@ def _register_compare_fit(sub, groups):
     p_cmp.add_argument("--planes", nargs="*", default=None,
                        help="Section planes for the loop-count gate: x=|y=|z= followed by a number or mid "
                             "(default: none, so no gate)")
-    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane (repeatable)")
+    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane, and with -o a zoomed overlay image of the window (repeatable)")
     p_cmp.add_argument("-o", "--output-dir", default=None, help="Overlay PNGs and compare.json go here")
     p_cmp.add_argument("--max-loops", type=int, default=None,
                        help="Keep at most N loops per plane (printed when applied; default none)")
