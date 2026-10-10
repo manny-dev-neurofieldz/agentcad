@@ -1446,6 +1446,7 @@ def _register_compare_fit(sub, groups):
     p_cmp.set_defaults(func=cmd_compare)
 
     p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
+    p_fit._negative_number_matcher = SIGNED_NUMBER_LIST          # --offset -5,0,0
     p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
     p_fit.add_argument("b", help="Second part, posed by --mate, --map or --offset/--spin")
     p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
