@@ -56,6 +56,18 @@ def spline_step(bore_block, tmp_path_factory) -> Path:
     return path
 
 
+def _write_stl(path, tri):
+    """A binary STL of (N, 3, 3) triangles (normals left zero: the readers here ignore them)."""
+    import struct
+    import numpy as np
+    tri = np.asarray(tri, dtype=np.float32)
+    with open(path, "wb") as fh:
+        fh.write(b"\0" * 80 + struct.pack("<I", len(tri)))
+        for t in tri:
+            fh.write(struct.pack("<12fH", 0, 0, 0, *t.ravel(), 0))
+    return path
+
+
 # --- census honesty ---------------------------------------------------------------------------
 
 def test_census_note_fires_at_ninety_percent_and_not_below():
@@ -111,3 +123,216 @@ def test_the_tray_warns_when_the_census_hides_analytic_types():
     assert any("19 of 20 faces (95%) are BSpline" in w for w in rep.warnings), rep.warnings
     md["face_census"] = {"plane": 14, "cylinder": 6, "bspline": 0}
     assert not any("BSpline" in w for w in feature_effect(None, md).warnings)
+
+
+# --- rays -------------------------------------------------------------------------------------
+
+def _runs(line):
+    return [(i["kind"], round(i["entry"], 3), round(i["exit"], 3)) for i in line["intervals"]]
+
+
+def test_a_line_through_the_bore_is_exact_on_the_brep(bore_block):
+    from agentcad import rays
+    res = rays.probe_rays(bore_block, [rays.parse_line("-30,0,0:1,0,0")])
+    assert res["kind"] == "brep" and res["schema"] == rays.SCHEMA
+    line = res["lines"][0]
+    assert line["range"] == pytest.approx([10.0, 50.0], abs=1e-6) and line["range_from"] == "bounding box"
+    assert [i["kind"] for i in line["intervals"]] == ["material", "void", "material"]
+    assert [i["length"] for i in line["intervals"]] == pytest.approx([20.0, 10.0, 10.0], abs=1e-3)
+    assert [i["entry_point"][0] for i in line["intervals"]] == pytest.approx([-20.0, 0.0, 10.0], abs=1e-3)
+    assert line["intervals"][1]["enclosed"] is True
+    assert not any(i["clipped_start"] or i["clipped_end"] for i in line["intervals"])   # the part's surface ended each one
+    assert line["material"] == pytest.approx(30.0, abs=1e-3) and line["enclosed_void"] == pytest.approx(10.0, abs=1e-3)
+
+
+def test_lines_along_the_other_axes_read_the_walls(bore_block):
+    from agentcad import rays
+    res = rays.probe_rays(bore_block, [rays.parse_line("-10,0,-30:0,0,1"), rays.parse_line("5,-40,0:0,1,0")])
+    wall, across = res["lines"]
+    assert [(i["kind"], i["length"]) for i in wall["intervals"]] == [("material", pytest.approx(20.0, abs=1e-3))]
+    assert [i["length"] for i in across["intervals"]] == pytest.approx([10.0, 10.0, 10.0], abs=1e-3)   # wall, bore, wall
+    assert [i["kind"] for i in across["intervals"]] == ["material", "void", "material"]
+
+
+def test_a_tangent_touch_does_not_open_a_gap(bore_block):
+    """The line y=5 only touches the bore at x=5: the part is unbroken along it."""
+    from agentcad import rays
+    line = rays.probe_rays(bore_block, [rays.parse_line("-30,5,0:1,0,0")])["lines"][0]
+    assert [(i["kind"], i["length"]) for i in line["intervals"]] == [("material", pytest.approx(40.0, abs=1e-3))]
+
+
+def test_a_line_through_a_corner_vertex_is_one_run(bore_block):
+    from agentcad import rays
+    line = rays.probe_rays(bore_block, [rays.parse_line("-30,-25,-20:1,1,1")])["lines"][0]
+    assert [i["kind"] for i in line["intervals"]] == ["material"]
+    assert line["intervals"][0]["length"] == pytest.approx(20 * math.sqrt(3), abs=1e-3)
+
+
+def test_a_fan_about_the_bore_axis_reads_the_wall_in_every_direction(bore_block):
+    from agentcad import rays
+    lines = rays.parse_fan("5,0,0:0,0,1:90", label="F1")
+    assert [l["label"] for l in lines] == ["F1@0", "F1@90", "F1@180", "F1@270"]
+    res = rays.probe_rays(bore_block, lines)
+    by = {l["label"]: l for l in res["lines"]}
+    for label, wall in (("F1@0", 10.0), ("F1@90", 10.0), ("F1@180", 20.0), ("F1@270", 10.0)):
+        void, material = by[label]["intervals"]
+        assert (void["kind"], material["kind"]) == ("void", "material")
+        assert void["length"] == pytest.approx(5.0, abs=1e-3)                 # the bore's radius
+        assert material["length"] == pytest.approx(wall, abs=1e-3)
+        assert void["clipped_start"] and not void["enclosed"]                    # it began in the bore, not at a surface
+    assert by["F1@90"]["fan"]["angle_deg"] == 90.0
+
+
+def test_fan_angles_follow_the_right_hand_rule_and_can_be_partial():
+    from agentcad import rays
+    e1, e2 = rays.fan_basis([0, 0, 1])
+    assert e1 == pytest.approx([1, 0, 0]) and e2 == pytest.approx([0, 1, 0])
+    e1, e2 = rays.fan_basis([1, 0, 0])
+    assert e1 == pytest.approx([0, 1, 0]) and e2 == pytest.approx([0, 0, 1])
+    half = rays.parse_fan("0,0,0:0,0,1:45:0:90")
+    assert [l["fan"]["angle_deg"] for l in half] == [0.0, 45.0, 90.0]
+    assert half[1]["direction"] == pytest.approx([math.sqrt(0.5), math.sqrt(0.5), 0.0])
+    assert len(rays.parse_fan("0,0,0:0,0,1:60")) == 6                       # a full turn does not repeat its first ray
+
+
+def test_the_range_is_recorded_and_a_cut_interval_says_so(bore_block):
+    from agentcad import rays
+    short = rays.probe_rays(bore_block, [rays.parse_line("-30,0,0:1,0,0:15")])["lines"][0]
+    assert short["range"] == [0.0, 15.0] and short["range_from"] == "length"
+    assert [(i["kind"], round(i["length"], 3)) for i in short["intervals"]] == [("void", 10.0), ("material", 5.0)]
+    assert short["intervals"][0]["clipped_start"] and short["intervals"][1]["clipped_end"]
+    inside = rays.probe_rays(bore_block, [rays.parse_line("-10,0,0:1,0,0")])["lines"][0]   # starts inside the wall
+    assert inside["intervals"][0]["clipped_start"] and inside["intervals"][0]["length"] == pytest.approx(10.0, abs=1e-3)
+    miss = rays.probe_rays(bore_block, [rays.parse_line("-30,50,0:1,0,0"), rays.parse_line("30,0,0:1,0,0")])["lines"]
+    assert all(m["intervals"] == [] and "misses" in m["note"] for m in miss)
+
+
+def test_a_line_beyond_the_part_is_one_open_void_and_a_tiny_range_says_so(bore_block, bore_stl):
+    from agentcad import rays
+    for source in (bore_block, bore_stl):
+        far, tiny = rays.probe_rays(source, [rays.parse_line("-30,50,0:1,0,0:100"), rays.parse_line("-30,0,0:1,0,0:1e-9")])["lines"]
+        assert [(i["kind"], i["length"], i["clipped_start"], i["clipped_end"], i["enclosed"]) for i in far["intervals"]] \
+            == [("void", 100.0, True, True, False)]
+        assert tiny["intervals"] == [] and "shorter than the tolerance" in tiny["note"]
+
+
+def test_a_malformed_line_or_fan_is_a_named_error():
+    from agentcad import rays
+    for bad in ("1,2:0,0,1", "1,2,3", "0,0,0:0,0,0", "0,0,0:1,0,0:-3", "0,0,0:1,0,0:x", "a,b,c:1,0,0"):
+        with pytest.raises(ValueError, match="line spec"):
+            rays.parse_line(bad)
+    for bad in ("0,0,0:0,0,1", "0,0,0:0,0,1:0", "0,0,0:0,0,1:30:90:10", "0,0,0:0,0,1:x"):
+        with pytest.raises(ValueError, match="fan spec|direction"):
+            rays.parse_fan(bad)
+    with pytest.raises(ValueError, match="build123d program, a STEP file or an STL"):
+        rays.load_target(Path("part.scad"))
+
+
+def test_a_shape_without_a_solid_has_no_inside(tmp_path):
+    from agentcad import rays
+    plate = tmp_path / "face.py"
+    plate.write_text("from build123d import *\npart = Rectangle(10, 10).face()\n")
+    with pytest.raises(ValueError, match="need a solid"):
+        rays.load_target(plate)
+
+
+def test_the_stl_agrees_with_the_brep_within_the_tessellation(bore_block, bore_stl):
+    """Lines through mesh vertices and along triangle edges (the bore's seam, the rectangle diagonals
+    of the end faces at their centre) are where a careless crossing count double-counts, and lines
+    lying in a face are on the boundary, which both readings count as material."""
+    from agentcad import rays
+    specs = ["-30,0,0:1,0,0", "-10,0,-30:0,0,1", "5,-40,0:0,1,0", "-30,5,0:1,0,0", "-30,-25,-20:1,1,1",
+             "-30,-15,-10:1,0,0",     # along an edge of the block
+             "-30,-8,10:1,0,0",       # in the top face
+             "-30,0,10:1,0,0"]        # in the top face, across the mouth of the bore
+    exact = rays.probe_rays(bore_block, [rays.parse_line(s) for s in specs])
+    mesh = rays.probe_rays(bore_stl, [rays.parse_line(s) for s in specs])
+    assert mesh["kind"] == "mesh" and mesh["winding"] == "outward" and mesh["triangles"] > 100
+    for a, b in zip(exact["lines"], mesh["lines"]):
+        assert [i["kind"] for i in a["intervals"]] == [i["kind"] for i in b["intervals"]], a["label"]
+        assert [i["length"] for i in b["intervals"]] == pytest.approx([i["length"] for i in a["intervals"]], abs=0.02)
+        assert not b["warnings"]
+
+
+def test_a_fan_on_the_stl_matches_and_a_flipped_mesh_reads_the_same(bore_block, bore_stl, tmp_path):
+    import numpy as np
+    from agentcad import rays
+    from agentcad.meshmeasure import read_stl
+    V, _ = read_stl(bore_stl)
+    flipped = _write_stl(tmp_path / "flipped.stl", V.reshape(-1, 3, 3)[:, ::-1, :])   # every triangle wound the other way
+    fan = rays.parse_fan("5,0,0:0,0,1:45", label="F")
+    a = rays.probe_rays(bore_stl, fan)
+    b = rays.probe_rays(flipped, fan)
+    assert b["winding"] == "inward"
+    exact = rays.probe_rays(bore_block, fan)
+    for ea, ma, mb in zip(exact["lines"], a["lines"], b["lines"]):
+        assert [i["kind"] for i in ma["intervals"]] == [i["kind"] for i in ea["intervals"]] == [i["kind"] for i in mb["intervals"]]
+        assert [i["length"] for i in ma["intervals"]] == pytest.approx([i["length"] for i in ea["intervals"]], abs=0.02)
+        assert [i["length"] for i in mb["intervals"]] == pytest.approx([i["length"] for i in ma["intervals"]], abs=1e-6)
+
+
+def test_an_open_mesh_warns_instead_of_guessing(bore_stl, tmp_path):
+    """Remove the top face's triangles: a line down through the hole sees an odd number of crossings."""
+    import numpy as np
+    from agentcad import rays
+    from agentcad.meshmeasure import read_stl
+    V, _ = read_stl(bore_stl)
+    tri = V.reshape(-1, 3, 3)
+    keep = ~np.all(np.abs(tri[:, :, 2] - 10.0) < 1e-6, axis=1)               # drop every triangle lying on z=+10
+    path = _write_stl(tmp_path / "open.stl", tri[keep])
+    line = rays.probe_rays(path, [rays.parse_line("-10,0,30:0,0,-1")])["lines"][0]
+    assert line["warnings"] and "not closed" in line["warnings"][0]
+
+
+def test_rays_text_names_the_range_and_caps_what_it_prints(bore_block):
+    from agentcad import rays
+    res = rays.probe_rays(bore_block, [rays.parse_line("-30,0,0:1,0,0")])
+    text = "\n".join(rays.render_rays(res))
+    assert "L1: from (-30.000, 0.000, 0.000)" in text and "(bounding box)" in text
+    assert "material" in text and "enclosed" in text and "material 30.0000 in 2 run(s)" in text
+    miss = rays.probe_rays(bore_block, [rays.parse_line("-30,50,0:1,0,0")])
+    assert "the line misses the part's bounding box" in "\n".join(rays.render_rays(miss))
+    capped = "\n".join(rays.render_rays(res, show=1))
+    assert "2 more interval(s) (cap --show 1; the JSON has all)" in capped
+
+
+def test_probe_rays_through_the_cli(bore_block, tmp_path, capsys):
+    from agentcad import cli
+    out = tmp_path / "rays.json"
+    cli.main(["probe", "rays", str(bore_block), "--line=-30,0,0:1,0,0", "--fan", "5,0,0:0,0,1:90", "-o", str(out)])
+    text = capsys.readouterr().out
+    assert "L1: from" in text and "F1@0: from" in text and "F1@270: from" in text and f"rays.json: {out}" in text
+    data = json.loads(out.read_text())
+    assert data["schema"] == "agentcad.probe.rays/1" and [l["label"] for l in data["lines"]] == ["L1", "F1@0", "F1@90", "F1@180", "F1@270"]
+    assert data["lines"][0]["intervals"][1]["length"] == pytest.approx(10.0, abs=1e-3)
+
+
+def test_probe_rays_reads_a_parameter_override_and_an_stl(bore_block, bore_stl, capsys):
+    from agentcad import cli
+    cli.main(["probe", "rays", str(bore_block), "--line=-30,0,0:1,0,0", "-D", "bore=4"])
+    assert "void     t   33.0000 ->   37.0000  length    4.0000" in capsys.readouterr().out      # the bore is 4 wide
+    cli.main(["probe", "rays", str(bore_stl), "--line=-30,0,0:1,0,0", "-D", "bore=4"])
+    out = capsys.readouterr().out
+    assert "mesh" in out and "-D ['bore'] ignored: a mesh has no parameters" in out
+
+
+def test_probe_rays_names_what_is_missing_or_wrong(bore_block, tmp_path, capsys):
+    from agentcad import cli
+    for argv, code, words in ((["probe", "rays", str(bore_block)], 2, "at least one --line or --fan"),
+                              (["probe", "rays", str(bore_block), "--line", "1,2:3"], 2, "line spec"),
+                              (["probe", "rays", str(bore_block), "--fan", "0,0,0:0,0,1:0"], 2, "fan spec"),
+                              (["probe", "rays", str(tmp_path / "part.scad"), "--line", "0,0,0:1,0,0"], 1, "STL mesh")):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(argv)
+        assert exc.value.code == code
+        assert words in capsys.readouterr().err
+
+
+def test_an_empty_mesh_and_a_zero_direction_are_named_errors(tmp_path):
+    import numpy as np
+    from agentcad import meshprobe
+    empty = _write_stl(tmp_path / "empty.stl", np.empty((0, 3, 3)))
+    with pytest.raises(ValueError, match="no triangles"):
+        meshprobe.load_mesh(empty)
+    with pytest.raises(ValueError, match="direction"):
+        meshprobe.basis([0, 0, 0])

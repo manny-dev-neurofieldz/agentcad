@@ -26,7 +26,7 @@ GOLDENS = json.loads((DATA / "policy_golden" / "goldens.json").read_text())
 # with its policy.
 UNCLAIMED_ALLOWED = {
     ("render",), ("export",), ("info",), ("new-project",), ("projects",), ("status",), ("open",),
-    ("config-init",), ("config-show",), ("probe", "section"), ("probe", "inventory"),
+    ("config-init",), ("config-show",), ("probe", "section"),
     ("probe", "fillet"), ("probe", "draft"), ("compare",), ("fit",), ("gallery", "build"),
     ("gallery", "check"), ("viewer",), ("check",),
 }
@@ -117,6 +117,27 @@ def test_no_policy_claims_a_command_that_does_not_exist():
     leaves = set(_leaves(cli.build_parser()))
     ghosts = set(_claims()) - leaves
     assert not ghosts, f"policies claim missing commands: {sorted(ghosts)}"
+
+
+def _command_parser(path):
+    parser = cli.build_parser()
+    for word in path:
+        parser = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction)).choices[word]
+    return parser
+
+
+def test_the_inspection_policy_names_every_flag_of_the_commands_it_governs():
+    p = pol.get_policy("probe-inspect")
+    assert p.commands, "the policy claims its commands in the header"
+    missing = []
+    for command in p.commands:
+        for action in _command_parser(command)._actions:
+            if isinstance(action, argparse._HelpAction):
+                continue
+            for option in action.option_strings:
+                if option not in p.text:
+                    missing.append(f"{' '.join(command)} {option}")
+    assert not missing, "flags the policy does not mention: " + ", ".join(missing)
 
 
 # --- lints ---------------------------------------------------------------------------

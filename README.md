@@ -122,6 +122,7 @@ the check: the gallery is a test of the tool on every engine.
 ```bash
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
+agentcad probe rays part.py --line=-30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
 agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
 ```
 
@@ -130,6 +131,34 @@ surface points) are the two exchange formats; every probe writes them and
 `compare` reads them. A cap an instrument applies is printed with its
 value. A cylindrical face reports its axis, never its centroid. Meshes are
 compared in the sampled compartment only, and the output says so.
+
+### Rays
+
+`probe rays` measures what a render cannot: wall thickness, bore depth, gaps.
+A line is `--line START:DIRECTION[:LEN]` (`x,y,z:dx,dy,dz`); a fan is
+`--fan POINT:AXIS:STEP[:FROM[:TO]]`, lines that leave a point on an axis, square
+to it, every STEP degrees (right-hand rule about the axis; 0 degrees is the
+world axis most nearly square to it). Each line reports its intervals of
+material and void with entry, exit and length along the line, and flags an
+interval cut short by the end of the range (`clipped_start`, `clipped_end`,
+never a thickness) and a void with material on both sides (`enclosed`). A
+build123d program or STEP file is read exactly (face crossings found exactly,
+midpoints classified against the solid, so a tangent opens no gap and a line in a
+face counts as material); an STL is read to its tessellation, with a fixed tie
+rule so a line through a vertex or along an edge is counted once. The record
+(`-o`, schema `agentcad.probe.rays/1`) says which kind it was. A start point
+with a minus sign is written `--line=-30,0,0:1,0,0`. For checks built on rays,
+`agentcad.rays.ray_intervals(target, origin, direction)` is the library entry
+point (`load_target` builds the target from a program, STEP or STL).
+
+### The census says when it cannot see
+
+A body converted to splines reports every face as a BSpline, so its census
+shows no cylinders, cones, spheres or tori and the cylinder list is empty.
+When 90 percent or more of the faces are BSpline, `probe inventory` (the
+`census_notes` field and a warning line) and the iteration tray say the
+representation hides analytic types, so the zeros are read as unknown, not as
+none.
 
 ## Fit and mates
 
