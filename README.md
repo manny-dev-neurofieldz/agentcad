@@ -486,6 +486,7 @@ The set covers every command and the practice around them:
 | `compare`, `fit` | `compare`; `fit` and `[mates]` |
 | `qc`, `printers`, `targets`, `print-intent` | `qc`, `printers`, `targets`, `stage` |
 | `gcode` | every `gcode` command |
+| `printer-hosts` | `printer list`, `files`, `get`, `status`; read-only by contract |
 | `policies` | `policy list`, `navigate`, `read`; the format |
 | `design-practice`, `build123d`, `reverse-engineering`, `design-review` | practice: posture and evidence, construction pitfalls, recovering intent, the review rubric |
 
