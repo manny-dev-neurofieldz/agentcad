@@ -350,6 +350,25 @@ compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code
 MeatPack keeping comments). The reader is written from the published format specification of Prusa's
 libbgcode and the descriptions of heatshrink and MeatPack; it does not contain libbgcode code.
 
+## Printer hosts
+
+A printer host is where a printer can be asked what it holds and what it is doing. agentcad reads from
+one and never writes to it: the host contract allows GET and HEAD only, in one function per host that the
+tests check on the wire and in the source. PrusaLink (HTTP Digest) is the first host.
+
+```
+agentcad printer list                       # the printers the host knows, with their state
+agentcad printer files [folder] [--limit 5] # newest first, each file by its display name and its short name
+agentcad printer get NAME -o fixtures/      # NAME is either name; the file is checked for length before it is kept
+agentcad printer status                     # state, temperatures, the running job
+```
+
+The address and credentials come from `AGENTCAD_PRUSALINK_URL`, `AGENTCAD_PRUSALINK_USER` (default `maker`)
+and `AGENTCAD_PRUSALINK_PASSWORD`, or from a `[prusalink]` table in `hosts.toml` in the agentcad user config
+folder (`$XDG_CONFIG_HOME/agentcad` or `~/.config/agentcad`). A `hosts.toml` that group or others can reach is
+refused with the `chmod 600` that fixes it. A credential is never printed, logged, put in JSON or written to a
+project. `agentcad policy read printer-hosts` has the rest.
+
 ## Program-side helpers (build123d)
 
 ```python
