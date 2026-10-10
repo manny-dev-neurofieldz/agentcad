@@ -19,6 +19,7 @@ sampled compartment, and the output says which.
 
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -93,9 +94,10 @@ def parse_plane(spec: str, shape=None):
 
 def _edge_record(b3d, e) -> Dict[str, Any]:
     kind = str(e.geom_type).split(".")[-1].lower()
-    s, t = e.position_at(0), e.position_at(1)
+    s, t, m = e.position_at(0), e.position_at(1), e.position_at(0.5)
     rec: Dict[str, Any] = {"type": kind, "start": [s.X, s.Y, s.Z], "end": [t.X, t.Y, t.Z],
-                           "length": float(e.length), "center": None, "radius": None, "sweep_deg": None}
+                           "length": float(e.length), "center": None, "radius": None, "sweep_deg": None,
+                           "midpoint": [m.X, m.Y, m.Z]}
     if kind == "circle":
         try:
             c = e.arc_center
@@ -300,14 +302,87 @@ def sample_points(source: Path, tolerance: Optional[float] = None, defines=None)
     return {"source": str(source), "sampler": {"kind": "tessellation", "tolerance": tol}, "points": pts.tolist()}
 
 
-def deviation(a: Sequence[Sequence[float]], b: Sequence[Sequence[float]]) -> Dict[str, float]:
-    """Nearest-neighbour distances from a to b: p50, p95, max (needs scipy)."""
+WORST_FRACTION = 0.05      # the share of sampled points whose location a comparison reports
+_CLUSTER_CELLS = 20        # cluster cells per bounding-box diagonal
+_CLUSTERS_SHOWN = 5
+
+
+def deviation(a: Sequence[Sequence[float]], b: Sequence[Sequence[float]]) -> Dict[str, Any]:
+    """Nearest-neighbour distances from a to b: p50, p95, max, rms, and where the worst 5% lie (needs scipy)."""
     import numpy as np
     from scipy.spatial import cKDTree
 
     A, B = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
     d, _ = cKDTree(B).query(A)
-    return {"p50": float(np.percentile(d, 50)), "p95": float(np.percentile(d, 95)), "max": float(d.max()), "n": int(len(A))}
+    return {"p50": float(np.percentile(d, 50)), "p95": float(np.percentile(d, 95)), "max": float(d.max()), "n": int(len(A)),
+            "rms": float(np.sqrt((d ** 2).mean())), "worst5": worst_region(A, d)}
+
+
+def worst_region(points: Sequence[Sequence[float]], dist: Sequence[float], fraction: float = WORST_FRACTION,
+                 shown: int = _CLUSTERS_SHOWN) -> Dict[str, Any]:
+    """Where the worst ``fraction`` of the deviations lie: their bounding box, and clusters.
+
+    The points with the largest distances (the top ``fraction`` of them, those above zero) are
+    grouped by the cubic cells they fall in, cells of 1/20 of the bounding-box diagonal of all the
+    points; cells that touch (by face, edge or corner) join into one cluster. A cluster reports the
+    mean of its points as its centre, its size, its worst distance and its box, and the ``shown``
+    clusters with the worst distances are kept (``n_clusters`` counts all). The rule is stated in
+    ``method`` so the centres are never read as a fit.
+    """
+    import numpy as np
+
+    P, d = np.asarray(points, dtype=float), np.asarray(dist, dtype=float)
+    pick = np.argsort(-d, kind="stable")[:max(1, math.ceil(fraction * len(d)))]
+    pick = pick[d[pick] > 0]
+    out: Dict[str, Any] = {"fraction": fraction, "n": int(len(pick)), "of": int(len(d))}
+    if not len(pick):
+        out["note"] = "no deviation above zero: nothing to locate"
+        return out
+    worst, worst_d = P[pick], d[pick]
+    lo, hi = P.min(axis=0), P.max(axis=0)
+    diag = float(np.linalg.norm(hi - lo))
+    cell = diag / _CLUSTER_CELLS if diag > 0 else 1.0
+    clusters = _grid_clusters(worst, worst_d, lo, cell)
+    clusters.sort(key=lambda c: (-c["max"], -c["n"]))
+    out.update(threshold=float(worst_d.min()), bbox_min=worst.min(axis=0).tolist(), bbox_max=worst.max(axis=0).tolist(),
+               cell=cell, n_clusters=len(clusters), clusters=clusters[:shown],
+               method=f"the worst {fraction:.0%} of the points by distance; occupied cells of {cell:.4g} "
+                      f"(1/{_CLUSTER_CELLS} of the bounding-box diagonal) that touch form one cluster, "
+                      f"centre = mean of its points")
+    return out
+
+
+def _grid_clusters(points, dist, origin, cell: float) -> List[Dict[str, Any]]:
+    """Points grouped by the cubic cells (side ``cell`` from ``origin``) they fall in, touching cells joined."""
+    import numpy as np
+
+    keys = np.floor((points - origin) / cell).astype(np.int64)
+    cells, inverse = np.unique(keys, axis=0, return_inverse=True)
+    inverse = inverse.reshape(-1)
+    index = {tuple(c): i for i, c in enumerate(cells.tolist())}
+    parent = list(range(len(cells)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for (cx, cy, cz), i in index.items():
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    j = index.get((cx + dx, cy + dy, cz + dz))
+                    if j is not None:
+                        parent[find(j)] = find(i)
+    roots = np.array([find(i) for i in range(len(cells))])[inverse]
+    clusters = []
+    for root in np.unique(roots):
+        m = roots == root
+        pts = points[m]
+        clusters.append({"center": pts.mean(axis=0).tolist(), "n": int(m.sum()), "max": float(dist[m].max()),
+                         "bbox_min": pts.min(axis=0).tolist(), "bbox_max": pts.max(axis=0).tolist()})
+    return clusters
 
 
 # --- compare ---------------------------------------------------------------------
@@ -339,7 +414,10 @@ def compare(original: Path, candidate: Path, planes: Sequence[str] = (), windows
             if windows:
                 entry["windows"] = {}
                 for name, (x0, y0, x1, y1) in windows.items():
-                    entry["windows"][name] = _window_distance(lo, lc, spec, (x0, y0, x1, y1))
+                    w = _window_distance(lo, lc, spec, (x0, y0, x1, y1))
+                    if out_dir is not None:
+                        w["overlay"] = str(_overlay_png(lo, lc, spec, Path(out_dir), window=(x0, y0, x1, y1), name=name, stats=w))
+                    entry["windows"][name] = w
             if out_dir is not None:
                 entry["overlay"] = str(_overlay_png(lo, lc, spec, Path(out_dir)))
             result["planes"].append(entry)
@@ -355,6 +433,28 @@ def compare(original: Path, candidate: Path, planes: Sequence[str] = (), windows
     return result
 
 
+def _arc_angles(e, keep, n: int) -> List[float]:
+    """Angles (radians, about the edge's centre in the section plane's axes) sampling a circle edge.
+
+    The direction comes from the edge's midpoint: the arc runs the way that passes it. A closed circle
+    (start at end, or a sweep of a full turn) is sampled once round. A record without a midpoint (a
+    loops.json written before it was recorded) is read as the arc that runs counter-clockwise."""
+    s, t, c = e["start"], e["end"], e["center"]
+    a0 = math.atan2(s[keep[1]] - c[keep[1]], s[keep[0]] - c[keep[0]])
+    a1 = math.atan2(t[keep[1]] - c[keep[1]], t[keep[0]] - c[keep[0]])
+    turn = 2 * math.pi
+    ccw = (a1 - a0) % turn
+    full = (e.get("sweep_deg") or 0.0) >= 359.0 or min(ccw, turn - ccw) < 1e-9
+    m = e.get("midpoint")
+    if full:
+        sweep = turn
+    elif m is None or (math.atan2(m[keep[1]] - c[keep[1]], m[keep[0]] - c[keep[0]]) - a0) % turn < ccw:
+        sweep = ccw
+    else:
+        sweep = ccw - turn
+    return [a0 + sweep * i / n for i in range(n + 1)]
+
+
 def _loop_points_2d(loops, spec: str, n_per_edge: int = 24):
     """Points of every loop projected to the section plane's 2D axes."""
     axis = spec.partition("=")[0].strip().lower()
@@ -363,13 +463,8 @@ def _loop_points_2d(loops, spec: str, n_per_edge: int = 24):
     for L in loops:
         for e in L["edges"]:
             if e["type"] == "circle" and e["center"] and e["radius"]:
-                s, t, c = e["start"], e["end"], e["center"]
-                a0 = math.atan2(s[keep[1]] - c[keep[1]], s[keep[0]] - c[keep[0]])
-                a1 = math.atan2(t[keep[1]] - c[keep[1]], t[keep[0]] - c[keep[0]])
-                if a1 <= a0:
-                    a1 += 2 * math.pi
-                for i in range(n_per_edge + 1):
-                    a = a0 + (a1 - a0) * i / n_per_edge
+                c = e["center"]
+                for a in _arc_angles(e, keep, n_per_edge):
                     pts.append((c[keep[0]] + e["radius"] * math.cos(a), c[keep[1]] + e["radius"] * math.sin(a)))
             else:
                 pts.append((e["start"][keep[0]], e["start"][keep[1]]))
@@ -391,7 +486,10 @@ def _window_distance(lo, lc, spec, window) -> Dict[str, Any]:
     return {"p95": float(np.percentile(d, 95)), "max": float(d.max()), "n_original": int(len(a)), "n_candidate": int(len(b))}
 
 
-def _overlay_png(lo, lc, spec: str, out_dir: Path) -> Path:
+def _overlay_png(lo, lc, spec: str, out_dir: Path, window=None, name: Optional[str] = None,
+                 stats: Optional[Dict[str, Any]] = None) -> Path:
+    """The two sections over each other: the whole section, or with ``window`` (x0, y0, x1, y1 in the
+    section plane's axes) zoomed to it, the curves sampled finely enough to stay smooth there."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -401,13 +499,26 @@ def _overlay_png(lo, lc, spec: str, out_dir: Path) -> Path:
     for loops, color, label in ((lo, "black", "original"), (lc, "#e94560", "candidate")):
         first = True
         for L in loops:
-            pts = _loop_points_2d([L], spec)
+            pts = _loop_points_2d([L], spec, 24 if window is None else 400)
             if pts:
                 xs, ys = zip(*pts)
                 ax.plot(list(xs) + [xs[0]], list(ys) + [ys[0]], color=color, lw=0.8, label=label if first else None)
                 first = False
-    ax.set_aspect("equal"); ax.legend(); ax.set_title(f"section {spec}: {len(lo)} vs {len(lc)} loops")
-    path = out_dir / f"overlay_{spec.replace('=', '_').replace('.', 'p')}.png"
+    ax.set_aspect("equal"); ax.legend()
+    stem = f"overlay_{spec.replace('=', '_').replace('.', 'p')}"
+    if window is None:
+        ax.set_title(f"section {spec}: {len(lo)} vs {len(lc)} loops")
+    else:
+        x0, y0, x1, y1 = window
+        ax.set_xlim(x0, x1); ax.set_ylim(y0, y1)
+        across = {"x": ("y", "z"), "y": ("x", "z"), "z": ("x", "y")}[spec.partition("=")[0].strip().lower()]
+        ax.set_xlabel(across[0]); ax.set_ylabel(across[1])
+        title = f"section {spec}, window {name}"
+        if stats and "p95" in stats:
+            title += f": p95 {stats['p95']:.3g}, max {stats['max']:.3g}"
+        ax.set_title(title)
+        stem += "_" + re.sub(r"[^A-Za-z0-9_.-]+", "_", str(name))
+    path = out_dir / f"{stem}.png"
     fig.savefig(path, dpi=120); plt.close(fig)
     return path
 

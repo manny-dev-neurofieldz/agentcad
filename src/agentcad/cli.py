@@ -942,6 +942,22 @@ def cmd_gcode_view(args):
     print(f"toolpaths: {out}")
 
 
+def _deviation_detail(label, d):
+    """The rms and where the worst 5% of a one-way deviation lie, as one line."""
+    head = f"  {label}: rms {d['rms']:.4g}; "
+    w = d.get("worst5") or {}
+    if not w.get("n"):
+        return head + "worst 5%: " + w.get("note", "none")
+
+    def point(v):
+        return "(" + ", ".join(f"{x:.4g}" for x in v) + ")"
+
+    clusters = "; ".join(f"{point(c['center'])} n={c['n']} max {c['max']:.4g}" for c in w["clusters"])
+    more = f" (+{w['n_clusters'] - len(w['clusters'])} more)" if w["n_clusters"] > len(w["clusters"]) else ""
+    return (f"{head}worst 5% ({w['n']} of {w['of']} points, from {w['threshold']:.4g}): bbox {point(w['bbox_min'])} .. "
+            f"{point(w['bbox_max'])}; {w['n_clusters']} cluster(s) of cell {w['cell']:.4g}: {clusters}{more}")
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -958,6 +974,8 @@ def cmd_compare(args):
                 print(f"  window {name}: p95 {w['p95']:.4g}, max {w['max']:.4g}")
             else:
                 print(f"  window {name}: {w.get('note')}")
+            if w.get("overlay"):
+                print(f"    overlay: {w['overlay']}")
         if p.get("overlay"):
             print(f"  overlay: {p['overlay']}")
     if res.get("planes_note"):
@@ -966,8 +984,12 @@ def cmd_compare(args):
     if dev:
         a, b = dev["candidate_to_original"], dev["original_to_candidate"]
         print(f"deviation candidate->original p95 {a['p95']:.4g} max {a['max']:.4g}; original->candidate p95 {b['p95']:.4g} max {b['max']:.4g}")
+        print(_deviation_detail("candidate->original", a))
+        print(_deviation_detail("original->candidate", b))
     elif res.get("deviation_error"):
         print(f"deviation: {res['deviation_error']}", file=sys.stderr)
+    if args.window and not args.output_dir:
+        print("note: window images are written only with -o DIR", file=sys.stderr)
     if args.output_dir:
         print(f"compare.json: {probe.write_json(res, Path(args.output_dir) / 'compare.json')}")
     if res.get("gate") is False:
@@ -1255,7 +1277,7 @@ def _register_compare_fit(sub, groups):
     p_cmp.add_argument("--planes", nargs="*", default=None,
                        help="Section planes for the loop-count gate: x=|y=|z= followed by a number or mid "
                             "(default: none, so no gate)")
-    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane (repeatable)")
+    p_cmp.add_argument("--window", action="append", metavar="NAME=x0,y0,x1,y1", help="Per-window distances on the section plane, and with -o a zoomed overlay image of the window (repeatable)")
     p_cmp.add_argument("-o", "--output-dir", default=None, help="Overlay PNGs and compare.json go here")
     p_cmp.add_argument("--max-loops", type=int, default=None,
                        help="Keep at most N loops per plane (printed when applied; default none)")

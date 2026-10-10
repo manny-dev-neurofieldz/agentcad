@@ -459,3 +459,150 @@ def test_plane_specs_name_what_is_wrong_and_degenerate_polylines_survive():
     back_and_forth = np.array([[0.0, 0, 0], [1.0, 0, 0], [0.0, 0, 0]])           # a chain that returns on itself
     assert [(a.tolist(), b.tolist()) for a, b in meshprobe._runs(back_and_forth, 1e-6)] \
         == [([0, 0, 0], [1, 0, 0]), ([1, 0, 0], [0, 0, 0])]
+
+
+# --- compare detail ---------------------------------------------------------------------------
+
+# A 40 x 20 x 6 plate with two holes (x=-10 and x=+10) that can be shifted: dz moves the whole plate, dx only the left hole.
+SHIFTED_PLATE = (
+    "from build123d import *\n"
+    "\n"
+    "def build(dx=0.0, dz=0.0, d=6.0):\n"
+    "    plate = Box(40, 20, 6) - Pos(-10 + dx, 0, 0) * Cylinder(d / 2, 10) - Pos(10, 0, 0) * Cylinder(d / 2, 10)\n"
+    "    return Pos(0, 0, dz) * plate\n"
+)
+
+
+@pytest.fixture(scope="module")
+def shifted_plate(tmp_path_factory) -> Path:
+    path = tmp_path_factory.mktemp("inspect_cmp") / "plate.py"
+    path.write_text(SHIFTED_PLATE)
+    return path
+
+
+def test_the_deviation_of_a_known_offset_reads_as_that_offset(shifted_plate):
+    """The whole plate 0.5 higher: every sampled point is 0.5 from its twin, so p50, rms and max are all 0.5."""
+    from agentcad import probe
+    res = probe.compare(shifted_plate, shifted_plate, defines={"dz": "0.5"})
+    for way in ("candidate_to_original", "original_to_candidate"):
+        dev = res["deviation"][way]
+        assert dev["p50"] == pytest.approx(0.5, abs=1e-6) and dev["max"] == pytest.approx(0.5, abs=1e-6)
+        assert dev["rms"] == pytest.approx(0.5, abs=1e-6)
+        assert {"p50", "p95", "max", "n"} <= set(dev)                              # the existing fields stay
+
+
+def test_rms_agrees_with_an_independent_nearest_neighbour_computation(shifted_plate):
+    from scipy.spatial import cKDTree
+    from agentcad import probe
+    a = probe.sample_points(shifted_plate)["points"]
+    b = probe.sample_points(shifted_plate, defines={"dx": "2.0"})["points"]
+    d = cKDTree(a).query(b)[0]
+    dev = probe.compare(shifted_plate, shifted_plate, defines={"dx": "2.0"})["deviation"]["candidate_to_original"]
+    assert dev["rms"] == pytest.approx(math.sqrt(float((d ** 2).mean())), rel=1e-9)
+
+
+def test_the_worst_five_percent_lie_where_the_hole_moved(shifted_plate):
+    from agentcad import probe
+    res = probe.compare(shifted_plate, shifted_plate, defines={"dx": "2.0"})
+    for way in ("candidate_to_original", "original_to_candidate"):
+        dev = res["deviation"][way]
+        worst = dev["worst5"]
+        assert worst["fraction"] == 0.05 and 1 <= worst["n"] <= math.ceil(0.05 * dev["n"])
+        assert worst["threshold"] <= dev["max"] and worst["threshold"] > 0
+        assert worst["bbox_max"][0] < -3.0 and worst["bbox_min"][0] > -15.0          # the left hole's side of the plate
+        assert -4.0 < worst["bbox_min"][1] and worst["bbox_max"][1] < 4.0
+        assert worst["clusters"] and worst["n_clusters"] >= len(worst["clusters"])
+        assert worst["clusters"][0]["max"] == pytest.approx(dev["max"])                # sorted by worst distance
+        assert all(c["center"][0] < -3.0 for c in worst["clusters"])
+        assert sum(c["n"] for c in worst["clusters"]) <= worst["n"] and worst["cell"] > 0
+        assert "cells" in worst["method"]                                               # the clustering rule is stated
+
+
+def test_identical_parts_have_no_worst_region(shifted_plate):
+    from agentcad import probe
+    dev = probe.compare(shifted_plate, shifted_plate)["deviation"]["candidate_to_original"]
+    assert dev["rms"] == pytest.approx(0.0, abs=1e-12)
+    assert dev["worst5"]["n"] == 0 and "no deviation above zero" in dev["worst5"]["note"]
+
+
+def test_each_window_gets_a_zoomed_overlay(shifted_plate, tmp_path, monkeypatch):
+    import matplotlib.figure as mf
+    from agentcad import probe
+    limits = []
+    real = mf.Figure.savefig
+
+    def spy(self, *args, **kwargs):
+        limits.append((tuple(self.axes[0].get_xlim()), tuple(self.axes[0].get_ylim())))
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(mf.Figure, "savefig", spy)
+    res = probe.compare(shifted_plate, shifted_plate, planes=["z=mid"], defines={"dx": "2.0"},
+                        windows={"hole": (-14.0, -4.0, -4.0, 4.0), "far corner": (15.0, 5.0, 20.0, 10.0)},
+                        out_dir=tmp_path / "cmp")
+    entry = res["planes"][0]
+    assert Path(entry["overlay"]).name == "overlay_z_mid.png"                               # the whole-section image stays
+    hole, corner = entry["windows"]["hole"], entry["windows"]["far corner"]
+    assert Path(hole["overlay"]).name == "overlay_z_mid_hole.png" and Path(hole["overlay"]).stat().st_size > 1000
+    assert Path(corner["overlay"]).name == "overlay_z_mid_far_corner.png"
+    import matplotlib.image as mpimg
+    pixels = mpimg.imread(hole["overlay"])[..., :3] * 255                                    # the candidate's circle is drawn in the window
+    red = ((pixels[..., 0] > 200) & (pixels[..., 1] < 120) & (pixels[..., 2] < 140)).sum()
+    assert red > 400, f"the zoomed window shows {red} candidate-coloured pixels: it is blank"
+    assert {"p95", "max", "n_original", "n_candidate"} <= set(hole)                         # the existing fields stay
+    assert ((-14.0, -4.0), (-4.0, 4.0)) in limits and ((15.0, 20.0), (5.0, 10.0)) in limits   # zoomed to the window
+    assert len(limits) == 3
+    quiet = probe.compare(shifted_plate, shifted_plate, planes=["z=mid"], windows={"hole": (-14.0, -4.0, -4.0, 4.0)})
+    assert "overlay" not in quiet["planes"][0]["windows"]["hole"]                            # no directory, no images
+
+
+def test_compare_prints_the_detail_and_writes_it(shifted_plate, tmp_path, capsys):
+    from agentcad import cli
+    out = tmp_path / "cmp"
+    cli.main(["compare", str(shifted_plate), str(shifted_plate), "--planes", "z=mid", "--window", "hole=-14,-4,-4,4",
+              "-D", "dx=2.0", "-o", str(out)])
+    text = capsys.readouterr().out
+    assert "deviation candidate->original p95" in text                                       # the existing line, unchanged
+    assert "candidate->original: rms " in text and "worst 5%" in text and "bbox (" in text and "cluster" in text
+    assert "window hole: p95" in text and "overlay_z_mid_hole.png" in text
+    data = json.loads((out / "compare.json").read_text())
+    assert data["deviation"]["candidate_to_original"]["worst5"]["clusters"]
+    assert data["planes"][0]["windows"]["hole"]["overlay"].endswith("overlay_z_mid_hole.png")
+    cli.main(["compare", str(shifted_plate), str(shifted_plate), "--planes", "z=mid", "--window", "hole=-14,-4,-4,4"])
+    assert "window images are written only with -o" in capsys.readouterr().err
+
+
+def test_overlays_draw_whole_circles_and_the_right_half_of_a_half_circle(tmp_path):
+    """The curve points behind the overlays and the window distances: a full circle whose start sits a hair
+    below its end must still be drawn round, and an arc must run the way the part is, whichever way its edge points."""
+    from agentcad import probe
+    program = tmp_path / "shapes.py"
+    program.write_text(
+        "from build123d import *\n"
+        "\n"
+        "def build(kind='ring'):\n"
+        "    if kind == 'ring':\n"
+        "        return Box(20, 20, 4) - Cylinder(3, 10)\n"
+        "    if kind == 'half':\n"
+        "        return Cylinder(5, 4) & (Pos(2.5, 0, 0) * Box(5, 10, 4))\n"
+        "    return Cylinder(5, 4) & (Pos(2.5, 2.5, 0) * Box(5, 5, 4))\n")
+
+    def section(kind):
+        shape = probe.load_shape(program, {"kind": kind})
+        plane, _ = probe.parse_plane("z=mid", shape)
+        return probe.section_loops(shape, plane)
+
+    def arc_points(kind):
+        return [p for L in section(kind) for e in L["edges"] if e["type"] == "circle"
+                for p in probe._loop_points_2d([{"edges": [e]}], "z=mid", 40)]
+
+    hole = [L for L in section("ring") if all(e["type"] == "circle" for e in L["edges"])]
+    pts = probe._loop_points_2d(hole, "z=mid", 60)
+    assert len(pts) == 61 and all(abs(math.hypot(x, y) - 3.0) < 1e-9 for x, y in pts)
+    assert min(x for x, _ in pts) < -2.99 and max(x for x, _ in pts) > 2.99 and min(y for _, y in pts) < -2.99     # all the way round
+    half = arc_points("half")
+    assert half and all(x > -1e-6 and abs(math.hypot(x, y) - 5.0) < 1e-6 for x, y in half)                          # the side with the part
+    quarter = arc_points("quarter")
+    assert quarter and all(x > -1e-6 and y > -1e-6 for x, y in quarter)
+    old = {"type": "circle", "start": [5, 0, 0], "end": [0, 5, 0], "center": [0, 0, 0], "radius": 5.0, "sweep_deg": 90.0}   # no midpoint recorded
+    legacy = probe._loop_points_2d([{"edges": [old]}], "z=mid", 8)
+    assert legacy[0] == pytest.approx((5.0, 0.0)) and legacy[-1] == pytest.approx((0.0, 5.0), abs=1e-9) and legacy[4][0] > 0

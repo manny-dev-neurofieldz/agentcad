@@ -329,7 +329,8 @@ def _loops(mesh: Mesh, axis: int, coord: float, on_plane_above: bool, tol: float
         for start, end in _runs(P, tol):
             length = float(np.linalg.norm(end - start))
             edges.append({"type": "line", "start": [float(x) for x in start], "end": [float(x) for x in end],
-                          "length": length, "center": None, "radius": None, "sweep_deg": None})
+                          "length": length, "center": None, "radius": None, "sweep_deg": None,
+                          "midpoint": [float(x) for x in (start + end) / 2.0]})
         length = float(sum(e["length"] for e in edges))
         if length > tol:                                   # a point where the plane only touches is not a loop
             loops.append({"edges": edges, "closed": bool(closed), "n_edges": len(edges), "length": length, "fit": None})
