@@ -122,6 +122,28 @@ def window_clearances(a, b, windows: Dict[str, Sequence[float]], tol: Optional[f
     return out
 
 
+DEFAULT_TOL_MM = 0.05
+
+
+def judge_windows(results: Dict[str, Any], nominals: Dict[str, Sequence[Optional[float]]]) -> Dict[str, Dict[str, Any]]:
+    """A verdict per declared window: ``fail`` when the measured clearance is below the nominal by
+    more than the tolerance, ``pass`` otherwise, ``unmeasured`` when the window could not be measured
+    (never a silent pass). ``nominals`` maps a window to (nominal_mm, tol_mm or None)."""
+    verdicts: Dict[str, Dict[str, Any]] = {}
+    for name, (nominal, tol) in nominals.items():
+        if nominal is None:
+            continue
+        tol = DEFAULT_TOL_MM if tol is None else float(tol)
+        measured = (results.get(name) or {}).get("min_mm")
+        if measured is None:
+            verdicts[name] = {"verdict": "unmeasured", "nominal_mm": nominal, "tol_mm": tol}
+            continue
+        ok = measured >= float(nominal) - tol
+        verdicts[name] = {"verdict": "pass" if ok else "fail", "nominal_mm": float(nominal), "tol_mm": tol,
+                          "min_mm": measured}
+    return verdicts
+
+
 def insertion_sweep(a, b, axis: str = "z", travel: float = 10.0, steps: int = 10) -> List[Dict[str, float]]:
     """Interference of ``b`` at each step as it slides ``travel`` along ``axis`` into place (from out to in)."""
     b3d = _b3d()

@@ -112,3 +112,14 @@ def test_map_and_offset_spin_pose_a_body_identically():
     new = fitmod.pose_matrix(box, mates.map_transform("z", 30, (5, 1, 0))).bounding_box()
     for a, b in ((old.min, new.min), (old.max, new.max)):
         assert abs(a.X - b.X) < 1e-6 and abs(a.Y - b.Y) < 1e-6 and abs(a.Z - b.Z) < 1e-6
+
+
+def test_judge_windows_fails_below_nominal_and_never_passes_an_unmeasured_window():
+    from agentcad import fit as fitmod
+    results = {"tight": {"min_mm": 0.05}, "ok": {"min_mm": 0.19}, "empty": {"note": "one side has no surface"}}
+    v = fitmod.judge_windows(results, {"tight": (0.2, None), "ok": (0.2, None), "empty": (0.2, 0.1),
+                                       "undeclared": (None, None)})
+    assert v["tight"]["verdict"] == "fail"
+    assert v["ok"]["verdict"] == "pass"            # within the default 0.05 mm tolerance
+    assert v["empty"]["verdict"] == "unmeasured"
+    assert "undeclared" not in v
