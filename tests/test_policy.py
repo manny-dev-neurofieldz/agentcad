@@ -1,7 +1,8 @@
 """Policies ship with each capability: the reader, the contract and the lints.
 
 Parity: agentcad's reader extracts exactly what a reference reader of the same
-format extracts from the same files (goldens in ``tests/data/policy_golden/``).
+format extracts from the same files (goldens and frozen copies of the texts they
+were generated from, in ``tests/data/policy_golden/``).
 Contract: every leaf command is governed by at most one policy, and a command
 no policy governs must be on a frozen allow-list that may only shrink, so a
 new command arrives with its policy. Lints: every packaged policy is ASCII,
@@ -27,7 +28,7 @@ GOLDENS = json.loads((DATA / "policy_golden" / "goldens.json").read_text())
 UNCLAIMED_ALLOWED = {
     ("render",), ("export",), ("info",), ("new-project",), ("projects",), ("status",), ("open",),
     ("config-init",), ("config-show",), ("probe", "section"), ("probe", "inventory"),
-    ("probe", "fillet"), ("probe", "draft"), ("compare",), ("fit",), ("gallery", "build"),
+    ("probe", "fillet"), ("probe", "draft"), ("compare",), ("gallery", "build"),
     ("gallery", "check"), ("viewer",), ("check",),
 }
 
@@ -36,9 +37,12 @@ ABS_PATH = re.compile(r"(^|[\s(`'\"])/(home|opt|tmp|Users|shared_workspace|mnt|v
 
 
 def _text(name):
+    """The text a golden was generated from: the edge-case fixture, or a frozen copy of a shipped
+    policy as it was then (parity tests the reader's rules, so a policy's wording can change
+    without regenerating goldens)."""
     if name == "policy_fixture.md":
         return (DATA / name).read_text()
-    return pol.get_policy(name[:-3]).text
+    return (DATA / "policy_golden" / name).read_text()
 
 
 def _numbered(first, lines):

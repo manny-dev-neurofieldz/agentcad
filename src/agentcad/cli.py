@@ -537,6 +537,52 @@ def cmd_session_finalize(args):
     print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
     print(f"  HTML viewer: {html_path}")
     print(f"  Iterations:  {session.iteration_count}")
+    _finalize_fits(cfg, session)
+
+
+def _finalize_fits(cfg, session):
+    """Fit every mate the project declares and record each fit in both parts' manifests."""
+    from agentcad import fit as fitmod
+    from agentcad import mates
+    from agentcad.session import DesignSession
+
+    project_dir = cfg.project_dir
+    try:
+        declared = mates.load_all(project_dir) if project_dir else {}
+    except mates.MateError as e:
+        print(f"  Mates: not read ({e})", file=sys.stderr)
+        return
+    if not declared:
+        return
+
+    def latest(sess, folder):
+        it = sess.iterations[-1]
+        return (Path(it.source_path), dict(it.defines or sess.defines or {}), Path(folder))
+
+    sources = {session.name: latest(session, project_dir)}
+    parts = cfg.part_projects()
+    for folder, part_cfg in parts:
+        try:
+            part_session = DesignSession.load_state(folder.name, engine=_engine_for(None, part_cfg), config=part_cfg)
+        except (FileNotFoundError, ValueError, RuntimeError):
+            continue
+        if part_session.iterations:
+            sources[folder.name] = latest(part_session, folder)
+    print(f"  Mates:       {len(declared)} declared")
+    for r in fitmod.declared_fits(project_dir, session.name, sources, assembly=bool(parts)):
+        if "skipped" in r:
+            print(f"    {r['mate']}: not fitted ({r['skipped']})")
+            continue
+        rec = r["record"]
+        line = (f"    {r['mate']} ({r['pair'][0]} / {r['pair'][1]}): {rec['verdict'].upper()}; interference "
+                f"{rec['interference_mm3']:.4g} mm^3, clearance {rec['clearance_mm']:.4g} mm")
+        for v in (rec.get("verdicts") or {}).values():
+            if "min_mm" in v:
+                line += f", window {v['min_mm']:.3g} mm against {v['nominal_mm']:.3g} +/- {v['tol_mm']:.3g}"
+        print(line + f"; {rec.get('contact_regions', 0)} contact region(s)")
+        for note in rec.get("pose", {}).get("notes") or []:
+            print(f"      pose: {note}")
+        print(f"      recorded in {len(r['written'])} manifest(s)")
 
 
 def cmd_session_status(args):
@@ -926,10 +972,12 @@ def cmd_compare(args):
 
 
 def cmd_fit(args):
-    """Pose two parts and measure interference, clearance, windows and insertion."""
+    """Pose two parts and measure interference, clearance, windows, contacts and insertion."""
     from agentcad import fit as fitmod
+    from agentcad import mates
 
     windows = {}
+    nominals = {}
     for item in args.window or []:
         name, _, nums = item.partition("=")
         vals = [float(v) for v in nums.split(",")]
@@ -951,38 +999,121 @@ def cmd_fit(args):
             if sides and ((pair and pair != sides) or (not pair and cp and cp not in sides)):
                 continue
             windows.setdefault(name, [float(v) for v in m["window"]])
+            nominals.setdefault(name, (m.get("nominal_mm"), m.get("tol_mm")))
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
-    res = fitmod.fit(Path(args.a), Path(args.b),
-                     a_defines=a_defs or None, b_defines=b_defs or None,
-                     offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
-                     sweep_axis=args.sweep, sweep_travel=args.travel,
-                     out_dir=Path(args.output_dir) if args.output_dir else None)
+    transform = None
+    frame = None
+    pose_info = {}
+    if args.mate:
+        if args.map or args.offset or args.spin:
+            print("Error: --mate poses B from declared datums; drop --map, --offset and --spin", file=sys.stderr)
+            sys.exit(2)
+        posed = []
+        for name in args.mate:
+            try:
+                posed.append(mates.pose_for(name, Path(args.a_mates or args.a), Path(args.b_mates or args.b)))
+            except mates.MateError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(2)
+        first = posed[0]
+        transform = first["matrix"]
+        a_side = first["a"]
+        frame = (a_side.axis.point, a_side.key_line.direction if a_side.key_line else (1.0, 0.0, 0.0),
+                 a_side.axis.direction)
+        pose_info = {"mate": args.mate[0], "a_declared_in": str(first["a_path"]),
+                     "b_declared_in": str(first["b_path"]), "notes": first["notes"]}
+        for name, p in zip(args.mate, posed):
+            if p is not first:
+                diff = max(abs(p["matrix"][i][j] - transform[i][j]) for i in range(3) for j in range(4))
+                if diff > 1e-6:
+                    print(f"Warning: mate {name} poses B differently from {args.mate[0]} (largest entry "
+                          f"difference {diff:.3g}); the pose of {args.mate[0]} is used", file=sys.stderr)
+            # the window and nominal are A's side's, or else the enclosing assembly's (in A's frame)
+            above = mates.enclosing(name, p["a_path"])
+            side = p["a"] if p["a"].window else (above[0] if above and above[0].window else None)
+            if side is not None:
+                windows.setdefault(name, side.window)
+            stated = [m for m in (p["a"], side, p["b"]) if m is not None and m.nominal_mm is not None]
+            if side is not None and stated:
+                nominals.setdefault(name, (stated[0].nominal_mm, stated[0].tol_mm))
+        for note in first["notes"]:
+            print(f"  pose: {note}")
+    elif args.map:
+        if args.offset or args.spin:
+            print("Error: --map replaces --offset and --spin; give one or the other", file=sys.stderr)
+            sys.exit(2)
+        fields = dict(item.partition("=")[::2] for item in args.map)
+        unknown = set(fields) - {"axis", "spin", "offset"}
+        if unknown:
+            print(f"Error: --map takes axis=, spin= and offset=, not {', '.join(sorted(unknown))}", file=sys.stderr)
+            sys.exit(2)
+        try:
+            transform = mates.map_transform(fields.get("axis", "z"), float(fields.get("spin", 0)),
+                                            [float(v) for v in fields.get("offset", "0,0,0").split(",")])
+        except (ValueError, mates.MateError) as e:
+            print(f"Error: --map: {e}", file=sys.stderr)
+            sys.exit(2)
+    try:
+        res = fitmod.fit(Path(args.a), Path(args.b), transform=transform,
+                         a_defines=a_defs or None, b_defines=b_defs or None,
+                         offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
+                         sweep_axis=args.sweep, sweep_travel=args.travel,
+                         out_dir=Path(args.output_dir) if args.output_dir else None,
+                         sweep_steps=args.sweep_steps, sample_step=args.step,
+                         contact_mm=None if args.contact_mm < 0 else args.contact_mm, frame=frame)
+    except (ValueError, FileNotFoundError) as e:     # e.g. an OpenSCAD part: fit reads exact shapes only
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
+    res["pose"].update(pose_info)
+    if nominals and res.get("windows"):
+        res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)
     print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
+    if "contacts" in res:
+        regions = res["contacts"]
+        print(f"  contacts within {res['contact_mm']:.3g} mm: {len(regions) or 'none'}"
+              + (" region(s)" if regions else ""))
+        for r in regions[:8]:
+            c, lo, hi = r["centroid"], r["min"], r["max"]
+            print(f"    at ({c[0]:.2f}, {c[1]:.2f}, {c[2]:.2f}), box ({lo[0]:.2f}, {lo[1]:.2f}, {lo[2]:.2f})"
+                  f" to ({hi[0]:.2f}, {hi[1]:.2f}, {hi[2]:.2f}), closest {r['min_mm']:.3g} mm")
+        if len(regions) > 8:
+            print(f"    ... {len(regions) - 8} more in fit.json")
     for name, w in (res.get("windows") or {}).items():
         if "min_mm" in w:
             print(f"  window {name}: min {w['min_mm']:.4g} mm (p05 {w['p05_mm']:.4g})")
         else:
             print(f"  window {name}: {w.get('note')}")
+    failed_windows = []
+    for name, v in (res.get("verdicts") or {}).items():
+        measured = f"{v['min_mm']:.3g} mm" if "min_mm" in v else "not measured"
+        print(f"  window {name}: {v['verdict'].upper()} (clearance {measured}; nominal {v['nominal_mm']:.3g} "
+              f"+/- {v['tol_mm']:.3g} mm)")
+        if v["verdict"] == "fail":
+            failed_windows.append(name)
     for row in res.get("insertion") or []:
         print(f"  insertion at {row['offset_mm']:.3g} mm out: interference {row['interference_mm3']:.4g} mm^3")
     for name, path in (res.get("renders") or {}).items():
         print(f"  render {name}: {path}")
     if args.output_dir:
         print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
-    if args.record:
-        from agentcad.manifest import PrintManifest
-        manifests = sorted(Path(args.record).glob("exports/*.print.json"))
-        if manifests:
-            m = PrintManifest.load(manifests[0])
-            key = (res["a"], res["b"], json.dumps(res["a_defines"], sort_keys=True), json.dumps(res["b_defines"], sort_keys=True))
-            m.fit = [f for f in m.fit if (f.get("a"), f.get("b"), json.dumps(f.get("a_defines") or {}, sort_keys=True),
-                                          json.dumps(f.get("b_defines") or {}, sort_keys=True)) != key]
-            m.fit.append({k: res[k] for k in ("a", "b", "a_defines", "b_defines", "pose", "interference_mm3", "clearance_mm") if k in res}
-                         | ({"windows": res["windows"]} if res.get("windows") else {}))
-            m.save(manifests[0])
-            print(f"recorded in {manifests[0]}")
-        else:
-            print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
+    if args.record is not None:
+        record = fitmod.fit_record(res, allow_mm3=args.allow or 0.0)
+        # each part's record goes where the part is declared: the folder of its side of the mate,
+        # or else the project holding its source
+        homes = ((pose_info["a_declared_in"], pose_info["b_declared_in"]) if pose_info else (args.a, args.b))
+        projects = [Path(p) for p in args.record] or [q for q in (fitmod.project_of(Path(h)) for h in homes) if q]
+        if not projects:
+            print("Warning: --record found no project (agentcad.toml) above either part; name one", file=sys.stderr)
+        for project in dict.fromkeys(p.resolve() for p in projects):
+            written = fitmod.record_fit(project, record)
+            if written:
+                print(f"recorded ({record['verdict']}) in {written}")
+            else:
+                print(f"Warning: no print manifest under {project}/exports to record into (finalize it first)",
+                      file=sys.stderr)
+    if failed_windows:
+        print(f"fit: BELOW NOMINAL CLEARANCE in {', '.join(failed_windows)}", file=sys.stderr)
+        sys.exit(1)
     if res["interference_mm3"] and res["interference_mm3"] > (args.allow or 0.0):
         print("fit: INTERFERENCE (the bodies overlap)", file=sys.stderr)
         sys.exit(1)
@@ -1207,17 +1338,36 @@ def _register_compare_fit(sub, groups):
 
     p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
     p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
-    p_fit.add_argument("b", help="Second part, posed by --offset/--spin")
+    p_fit.add_argument("b", help="Second part, posed by --mate, --map or --offset/--spin")
     p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
     p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
     p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
+    p_fit.add_argument("--map", nargs="+", metavar="KEY=VALUE", default=None,
+                       help="Pose B by axis=x|y|z spin=DEG offset=x,y,z: a turn about the axis, then the offset "
+                            "(instead of --offset/--spin)")
+    p_fit.add_argument("--mate", action="append", metavar="NAME", default=None,
+                       help="Pose B from the datums both parts declare for this mate and measure its window "
+                            "(repeatable; the first poses, the rest are checked against it)")
+    p_fit.add_argument("--a-mates", default=None, metavar="PATH",
+                       help="Where part A declares its mates (toml or folder; default: searched upward from A)")
+    p_fit.add_argument("--b-mates", default=None, metavar="PATH",
+                       help="Where part B declares its mates (toml or folder; default: searched upward from B)")
     p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
     p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
+    p_fit.add_argument("--sweep-steps", type=int, default=10, help="Positions along the insertion sweep (default 10)")
+    p_fit.add_argument("--step", type=float, default=None,
+                       help="Surface sampling spacing in mm for window clearances and contacts "
+                            "(default: part A's diagonal / 100)")
+    p_fit.add_argument("--contact-mm", type=float, default=0.05,
+                       help="Report where the surfaces come within this distance, as regions "
+                            "(default 0.05; a negative value skips it)")
     p_fit.add_argument("--allow", type=float, default=0.0, help="Interference tolerated before the command fails (mm^3)")
     p_fit.add_argument("-o", "--output-dir", default=None, help="Renders and fit.json go here")
-    p_fit.add_argument("--record", metavar="PROJECT", default=None, help="Record the result in the project's print manifest fit table")
+    p_fit.add_argument("--record", metavar="PROJECT", nargs="*", default=None,
+                       help="Record the fit (time, both parts' parameters, verdict) in the print manifest of each "
+                            "PROJECT; with no PROJECT, in both parts' own projects")
     p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL", help="Override a parameter of part A (repeatable)")
     p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL", help="Override a parameter of part B (repeatable)")
     p_fit.set_defaults(func=cmd_fit)

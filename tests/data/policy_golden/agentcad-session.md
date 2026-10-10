@@ -115,8 +115,6 @@ A render cannot show connectivity (a tangent touch and a small gap look the same
 
 The print manifest carries what a print job needs: the parts, the print settings, any `[slice]` intent declared in the project, recorded fit results, and the sliced files found among the exports.
 
-Finalize also fits every mate the project declares between two parts it can name, and records each fit in both parts' manifests and the project's; a mate that cannot be fitted is reported and does not stop the finalize (`agentcad-fit`, section 6).
-
 ## 5 Session Status
 
 `agentcad session status PROJECT` prints the session's state: the engine, the iteration count against the maximum, each iteration's status with its notes, and where the session was finalized if it was. Per-iteration defines are in the session record and the viewer's Parameters tab; tags are folders under `tags/`.
@@ -124,7 +122,6 @@ Finalize also fits every mate the project declares between two parts it can name
 ## 6 Integration with Other Policies
 
 - `agentcad-gcode`: reading the sliced file a finalized part was printed from.
-- `agentcad-fit`: declaring mates and testing them with both bodies; finalize runs the declared ones.
 - `agentcad-policies`: how this and every other policy is found and read.
 
 ## 7 Anti-Patterns
