@@ -90,3 +90,285 @@ def test_mates_are_checked_only_for_their_counterpart(tmp_path, monkeypatch, cap
         assert e.code in (0, None)
     out = capsys.readouterr().out
     assert "lid_on_base" in out and "foot_on_base" not in out and "lid_on_foot" not in out
+
+
+def test_pose_matrix_moves_a_body_by_a_rigid_transform():
+    pytest.importorskip("build123d")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    box = b3d.Box(2, 4, 6)                         # centred at the origin
+    quarter_turn_and_shift = [[0, -1, 0, 10], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    moved = fitmod.pose_matrix(box, quarter_turn_and_shift)
+    bb = moved.bounding_box()
+    assert abs(bb.size.X - 4) < 1e-6 and abs(bb.size.Y - 2) < 1e-6   # x and y swap under the turn
+    assert abs(bb.center().X - 10) < 1e-6
+
+
+def test_map_and_offset_spin_pose_a_body_identically():
+    pytest.importorskip("build123d")
+    from agentcad import fit as fitmod, mates
+    box = fitmod._b3d().Box(2, 4, 6)
+    old = fitmod.pose(box, (5, 1, 0), 30, "z").bounding_box()
+    new = fitmod.pose_matrix(box, mates.map_transform("z", 30, (5, 1, 0))).bounding_box()
+    for a, b in ((old.min, new.min), (old.max, new.max)):
+        assert abs(a.X - b.X) < 1e-6 and abs(a.Y - b.Y) < 1e-6 and abs(a.Z - b.Z) < 1e-6
+
+
+def test_judge_windows_fails_below_nominal_and_never_passes_an_unmeasured_window():
+    from agentcad import fit as fitmod
+    results = {"tight": {"min_mm": 0.05}, "ok": {"min_mm": 0.19}, "empty": {"note": "one side has no surface"}}
+    v = fitmod.judge_windows(results, {"tight": (0.2, None), "ok": (0.2, None), "empty": (0.2, 0.1),
+                                       "undeclared": (None, None)})
+    assert v["tight"]["verdict"] == "fail"
+    assert v["ok"]["verdict"] == "pass"            # within the default 0.05 mm tolerance
+    assert v["empty"]["verdict"] == "unmeasured"
+    assert "undeclared" not in v
+
+
+def test_fit_cli_with_output_dir_step_and_sweep_steps(tmp_path, monkeypatch, capsys):
+    """The sampling options reach fit() and an output directory still works with them."""
+    pytest.importorskip("build123d")
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("from build123d import Box\npart = Box(10, 10, 2)\n")
+    b.write_text("from build123d import Box\npart = Box(4, 4, 2)\n")
+    out = tmp_path / "out"
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})   # renders are not under test here
+    cli.main(["fit", str(a), str(b), "--offset", "0,0,3", "--sweep", "z", "--travel", "2",
+              "--sweep-steps", "3", "--step", "0.5", "-o", str(out)])
+    import json
+    rec = json.loads((out / "fit.json").read_text())
+    assert len(rec["insertion"]) in (3, 4)
+    assert rec["clearance_mm"] > 0
+
+
+def test_closest_points_on_triangles_cover_every_region():
+    import numpy as np
+    from agentcad import fit as fitmod
+    A, B, C = np.array([0.0, 0, 0]), np.array([4.0, 0, 0]), np.array([0.0, 4, 0])
+    cases = {(1, 1, 3): (1, 1, 0),        # above the face
+             (-1, -1, 0): (0, 0, 0),      # beyond corner A
+             (6, -1, 0): (4, 0, 0),       # beyond corner B
+             (-1, 6, 0): (0, 4, 0),       # beyond corner C
+             (2, -2, 1): (2, 0, 0),       # outside edge AB
+             (-2, 2, 0): (0, 2, 0),       # outside edge AC
+             (3, 3, 0): (2, 2, 0)}        # outside edge BC
+    P = np.array(list(cases), dtype=float)
+    n = len(P)
+    Q = fitmod._closest_on_triangles(P, np.tile(A, (n, 1)), np.tile(B, (n, 1)), np.tile(C, (n, 1)))
+    assert np.allclose(Q, np.array(list(cases.values()), dtype=float))
+    flat = fitmod._closest_on_triangles(P[:1], A[None], A[None], B[None])    # a degenerate triangle
+    assert np.isfinite(flat).all()
+
+
+def test_contacts_find_where_two_bodies_touch():
+    pytest.importorskip("build123d")
+    pytest.importorskip("scipy")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    base = b3d.Box(10, 10, 2)                                   # top face at z = 1
+    lid = fitmod.pose(b3d.Box(4, 4, 2), (0, 0, 2))               # bottom face at z = 1: touching
+    found = fitmod.contacts(base, lid, threshold=0.05)
+    assert len(found) == 1                                       # one patch, not a grid of cells
+    patch = found[0]
+    assert abs(patch["centroid"][2] - 1.0) < 1e-6 and patch["min_mm"] < 1e-6
+    assert patch["min"][0] == pytest.approx(-2.0, abs=0.3) and patch["max"][0] == pytest.approx(2.0, abs=0.3)
+    assert patch["min"][1] == pytest.approx(-2.0, abs=0.3) and patch["max"][1] == pytest.approx(2.0, abs=0.3)
+    near = fitmod.pose(b3d.Box(4, 4, 2), (0, 0, 2.03))           # 0.03 mm apart: within the threshold
+    assert fitmod.contacts(base, near, threshold=0.05)[0]["min_mm"] == pytest.approx(0.03, abs=0.005)
+    apart = fitmod.pose(b3d.Box(4, 4, 2), (0, 0, 2.2))           # 0.2 mm apart: no contact
+    assert fitmod.contacts(base, apart, threshold=0.05) == []
+
+
+def test_contacts_on_two_ears_are_two_regions():
+    pytest.importorskip("build123d")
+    pytest.importorskip("scipy")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    base = b3d.Box(30, 10, 2)
+    ears = fitmod.pose(b3d.Box(3, 3, 2), (-10, 0, 2)) + fitmod.pose(b3d.Box(3, 3, 2), (10, 0, 2))
+    found = fitmod.contacts(base, ears, threshold=0.05)
+    assert len(found) == 2
+    assert sorted(round(r["centroid"][0]) for r in found) == [-10, 10]
+
+
+# --- a key posed into its slot from the datums each part declares ------------------
+
+SLOT = ("from build123d import *\n\ndef build(width=6.2):\n"
+        "    return Box(20, 20, 10) - Pos(0, 0, 2.5) * Box(width, 30, 5)\n")     # slot floor at z = 0
+KEY = "from build123d import *\n\ndef build():\n    return Box(10, 6, 4)\n"      # its own frame: width along y
+
+
+def _key_and_slot(tmp_path, nominal=0.1, key_datums=True):
+    (tmp_path / "slot" / "source").mkdir(parents=True)
+    (tmp_path / "key" / "source").mkdir(parents=True)
+    (tmp_path / "slot" / "source" / "slot.py").write_text(SLOT)
+    (tmp_path / "key" / "source" / "key.py").write_text(KEY)
+    (tmp_path / "slot" / "agentcad.toml").write_text(
+        '[mates.key_in_slot]\ncounterpart = "key"\n'
+        f'nominal_mm = {nominal}\nwindow = [-3.6, -4, 0.5, 3.6, 4, 3.5]\n'
+        '[mates.key_in_slot.axis]\npoint = [0, 0, 0]\ndirection = [0, 0, 1]\n'
+        '[mates.key_in_slot.key_line]\npoint = [0, 0, 0]\ndirection = [1, 0, 0]\n'
+        '[mates.key_in_slot.rim_plane]\npoint = [0, 0, 0]\nnormal = [0, 0, 1]\n')
+    (tmp_path / "key" / "part.toml").write_text(
+        '[mates.key_in_slot]\ncounterpart = "slot"\n' + (
+            '[mates.key_in_slot.axis]\npoint = [0, 0, 0]\ndirection = [0, 0, 1]\n'
+            '[mates.key_in_slot.key_line]\npoint = [0, 0, 0]\ndirection = [0, 1, 0]\n'
+            '[mates.key_in_slot.rim_plane]\npoint = [0, 0, -2]\nnormal = [0, 0, -1]\n' if key_datums else ""))
+    return tmp_path / "slot" / "source" / "slot.py", tmp_path / "key" / "source" / "key.py"
+
+
+def _fit_cli(argv, monkeypatch):
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})
+    try:
+        cli.main(["fit", *map(str, argv)])
+        return 0
+    except SystemExit as e:
+        return e.code or 0
+
+
+def test_a_key_is_posed_into_its_slot_from_datums_alone(tmp_path, monkeypatch, capsys):
+    import json
+    slot, key = _key_and_slot(tmp_path)
+    code = _fit_cli([slot, key, "--mate", "key_in_slot", "-o", tmp_path / "mate"], monkeypatch)
+    out = capsys.readouterr().out
+    assert code == 0, out
+    rec = json.loads((tmp_path / "mate" / "fit.json").read_text())
+    assert rec["interference_mm3"] == pytest.approx(0.0, abs=1e-6)
+    assert rec["windows"]["key_in_slot"]["min_mm"] == pytest.approx(0.1, abs=0.005)   # 6.2 slot, 6.0 key
+    assert rec["verdicts"]["key_in_slot"]["verdict"] == "pass"
+    assert rec["pose"]["mate"] == "key_in_slot" and rec["pose"]["b_declared_in"].endswith("part.toml")
+    assert any(abs(r["centroid"][2]) < 1e-6 for r in rec["contacts"])                 # seated on the floor
+    # --map with the same turn and offset is the same pose and the same measurement
+    code = _fit_cli([slot, key, "--map", "axis=z", "spin=-90", "offset=0,0,2", "--mates-from", tmp_path / "slot",
+                     "-o", tmp_path / "map"], monkeypatch)
+    mapped = json.loads((tmp_path / "map" / "fit.json").read_text())
+    assert code == 0
+    for row_d, row_m in zip(rec["pose"]["transform"], mapped["pose"]["transform"]):
+        assert row_d == pytest.approx(row_m, abs=1e-9)
+    assert mapped["windows"]["key_in_slot"]["min_mm"] == pytest.approx(rec["windows"]["key_in_slot"]["min_mm"], abs=1e-9)
+
+
+def test_a_clearance_below_nominal_fails_and_at_nominal_passes(tmp_path, monkeypatch, capsys):
+    slot, key = _key_and_slot(tmp_path, nominal=0.2)        # the slot gives 0.1 a side
+    assert _fit_cli([slot, key, "--mate", "key_in_slot"], monkeypatch) == 1
+    assert "BELOW NOMINAL" in capsys.readouterr().err
+    assert _fit_cli([slot, key, "--mate", "key_in_slot", "--a-define", "width=6.4"], monkeypatch) == 0
+
+
+def test_a_mate_without_datums_asks_for_map(tmp_path, monkeypatch, capsys):
+    slot, key = _key_and_slot(tmp_path, key_datums=False)
+    assert _fit_cli([slot, key, "--mate", "key_in_slot"], monkeypatch) == 2
+    err = capsys.readouterr().err
+    assert "has no axis" in err and "--map" in err
+    assert _fit_cli([slot, key, "--mate", "no_such_mate"], monkeypatch) == 2
+    assert "declares no [mates.no_such_mate]" in capsys.readouterr().err
+
+
+def test_a_recorded_fit_lands_in_both_parts_manifests(tmp_path, monkeypatch, capsys):
+    import json
+    from agentcad.manifest import PrintManifest
+    slot, key = _key_and_slot(tmp_path)
+    for name in ("slot", "key"):
+        folder = tmp_path / name
+        if not (folder / "agentcad.toml").exists():
+            (folder / "agentcad.toml").write_text(f'[project]\nname = "{name}"\n')
+        (folder / "exports").mkdir()
+        PrintManifest(part_name=name).save(folder / "exports" / f"{name}.print.json")
+    assert _fit_cli([slot, key, "--mate", "key_in_slot", "--record"], monkeypatch) == 0
+    assert _fit_cli([slot, key, "--mate", "key_in_slot", "--record"], monkeypatch) == 0     # replaces, not appends
+    for name in ("slot", "key"):
+        fits = json.loads((tmp_path / name / "exports" / f"{name}.print.json").read_text())["fit"]
+        assert len(fits) == 1
+        rec = fits[0]
+        assert rec["mate"] == "key_in_slot" and rec["verdict"] == "pass" and rec["recorded"]
+        assert rec["a_snapshot"]["params"] == {"width": 6.2} and len(rec["a_snapshot"]["sha256"]) == 64
+        assert rec["b_snapshot"]["params"] == {} and rec["verdicts"]["key_in_slot"]["verdict"] == "pass"
+    assert capsys.readouterr().out.count("recorded (pass)") == 4
+
+
+def test_overall_verdict_reads_overlap_before_windows():
+    from agentcad import fit as fitmod
+    assert fitmod.overall_verdict({"interference_mm3": 2.0, "verdicts": {"w": {"verdict": "pass"}}}) == "fail"
+    assert fitmod.overall_verdict({"interference_mm3": 2.0}, allow_mm3=5.0) == "measured"
+    assert fitmod.overall_verdict({"interference_mm3": 0.0, "verdicts": {"w": {"verdict": "unmeasured"}}}) == "unmeasured"
+    assert fitmod.overall_verdict({"interference_mm3": 0.0, "verdicts": {"w": {"verdict": "pass"}}}) == "pass"
+
+
+def test_finalize_fits_every_declared_mate_and_records_it_in_both_parts(tmp_path, monkeypatch, capsys):
+    """An assembly lists the pair; each part declares its side's datums; finalize --all fits the
+    mate posed from those datums and leaves the record in the slot's, the key's and the assembly's
+    manifests."""
+    import json
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})
+    designs = tmp_path / "designs"
+    asm = designs / "asm"
+    out = 'image_size = 64\ndefault_views = ["iso"]\n'
+    (asm / "parts").mkdir(parents=True)
+    (asm / "agentcad.toml").write_text(
+        f'[project]\nname = "asm"\nengine = "build123d"\nparts = ["parts/*"]\n'
+        f'[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\n{out}'
+        '[mates.key_in_slot]\nparts = ["slot", "key"]\nnominal_mm = 0.1\nwindow = [-3.6, -4, 0.5, 3.6, 4, 3.5]\n')
+    sides = {"slot": ("[0, 0, 0]", "[1, 0, 0]", "[0, 0, 0]", "[0, 0, 1]", SLOT),
+             "key": ("[0, 0, 0]", "[0, 1, 0]", "[0, 0, -2]", "[0, 0, -1]", KEY)}
+    for name, (axis_pt, key_dir, rim_pt, rim_n, src) in sides.items():
+        d = asm / "parts" / name
+        d.mkdir()
+        (d / "agentcad.toml").write_text(
+            f'[project]\nname = "{name}"\nengine = "build123d"\n'
+            f'[output]\nbase_dir = "{asm}"\nsub_dir = "parts"\n{out}'
+            f'[mates.key_in_slot]\ncounterpart = "{"key" if name == "slot" else "slot"}"\n'
+            f'[mates.key_in_slot.axis]\npoint = {axis_pt}\ndirection = [0, 0, 1]\n'
+            f'[mates.key_in_slot.key_line]\npoint = [0, 0, 0]\ndirection = {key_dir}\n'
+            f'[mates.key_in_slot.rim_plane]\npoint = {rim_pt}\nnormal = {rim_n}\n')
+        (d / f"{name}.py").write_text(src)
+        cli.main(["session", "start", str(d)])
+        cli.main(["session", "iterate", str(d), str(d / f"{name}.py")])
+    (asm / "asm.py").write_text(SLOT)
+    cli.main(["session", "start", str(asm)])
+    cli.main(["session", "iterate", str(asm), str(asm / "asm.py")])
+    capsys.readouterr()
+    cli.main(["session", "finalize", str(asm), "--all"])
+    printed = capsys.readouterr().out
+    assert "key_in_slot (slot / key): PASS" in printed and "recorded in 3 manifest(s)" in printed
+    for folder, name in ((asm / "parts" / "slot", "slot"), (asm / "parts" / "key", "key"), (asm, "asm")):
+        fits = json.loads((folder / "exports" / f"{name}.print.json").read_text())["fit"]
+        assert [f["mate"] for f in fits] == ["key_in_slot"]
+        assert fits[0]["verdict"] == "pass"
+        assert fits[0]["windows"]["key_in_slot"]["min_mm"] == pytest.approx(0.1, abs=0.005)
+        assert fits[0]["pose"]["b_declared_in"].endswith("key/agentcad.toml")
+
+
+def _red_pixels(path):
+    import matplotlib.image as mpimg
+    img = mpimg.imread(str(path))
+    rgb = img[..., :3] if img.dtype != "uint8" else img[..., :3] / 255.0
+    return int(((rgb[..., 0] > 0.8) & (rgb[..., 1] < 0.1) & (rgb[..., 2] < 0.1)).sum())
+
+
+def test_section_views_mark_overlap_in_red_and_only_overlap(tmp_path):
+    pytest.importorskip("matplotlib")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    slot = b3d.Box(20, 20, 10) - b3d.Pos(0, 0, 2.5) * b3d.Box(6.2, 30, 5)
+    frame = ((0, 0, 0), (1, 0, 0), (0, 0, 1))                     # the slot's axis and its width direction
+    tight = fitmod.render_cut(slot, b3d.Pos(0, 0, 2) * b3d.Box(6.6, 10, 4), tmp_path / "tight", frame)
+    clear = fitmod.render_cut(slot, b3d.Pos(0, 0, 2) * b3d.Box(6.0, 10, 4), tmp_path / "clear", frame)
+    assert _red_pixels(tight["section_1"]) > 20       # the 0.2 mm a side the key pushes into the walls
+    assert _red_pixels(clear["section_1"]) == 0 and _red_pixels(clear["section_2"]) == 0
+    if "cutaway" in tight:
+        assert _red_pixels(tight["cutaway"]) > 0 and _red_pixels(clear["cutaway"]) == 0
+
+
+def test_an_unknown_overlap_is_never_a_pass_and_a_mesh_part_is_refused(tmp_path, monkeypatch, capsys):
+    from agentcad import fit as fitmod
+    nan = float("nan")
+    assert fitmod.overall_verdict({"interference_mm3": nan, "verdicts": {"w": {"verdict": "pass"}}}) == "unmeasured"
+    assert fitmod.overall_verdict({"interference_mm3": nan, "verdicts": {"w": {"verdict": "fail"}}}) == "fail"
+    scad = tmp_path / "part.scad"
+    scad.write_text("cube(10);\n")
+    assert _fit_cli([scad, scad], monkeypatch) == 2
+    assert "STEP or build123d" in capsys.readouterr().err

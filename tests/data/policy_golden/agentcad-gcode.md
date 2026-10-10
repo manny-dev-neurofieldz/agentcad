@@ -66,7 +66,7 @@ The summary checks itself: its filament total is computed the way the slicer rep
 
 ## 4 Settings Against Intent
 
-`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with a `[slice]` table of intended values, keyed by the slicer's own setting names. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason. `--json` prints each finding with its key, severity, found and intended values, reason, source and sentence, and also the rule (`slice_setting`), the layer that set the limit (the intent's source) and the usual fix.
+`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with a `[slice]` table of intended values, keyed by the slicer's own setting names. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason; `--json` prints them.
 
 With no `[slice]` table the command prints the file's key settings and says there is nothing to check against. That is not a pass. Print-host credentials in an embedded configuration are never printed.
 

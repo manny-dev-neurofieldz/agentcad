@@ -192,3 +192,23 @@ def test_gallery_budget_skips_a_project_that_does_not_fit(tmp_path):
     html = page.read_text()
     assert "not copied" in html and 'href="small/index.html"' in html
     assert not (tmp_path / "site" / "big").exists()
+
+
+@pytest.mark.parametrize("setting,expect_warning", [("", True), ("[engine.build123d]\nexpected_solids = 3\n", False)])
+def test_a_regenerated_viewer_judges_the_stored_measurements_by_the_project_rules(tmp_path, setting, expect_warning):
+    """agentcad viewer re-judges what session.json measured against the project's settings now."""
+    proj = tmp_path / "designs" / "regen"
+    for sub in ("source", "renders", "_work"):
+        (proj / sub).mkdir(parents=True)
+    (proj / "agentcad.toml").write_text(
+        f'[project]\nname = "regen"\nengine = "build123d"\n'
+        f'[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\n{setting}')
+    (proj / "source" / "regen_v1.py").write_text("part = None\n")
+    (proj / "renders" / "regen_v1_iso.png").write_bytes(b"\x89PNG")
+    (proj / "_work" / "session.json").write_text(json.dumps({"schema": 2, "iterations": [
+        {"number": 1, "timestamp": "t", "metadata": {"volume": 1.0, "counts": {"solids": 3}}, "source_hash": "h",
+         "report": {"lines": [], "warnings": ["stale words from an older rule"], "deltas": {}, "changed": None}}]}))
+    html = regenerate_from_project_dir(proj, cfg=ProjectConfig.load(proj / "agentcad.toml")).read_text()
+    assert "stale words from an older rule" not in html
+    assert ("solids 3 != expected 1" in html) is expect_warning
+    assert ("Tray: no warnings" in html) is not expect_warning

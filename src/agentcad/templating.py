@@ -156,6 +156,7 @@ class VariantBuilder:
         self._source_language = "plaintext"
         self._notes: List[str] = []
         self._print_manifest: Optional[dict] = None
+        self._findings: Optional[List[dict]] = None
 
     def param(self, key: str, value: Any, unit: str = "") -> "VariantBuilder":
         display = f"{value} {unit}".strip() if unit else str(value)
@@ -185,6 +186,27 @@ class VariantBuilder:
     def notes(self, text: str) -> "VariantBuilder":
         self._notes.append(text)
         return self
+
+    def findings(self, findings: List[dict]) -> "VariantBuilder":
+        """The variant's findings (Finding.to_dict()), shown above its tabs; an empty list says the
+        variant was judged and nothing was found."""
+        self._findings = list(findings)
+        return self
+
+    def _findings_html(self) -> str:
+        if self._findings is None:
+            return ""
+        if not self._findings:
+            return '<div class="findings"><p class="findings-none">Tray: no warnings</p></div>'
+        items = []
+        for f in self._findings:
+            severity = f.get("severity", "warning")
+            limit = f' <span class="finding-layer">(limit: {_esc(f["layer"])})</span>' if f.get("layer") else ""
+            items.append(f'<li class="finding finding-{_esc(severity)}"><b>{_esc(severity)}</b> '
+                         f'<span class="finding-rule">{_esc(f.get("rule", ""))}</span> '
+                         f'{_esc(f.get("sentence", ""))}{limit}</li>')
+        return (f'<div class="findings"><h3>Findings ({len(self._findings)})</h3>'
+                f'<ul>{"".join(items)}</ul></div>')
 
     def print_settings(self, manifest_dict: dict) -> "VariantBuilder":
         self._print_manifest = manifest_dict
@@ -249,10 +271,13 @@ class VariantBuilder:
                 print_html += "<h3>Parts</h3>" + ptable.build()
             fits = self._print_manifest.get("fit") or []
             if fits:
-                ft = Table(["Pair", "Interference mm^3", "Clearance mm", "Windows"], css_class="print-table")
+                ft = Table(["Mate", "Pair", "Verdict", "Interference mm^3", "Clearance mm", "Windows", "Recorded"],
+                           css_class="print-table")
                 for f in fits:
                     wins = ", ".join(f"{k} {v.get('min_mm', 'n/a')}" for k, v in (f.get("windows") or {}).items() if isinstance(v, dict))
-                    ft.row(f"{f.get('a', '?')} / {f.get('b', '?')}", f"{f.get('interference_mm3', 'n/a')}", f"{f.get('clearance_mm', 'n/a')}", wins)
+                    ft.row(f.get("mate") or "", f"{f.get('a', '?')} / {f.get('b', '?')}", f.get("verdict") or "n/a",
+                           f"{f.get('interference_mm3', 'n/a')}", f"{f.get('clearance_mm', 'n/a')}", wins,
+                           f.get("recorded") or "")
                 print_html += "<h3>Fit</h3>" + ft.build()
 
         return variant_template.substitute(
@@ -262,6 +287,7 @@ class VariantBuilder:
             params_table=params_html,
             print_manifest=print_html,
             notes_block=notes_html,
+            findings_block=self._findings_html(),
             gallery_items=self._gallery.build(),
             source_block=CodeBlock(self._source_title, self._source_code, self._source_language).build(),
         )

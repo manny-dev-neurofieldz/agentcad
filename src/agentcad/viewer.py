@@ -77,6 +77,9 @@ def generate_html(project: "DesignProject", embed_mb: Optional[float] = None, cd
         for view_name, img_path in sorted(v.renders.items()):
             vb.render(view_name, _relative(base, img_path))
 
+        if getattr(v, "findings", None) is not None:
+            vb.findings(v.findings)
+
         meshes = [m for m in v.meshes if m.path.exists()]
         total = sum(m.path.stat().st_size for m in meshes)
         if meshes and embed_only_latest and index > 0:
@@ -217,6 +220,26 @@ def _load_session_notes(state_file: Path) -> Dict[int, List[str]]:
     return notes_by_version
 
 
+def _load_session_findings(state_file: Path, engine) -> Dict[int, List[Dict]]:
+    """Each iteration's findings, judged now from the measurements a session state file stored,
+    against the engine's current rules (what the session would say if it were loaded)."""
+    from agentcad.report import rejudge
+    by_version: Dict[int, List[Dict]] = {}
+    if not state_file.exists():
+        return by_version
+    try:
+        iterations = json.loads(state_file.read_text()).get("iterations", [])
+        rules = {"expected_solids": int(engine.setting("expected_solids")),
+                 "short_edge_mm": float(engine.setting("short_edge_mm")),
+                 "limits_from": {k: engine.setting_layer(k) for k in ("expected_solids", "short_edge_mm")}}
+        for it, report in zip(iterations, rejudge(iterations, **rules)):
+            if report is not None:
+                by_version[int(it["number"])] = [f.to_dict() for f in report.findings]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        print(f"agentcad warning: session findings unreadable (viewer built without them): {e}", file=sys.stderr)
+    return by_version
+
+
 def regenerate_from_project_dir(
     project_dir: Path,
     cfg: Optional["ProjectConfig"] = None,
@@ -273,6 +296,7 @@ def regenerate_from_project_dir(
         )
 
     notes_by_version = _load_session_notes(project_dir / "_work" / "session.json")
+    findings_by_version = _load_session_findings(project_dir / "_work" / "session.json", engine)
 
     # Set up the DesignProject (sharing the same dir)
     project = DesignProject(
@@ -300,6 +324,8 @@ def regenerate_from_project_dir(
             params["notes"] = "\n".join(notes_by_version[n])
 
         variant = project.add_variant(label, params)
+        if n in findings_by_version:
+            variant.findings = findings_by_version[n]
 
         # Source
         if n in src_versions and "" in src_versions[n]["files"]:
