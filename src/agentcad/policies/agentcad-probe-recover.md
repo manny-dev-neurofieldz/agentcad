@@ -84,6 +84,9 @@ Recover curves when the source of a part is gone or was never code: a STEP file 
 
 Every number says where it came from. An exact edge keeps the numbers it has (`source` is `edge`, `rms` is 0). A fitted arc carries `rms` and `max` (the distances of its vertices from the fitted circle) and `n`, the count of vertices. An arc fitted to ten vertices with an `rms` close to the tolerance is a hypothesis, not a measurement; read those fields before building on a radius.
 
+
+An STL source is sectioned from its triangles, and `--axis` and `--axis-center` then choose the axis its radial and axial extents are measured about; `agentcad-probe-inspect` (section 4) governs that reading.
+
 ## 2 Reading Section Loops
 
 `agentcad probe section SOURCE` cuts a STEP file or a build123d program at each plane named by `--planes` and lists the closed loops of exact edges, longest first, numbered from 1. A plane is `x=`, `y=` or `z=` followed by a number or `mid`, the middle of the bounding box on that axis; the default is `z=mid`. `-D VAR=VAL` (long form `--define`, repeatable) overrides a parameter of a program. `--max-loops N` keeps at most N loops per plane and prints the cap with its value. `--show N` lists at most N loops per plane, and at most N segments and N joints under each loop; a cut-off is printed, never silent. `-o FILE` (long form `--output`) writes the whole record as JSON, which `agentcad compare` also reads.
