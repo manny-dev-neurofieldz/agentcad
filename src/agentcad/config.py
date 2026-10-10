@@ -295,6 +295,8 @@ fs = 0.5                               # fragment size (mm)
 # shading = "smooth"                   # "flat" shows the tessellation on curved faces
 
 [output]
+base_dir = ".."                         # relative to this file: with sub_dir ".", sessions,
+sub_dir = "."                           # renders and exports stay in this folder wherever it is
 image_size = 1024                       # render resolution
 default_views = ["iso", "front", "top", "right", "back"]
 
