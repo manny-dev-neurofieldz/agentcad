@@ -467,6 +467,31 @@ class DesignSession:
                     print(f"agentcad warning: v{it.number} STL export failed (viewer without mesh): {err}",
                           file=sys.stderr)
 
+        # QC for a project that declares [qc]: judged on the latest export; the gate holds the
+        # manifest back on an error, and the viewer is still written, with a banner
+        self.qc_report, self.qc_failed = None, False
+        self.project.banner = None
+        from agentcad import qc as qcmod
+        qs = qcmod.settings(self.config)
+        if qs is not None:
+            latest = self.iterations[-1]
+            stl = self.project.exports_dir / f"{self.name}_v{latest.number}.stl"
+            self.qc_report = qcmod.run(self.config, qcmod.mesh_vertices(stl), qs)
+            if self.project.variants:
+                newest = self.project.variants[0]
+                newest.findings = (newest.findings or []) + self.qc_report["findings"]
+            held = qcmod.errors(self.qc_report)
+            if qs.gate and held:
+                self.qc_failed = True
+                self.project.banner = (f"QC gate failed: {len(held)} error(s) on v{latest.number}, so no print "
+                                       f"manifest was written. " + held[0]["sentence"])
+        if self.qc_failed:
+            # held, not finalized: the viewer shows why; iterate on without reopening
+            self._finalized = False
+            self.project.metadata["held_by_qc"] = datetime.now().isoformat()
+            self.project.metadata["iterations"] = self.iteration_count
+            return self.project.generate_viewer()
+
         # Generate print manifest for final iteration
         from agentcad.manifest import PrintManifest
         manifest = PrintManifest(
