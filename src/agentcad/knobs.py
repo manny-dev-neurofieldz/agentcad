@@ -22,7 +22,6 @@ certainty. The record is schema ``agentcad.probe.knobs/1``.
 """
 
 import inspect
-import math
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 

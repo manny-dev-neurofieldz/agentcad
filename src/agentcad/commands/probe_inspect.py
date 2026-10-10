@@ -60,14 +60,14 @@ def cmd_probe_knobs(args):
 
 
 def register(subparsers, groups):
-    from agentcad.cli import DEFINE_HELP
+    from agentcad.cli import DEFINE_HELP, SIGNED_NUMBER_LIST
 
     sub = groups["probe"]
     pr = sub.add_parser("rays", help="Material and void intervals along lines and radial fans: wall thickness, bore depth, gaps")
+    pr._negative_number_matcher = SIGNED_NUMBER_LIST      # --line -30,0,0:1,0,0 and --fan -5,0,0:0,0,1:30
     pr.add_argument("source", help="build123d program, STEP file (exact) or STL mesh (to its tessellation)")
     pr.add_argument("--line", action="append", metavar="X,Y,Z:DX,DY,DZ[:LEN]",
-                    help="A line from a start point along a direction, optionally LEN mm long (repeatable; "
-                         "write a start with a minus sign as --line=-30,0,0:1,0,0)")
+                    help="A line from a start point along a direction, optionally LEN mm long (repeatable)")
     pr.add_argument("--fan", action="append", metavar="X,Y,Z:AX,AY,AZ:STEP[:FROM[:TO]]",
                     help="Lines leaving the point X,Y,Z on the axis along AX,AY,AZ, square to it, every STEP degrees "
                          "(from FROM to TO; default a full turn) (repeatable)")

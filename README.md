@@ -122,7 +122,7 @@ the check: the gallery is a test of the tool on every engine.
 ```bash
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
-agentcad probe rays part.py --line=-30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
+agentcad probe rays part.py --line -30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
 agentcad probe knobs part.py --knob width=2 --knob wall=10%          # which parameters move the part, which do nothing
 agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
 ```
@@ -163,8 +163,7 @@ build123d program or STEP file is read exactly (face crossings found exactly,
 midpoints classified against the solid, so a tangent opens no gap and a line in a
 face counts as material); an STL is read to its tessellation, with a fixed tie
 rule so a line through a vertex or along an edge is counted once. The record
-(`-o`, schema `agentcad.probe.rays/1`) says which kind it was. A start point
-with a minus sign is written `--line=-30,0,0:1,0,0`. For checks built on rays,
+(`-o`, schema `agentcad.probe.rays/1`) says which kind it was. For checks built on rays,
 `agentcad.rays.ray_intervals(target, origin, direction)` is the library entry
 point (`load_target` builds the target from a program, STEP or STL).
 

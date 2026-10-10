@@ -4,11 +4,18 @@ import argparse
 import importlib
 import json
 import pkgutil
+import re
 import sys
 from pathlib import Path
 
 from agentcad import __version__
 from agentcad.camera import MULTI_VIEW_DEFAULT, STANDARD_PRESETS
+
+
+# argparse reads a bare "-30,0,0:1,0,0" as an unknown option, because only a lone number counts as negative.
+# A parser whose options take coordinate lists sets this as its _negative_number_matcher, so a leading
+# minus sign is a number there and `--line -30,0,0:1,0,0` works as `--line=-30,0,0:1,0,0` does.
+SIGNED_NUMBER_LIST = re.compile(r"^-\d*\.?\d+(?:[eE][-+]?\d+)?[-+\d.eE,:]*$")
 
 
 def _parse_defines(define_list):
@@ -590,7 +597,7 @@ def _windows_arg(items):
     return out
 
 
-def _loop_line(i, L, fit_note=True):
+def _loop_line(i, L):
     kinds = {}
     for e in L["edges"]:
         kinds[e["type"]] = kinds.get(e["type"], 0) + 1
@@ -664,7 +671,11 @@ def cmd_probe_inventory(args):
     """bbox, volume, census, cylinder axes and section loops of a shape."""
     from agentcad import probe
 
-    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    try:
+        shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    except ValueError as e:            # a source that is not a program or a STEP file, an STL for one
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     inv = probe.inventory(shape, planes=args.planes or [], max_loops=args.max_loops)
     print(f"bbox_min {inv.get('bbox_min')}  bbox_size {inv.get('bbox_size')}")
     print(f"volume {inv.get('volume')}  area {inv.get('area')}  counts {inv.get('counts')}  valid {inv.get('is_valid')}")
@@ -1194,6 +1205,7 @@ def _register_probe(sub, groups):
         pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
         pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
         if name == "section":
+            pp._negative_number_matcher = SIGNED_NUMBER_LIST      # --axis-center -5,0
             pp.add_argument("--axis", choices=["x", "y", "z"], default=None,
                             help="STL only: the axis the radial and axial extents are measured about (default: each plane's own normal)")
             pp.add_argument("--axis-center", default=None, metavar="A,B",

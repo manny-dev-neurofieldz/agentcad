@@ -5,7 +5,8 @@ feed any comparison:
 
 ``loops.json``   {"source": str, "planes": [{"plane": "y=3.2", "loops": [{"edges": [
                  {"type": "line"|"circle"|"bspline"|..., "start": [x,y,z], "end": [x,y,z],
-                  "length": L, "center": [x,y,z]|null, "radius": r|null, "sweep_deg": a|null}],
+                  "length": L, "center": [x,y,z]|null, "radius": r|null, "sweep_deg": a|null,
+                  "midpoint": [x,y,z]}],
                  "closed": bool, "n_edges": n, "length": L, "fit": {...}|null}]}]}
 ``points.json``  {"source": str, "sampler": {"kind": "tessellation", "tolerance": t}, "points": [[x,y,z], ...]}
 
@@ -14,7 +15,9 @@ A cap an instrument applies is printed with its value; none is silent
 their axis, never their centroid (a centroid read as an axis rotated a part
 by ninety degrees). B-rep sources (build123d programs, STEP) are probed
 exactly; mesh sources (STL, or the other engines' exports) only in the
-sampled compartment, and the output says which.
+sampled compartment, and the output says which. The two exceptions read a
+mesh's own triangles and say so: section loops of an STL (``mesh_section_plane``,
+the tessellation's section) and ``agentcad.rays`` (lines through a mesh).
 """
 
 import json

@@ -115,6 +115,13 @@ def test_inventory_cli_prints_the_warning_beside_the_zero(spline_step, bore_bloc
     assert "warning:" not in out and "1 cylindrical/conical face(s) with axes:" in out
 
 
+def test_inventory_refuses_a_mesh_by_name(bore_stl, capsys):
+    from agentcad import cli
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["probe", "inventory", str(bore_stl)])
+    assert exc.value.code == 1 and "probe section and probe rays also read an STL" in capsys.readouterr().err
+
+
 def test_the_tray_warns_when_the_census_hides_analytic_types():
     from agentcad.report import feature_effect
     md = {"volume": 1.0, "counts": {"solids": 1, "faces": 20},
@@ -126,10 +133,6 @@ def test_the_tray_warns_when_the_census_hides_analytic_types():
 
 
 # --- rays -------------------------------------------------------------------------------------
-
-def _runs(line):
-    return [(i["kind"], round(i["entry"], 3), round(i["exit"], 3)) for i in line["intervals"]]
-
 
 def test_a_line_through_the_bore_is_exact_on_the_brep(bore_block):
     from agentcad import rays
@@ -236,6 +239,24 @@ def test_a_shape_without_a_solid_has_no_inside(tmp_path):
         rays.load_target(plate)
 
 
+def test_rays_read_a_step_file_and_a_spline_body_as_the_program_reads_them(bore_block, spline_step, tmp_path):
+    """A STEP file is read as a program is, and a body whose every face is a BSpline (where the census cannot
+    say what its faces were) still shows its bore to a fan of rays: constant radius, every direction."""
+    from build123d import export_step
+    from agentcad import probe, rays
+    step = tmp_path / "bore_block.step"
+    export_step(probe.load_shape(bore_block), str(step))
+    fan = rays.parse_fan("5,0,0:0,0,1:45", label="F")
+    exact = rays.probe_rays(bore_block, fan)
+    for source in (step, spline_step):
+        res = rays.probe_rays(source, fan)
+        assert res["kind"] == "brep" and len(res["lines"]) == 8
+        for a, b in zip(exact["lines"], res["lines"]):
+            assert [i["kind"] for i in b["intervals"]] == ["void", "material"]
+            assert [i["length"] for i in b["intervals"]] == pytest.approx([i["length"] for i in a["intervals"]], abs=0.01)
+        assert {round(l["intervals"][0]["length"], 2) for l in res["lines"]} == {5.0}          # the bore's radius, all round
+
+
 def test_the_stl_agrees_with_the_brep_within_the_tessellation(bore_block, bore_stl):
     """Lines through mesh vertices and along triangle edges (the bore's seam, the rectangle diagonals
     of the end faces at their centre) are where a careless crossing count double-counts, and lines
@@ -255,7 +276,6 @@ def test_the_stl_agrees_with_the_brep_within_the_tessellation(bore_block, bore_s
 
 
 def test_a_fan_on_the_stl_matches_and_a_flipped_mesh_reads_the_same(bore_block, bore_stl, tmp_path):
-    import numpy as np
     from agentcad import rays
     from agentcad.meshmeasure import read_stl
     V, _ = read_stl(bore_stl)
@@ -299,12 +319,28 @@ def test_rays_text_names_the_range_and_caps_what_it_prints(bore_block):
 def test_probe_rays_through_the_cli(bore_block, tmp_path, capsys):
     from agentcad import cli
     out = tmp_path / "rays.json"
-    cli.main(["probe", "rays", str(bore_block), "--line=-30,0,0:1,0,0", "--fan", "5,0,0:0,0,1:90", "-o", str(out)])
+    cli.main(["probe", "rays", str(bore_block), "--line", "-30,0,0:1,0,0", "--fan", "5,0,0:0,0,1:90", "-o", str(out)])
     text = capsys.readouterr().out
     assert "L1: from" in text and "F1@0: from" in text and "F1@270: from" in text and f"rays.json: {out}" in text
     data = json.loads(out.read_text())
     assert data["schema"] == "agentcad.probe.rays/1" and [l["label"] for l in data["lines"]] == ["L1", "F1@0", "F1@90", "F1@180", "F1@270"]
     assert data["lines"][0]["intervals"][1]["length"] == pytest.approx(10.0, abs=1e-3)
+
+
+def test_a_coordinate_list_may_begin_with_a_minus_sign_either_way(bore_block, cylinder_stl, capsys):
+    """argparse reads a bare -30,0,0:1,0,0 as an option unless the parser says a leading minus is a number."""
+    from agentcad import cli
+    outs = []
+    for argv in (["--line", "-30,0,0:1,0,0"], ["--line=-30,0,0:1,0,0"]):
+        cli.main(["probe", "rays", str(bore_block)] + argv)
+        outs.append(capsys.readouterr().out)
+    assert outs[0] == outs[1] and "L1: from (-30.000, 0.000, 0.000)" in outs[0]
+    cli.main(["probe", "rays", str(bore_block), "--fan", "-5,0,0:0,0,1:180"])
+    assert "F1@0: from (-5.000, 0.000, 0.000)" in capsys.readouterr().out
+    cli.main(["probe", "section", str(cylinder_stl), "--axis-center", "-5,0"])
+    assert "through (-5, 0)" in capsys.readouterr().out
+    cli.main(["probe", "rays", str(bore_block), "--line", "-30,0,0:1,0,0", "--show", "1"])         # an option after it still parses
+    assert "more interval(s)" in capsys.readouterr().out
 
 
 def test_probe_rays_reads_a_parameter_override_and_an_stl(bore_block, bore_stl, capsys):

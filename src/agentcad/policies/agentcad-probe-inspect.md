@@ -98,7 +98,7 @@ Rays need a solid. A face, a wire or an empty shape has no inside, and the comma
 
 ### 2.1 Lines and Fans
 
-`--line X,Y,Z:DX,DY,DZ[:LEN]` (repeatable) is a line from the start point X,Y,Z along the direction DX,DY,DZ, which need not be a unit vector. A start whose first number is negative is written with an equals sign, `--line=-30,0,0:1,0,0`, because a bare argument that begins with a minus sign is read as an option.
+`--line X,Y,Z:DX,DY,DZ[:LEN]` (repeatable) is a line from the start point X,Y,Z along the direction DX,DY,DZ, which need not be a unit vector.
 
 `--fan X,Y,Z:AX,AY,AZ:STEP[:FROM[:TO]]` (repeatable) is a set of lines that leave the point X,Y,Z on the axis along AX,AY,AZ, square to it, every STEP degrees. This is the reading for a bore, a boss or a turned part: from the axis outward, the radial wall in every direction. `--fan 5,0,0:0,0,1:45` gives eight lines, every 45 degrees about the Z axis through x=5, y=0, at the height of the point. `FROM` and `TO` limit the sweep (`TO` is included); the default is a full turn, which does not repeat its first line.
 

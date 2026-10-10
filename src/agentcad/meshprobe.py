@@ -73,7 +73,7 @@ def load_mesh(path: Path) -> Mesh:
     V, F = read_stl(Path(path))
     if len(F) == 0:
         raise ValueError(f"{path}: the mesh has no triangles")
-    return Mesh(path, np.ascontiguousarray(V[F], dtype=np.float64))
+    return Mesh(path, np.ascontiguousarray(V, dtype=np.float64).reshape(-1, 3, 3))      # an STL's triangles are its vertex triples
 
 
 # --- lines ---------------------------------------------------------------------------
