@@ -39,6 +39,15 @@ def pose(shape, offset: Sequence[float] = (0, 0, 0), spin_deg: float = 0.0, axis
     return b3d.Pos(*offset) * (b3d.Rot(*rot) * shape)
 
 
+def pose_matrix(shape, matrix: Sequence[Sequence[float]]):
+    """The shape moved by a row-major 4x4 rigid transform (``agentcad.mates.pose_from_datums``)."""
+    b3d = _b3d()
+    from OCP.gp import gp_Trsf
+    trsf = gp_Trsf()
+    trsf.SetValues(*[float(matrix[i][j]) for i in range(3) for j in range(4)])
+    return b3d.Location(trsf) * shape
+
+
 def interference(a, b) -> float:
     try:
         common = a & b
@@ -142,18 +151,21 @@ def _assembly_frame(source: Path, defines):
 
 
 def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
-        offset=(0, 0, 0), spin_deg=0.0, spin_axis="z", windows: Optional[Dict[str, Sequence[float]]] = None,
+        offset=(0, 0, 0), spin_deg=0.0, spin_axis="z", transform: Optional[Sequence[Sequence[float]]] = None,
+        windows: Optional[Dict[str, Sequence[float]]] = None,
         sweep_axis: Optional[str] = None, sweep_travel: float = 10.0,
         out_dir: Optional[Path] = None) -> Dict[str, Any]:
     from agentcad.probe import load_shape
 
     a_defines, b_defines = _assembly_frame(a_source, a_defines), _assembly_frame(b_source, b_defines)
     a = load_shape(Path(a_source), a_defines)
-    b = pose(load_shape(Path(b_source), b_defines), offset, spin_deg, spin_axis)
+    b_shape = load_shape(Path(b_source), b_defines)
+    b = pose_matrix(b_shape, transform) if transform is not None else pose(b_shape, offset, spin_deg, spin_axis)
     result: Dict[str, Any] = {
         "a": str(a_source), "b": str(b_source),
         "a_defines": dict(a_defines or {}), "b_defines": dict(b_defines or {}),
-        "pose": {"offset": list(offset), "spin_deg": spin_deg, "spin_axis": spin_axis},
+        "pose": ({"transform": [list(map(float, r)) for r in transform]} if transform is not None
+                 else {"offset": list(offset), "spin_deg": spin_deg, "spin_axis": spin_axis}),
         "interference_mm3": interference(a, b),
         "clearance_mm": clearance(a, b),
     }

@@ -90,3 +90,15 @@ def test_mates_are_checked_only_for_their_counterpart(tmp_path, monkeypatch, cap
         assert e.code in (0, None)
     out = capsys.readouterr().out
     assert "lid_on_base" in out and "foot_on_base" not in out and "lid_on_foot" not in out
+
+
+def test_pose_matrix_moves_a_body_by_a_rigid_transform():
+    pytest.importorskip("build123d")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    box = b3d.Box(2, 4, 6)                         # centred at the origin
+    quarter_turn_and_shift = [[0, -1, 0, 10], [1, 0, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]]
+    moved = fitmod.pose_matrix(box, quarter_turn_and_shift)
+    bb = moved.bounding_box()
+    assert abs(bb.size.X - 4) < 1e-6 and abs(bb.size.Y - 2) < 1e-6   # x and y swap under the turn
+    assert abs(bb.center().X - 10) < 1e-6
