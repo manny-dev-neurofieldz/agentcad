@@ -1,0 +1,2989 @@
+{
+ "policy_fixture.md": {
+  "navigate": {
+   "rc": 0,
+   "lines": [
+    [
+     1,
+     "# Fixture Policy: Parsing Edge Cases"
+    ],
+    [
+     2,
+     ""
+    ],
+    [
+     3,
+     "**Type**: Test Fixture"
+    ],
+    [
+     4,
+     "**Scope**: The policy reader's tests"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**:"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ],
+    [
+     10,
+     "Exercises the format's parsing rules: fenced code hides headings, a section prefix does not match a longer number, unnumbered headings stay inside their section, and a trailing dot is ignored."
+    ],
+    [
+     11,
+     ""
+    ],
+    [
+     12,
+     "## CEP Navigation Guide"
+    ],
+    [
+     13,
+     ""
+    ],
+    [
+     14,
+     "**1 First Topic**"
+    ],
+    [
+     15,
+     "- What does the first section hold?"
+    ],
+    [
+     16,
+     ""
+    ],
+    [
+     17,
+     "**1.1 A Subtopic**"
+    ],
+    [
+     18,
+     "- Does 1.1 stop before 1.10?"
+    ],
+    [
+     19,
+     ""
+    ],
+    [
+     20,
+     "**1.10 A Later Subtopic**"
+    ],
+    [
+     21,
+     "- Is 1.10 its own section?"
+    ],
+    [
+     22,
+     ""
+    ],
+    [
+     23,
+     "**2 Second Topic**"
+    ],
+    [
+     24,
+     "- Are headings inside fences ignored?"
+    ],
+    [
+     25,
+     ""
+    ],
+    [
+     26,
+     "**3 Third Topic**"
+    ],
+    [
+     27,
+     "- Is a trailing dot ignored?"
+    ],
+    [
+     28,
+     ""
+    ],
+    [
+     29,
+     ""
+    ]
+   ]
+  },
+  "sections": {
+   "1": {
+    "rc": 0,
+    "lines": [
+     [
+      31,
+      "## 1 First Topic"
+     ],
+     [
+      32,
+      ""
+     ],
+     [
+      33,
+      "Text of section one."
+     ],
+     [
+      34,
+      ""
+     ],
+     [
+      35,
+      "### 1.1 A Subtopic"
+     ],
+     [
+      36,
+      ""
+     ],
+     [
+      37,
+      "Text of 1.1."
+     ],
+     [
+      38,
+      ""
+     ],
+     [
+      39,
+      "#### Example"
+     ],
+     [
+      40,
+      ""
+     ],
+     [
+      41,
+      "An unnumbered heading inside 1.1 stays in 1.1."
+     ],
+     [
+      42,
+      ""
+     ],
+     [
+      43,
+      "### 1.10 A Later Subtopic"
+     ],
+     [
+      44,
+      ""
+     ],
+     [
+      45,
+      "Text of 1.10, which section 1.1 must not include."
+     ],
+     [
+      46,
+      ""
+     ]
+    ]
+   },
+   "1.1": {
+    "rc": 0,
+    "lines": [
+     [
+      35,
+      "### 1.1 A Subtopic"
+     ],
+     [
+      36,
+      ""
+     ],
+     [
+      37,
+      "Text of 1.1."
+     ],
+     [
+      38,
+      ""
+     ],
+     [
+      39,
+      "#### Example"
+     ],
+     [
+      40,
+      ""
+     ],
+     [
+      41,
+      "An unnumbered heading inside 1.1 stays in 1.1."
+     ],
+     [
+      42,
+      ""
+     ]
+    ]
+   },
+   "1.10": {
+    "rc": 0,
+    "lines": [
+     [
+      43,
+      "### 1.10 A Later Subtopic"
+     ],
+     [
+      44,
+      ""
+     ],
+     [
+      45,
+      "Text of 1.10, which section 1.1 must not include."
+     ],
+     [
+      46,
+      ""
+     ]
+    ]
+   },
+   "2": {
+    "rc": 0,
+    "lines": [
+     [
+      47,
+      "## 2 Second Topic"
+     ],
+     [
+      48,
+      ""
+     ],
+     [
+      49,
+      "```"
+     ],
+     [
+      50,
+      "## 9 Not A Heading"
+     ],
+     [
+      51,
+      "# also not a heading"
+     ],
+     [
+      52,
+      "```"
+     ],
+     [
+      53,
+      ""
+     ],
+     [
+      54,
+      "~~~"
+     ],
+     [
+      55,
+      "### 2.5 Hidden In A Tilde Fence"
+     ],
+     [
+      56,
+      "~~~"
+     ],
+     [
+      57,
+      ""
+     ],
+     [
+      58,
+      "Text after the fences."
+     ],
+     [
+      59,
+      ""
+     ],
+     [
+      60,
+      "### 2.1 A Real Subsection"
+     ],
+     [
+      61,
+      ""
+     ],
+     [
+      62,
+      "Text of 2.1."
+     ],
+     [
+      63,
+      ""
+     ]
+    ]
+   },
+   "3": {
+    "rc": 0,
+    "lines": [
+     [
+      64,
+      "## 3. Third Topic"
+     ],
+     [
+      65,
+      ""
+     ],
+     [
+      66,
+      "Text of section three, whose heading carries a trailing dot."
+     ],
+     [
+      67,
+      ""
+     ]
+    ]
+   },
+   "20": {
+    "rc": 0,
+    "lines": [
+     [
+      68,
+      "## 20 Twenty"
+     ],
+     [
+      69,
+      ""
+     ],
+     [
+      70,
+      "Section twenty must not match a request for section 2."
+     ],
+     [
+      71,
+      ""
+     ]
+    ]
+   }
+  },
+  "from_nav_boundary": {
+   "rc": 0,
+   "lines": [
+    [
+     30,
+     ""
+    ],
+    [
+     31,
+     "## 1 First Topic"
+    ],
+    [
+     32,
+     ""
+    ],
+    [
+     33,
+     "Text of section one."
+    ],
+    [
+     34,
+     ""
+    ],
+    [
+     35,
+     "### 1.1 A Subtopic"
+    ],
+    [
+     36,
+     ""
+    ],
+    [
+     37,
+     "Text of 1.1."
+    ],
+    [
+     38,
+     ""
+    ],
+    [
+     39,
+     "#### Example"
+    ],
+    [
+     40,
+     ""
+    ],
+    [
+     41,
+     "An unnumbered heading inside 1.1 stays in 1.1."
+    ],
+    [
+     42,
+     ""
+    ],
+    [
+     43,
+     "### 1.10 A Later Subtopic"
+    ],
+    [
+     44,
+     ""
+    ],
+    [
+     45,
+     "Text of 1.10, which section 1.1 must not include."
+    ],
+    [
+     46,
+     ""
+    ],
+    [
+     47,
+     "## 2 Second Topic"
+    ],
+    [
+     48,
+     ""
+    ],
+    [
+     49,
+     "```"
+    ],
+    [
+     50,
+     "## 9 Not A Heading"
+    ],
+    [
+     51,
+     "# also not a heading"
+    ],
+    [
+     52,
+     "```"
+    ],
+    [
+     53,
+     ""
+    ],
+    [
+     54,
+     "~~~"
+    ],
+    [
+     55,
+     "### 2.5 Hidden In A Tilde Fence"
+    ],
+    [
+     56,
+     "~~~"
+    ],
+    [
+     57,
+     ""
+    ],
+    [
+     58,
+     "Text after the fences."
+    ],
+    [
+     59,
+     ""
+    ],
+    [
+     60,
+     "### 2.1 A Real Subsection"
+    ],
+    [
+     61,
+     ""
+    ],
+    [
+     62,
+     "Text of 2.1."
+    ],
+    [
+     63,
+     ""
+    ],
+    [
+     64,
+     "## 3. Third Topic"
+    ],
+    [
+     65,
+     ""
+    ],
+    [
+     66,
+     "Text of section three, whose heading carries a trailing dot."
+    ],
+    [
+     67,
+     ""
+    ],
+    [
+     68,
+     "## 20 Twenty"
+    ],
+    [
+     69,
+     ""
+    ],
+    [
+     70,
+     "Section twenty must not match a request for section 2."
+    ],
+    [
+     71,
+     ""
+    ]
+   ]
+  },
+  "lines_3_9": {
+   "rc": 0,
+   "lines": [
+    [
+     3,
+     "**Type**: Test Fixture"
+    ],
+    [
+     4,
+     "**Scope**: The policy reader's tests"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**:"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ]
+   ]
+  }
+ },
+ "agentcad-gcode.md": {
+  "navigate": {
+   "rc": 0,
+   "lines": [
+    [
+     1,
+     "# Sliced Files: Reading What Will Actually Print"
+    ],
+    [
+     2,
+     ""
+    ],
+    [
+     3,
+     "**Type**: Capability Policy (print verification)"
+    ],
+    [
+     4,
+     "**Scope**: Any agent or person checking a sliced file before it prints"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**: agentcad gcode decode, agentcad gcode info, agentcad gcode summary, agentcad gcode check, agentcad gcode supports, agentcad gcode view, agentcad gcode thumbnails"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ],
+    [
+     10,
+     "The sliced file is the last artifact before plastic and the only one that records what the slicer decided: where supports go, which settings were really used, how much material each part takes. The `agentcad gcode` commands read it in pure Python, with no slicer installed. This policy says how to read one before a print, and how not to over-read what the commands report."
+    ],
+    [
+     11,
+     ""
+    ],
+    [
+     12,
+     "## CEP Navigation Guide"
+    ],
+    [
+     13,
+     ""
+    ],
+    [
+     14,
+     "**1 What the Commands Read**"
+    ],
+    [
+     15,
+     "- Which files do the gcode commands accept?"
+    ],
+    [
+     16,
+     "- What does verification of a binary file check?"
+    ],
+    [
+     17,
+     ""
+    ],
+    [
+     18,
+     "**2 Decoding and Inspecting**"
+    ],
+    [
+     19,
+     "- How is a binary file turned into plain G-code?"
+    ],
+    [
+     20,
+     "- What does the block table and metadata show?"
+    ],
+    [
+     21,
+     ""
+    ],
+    [
+     22,
+     "**3 The Summary**"
+    ],
+    [
+     23,
+     "- What does the summary report?"
+    ],
+    [
+     24,
+     "- How is a summary checked for being right?"
+    ],
+    [
+     25,
+     ""
+    ],
+    [
+     26,
+     "**4 Settings Against Intent**"
+    ],
+    [
+     27,
+     "- How is a file's slicing checked against what the project intended?"
+    ],
+    [
+     28,
+     "- What happens when no intent is declared?"
+    ],
+    [
+     29,
+     ""
+    ],
+    [
+     30,
+     "**5 Where Supports Touch**"
+    ],
+    [
+     31,
+     "- What is a contact band?"
+    ],
+    [
+     32,
+     "- In which frame are bands reported, and how are they placed on the part?"
+    ],
+    [
+     33,
+     ""
+    ],
+    [
+     34,
+     "**5.1 Testing a Band Without Placement**"
+    ],
+    [
+     35,
+     "- How can a band be judged before the part's placement is known?"
+    ],
+    [
+     36,
+     ""
+    ],
+    [
+     37,
+     "**6 The Toolpath Page**"
+    ],
+    [
+     38,
+     "- What does the toolpath page show, and how big may it get?"
+    ],
+    [
+     39,
+     ""
+    ],
+    [
+     40,
+     "**7 Integration with Other Policies**"
+    ],
+    [
+     41,
+     "- Where do sliced files meet the session and the manifest?"
+    ],
+    [
+     42,
+     ""
+    ],
+    [
+     43,
+     "**8 Anti-Patterns**"
+    ],
+    [
+     44,
+     "- Which readings of these reports are wrong?"
+    ],
+    [
+     45,
+     ""
+    ],
+    [
+     46,
+     "**9 Evolution and Feedback**"
+    ],
+    [
+     47,
+     "- How does this policy change?"
+    ],
+    [
+     48,
+     ""
+    ],
+    [
+     49,
+     ""
+    ]
+   ]
+  },
+  "sections": {
+   "1": {
+    "rc": 0,
+    "lines": [
+     [
+      51,
+      "## 1 What the Commands Read"
+     ],
+     [
+      52,
+      ""
+     ],
+     [
+      53,
+      "Every gcode command accepts a Prusa binary G-code file (`.bgcode`) or a plain G-code file; a plain file passes through decoding unchanged, so the same command works on either."
+     ],
+     [
+      54,
+      ""
+     ],
+     [
+      55,
+      "A binary file is a sequence of blocks (file metadata, printer metadata, thumbnails, print metadata, slicer metadata, G-code), each with a checksum. The checksums are verified on every read; `--no-verify` skips them and says so on stderr. Use it only to inspect a file already known to be damaged."
+     ],
+     [
+      56,
+      ""
+     ]
+    ]
+   },
+   "2": {
+    "rc": 0,
+    "lines": [
+     [
+      57,
+      "## 2 Decoding and Inspecting"
+     ],
+     [
+      58,
+      ""
+     ],
+     [
+      59,
+      "`agentcad gcode decode FILE [-o OUT]` writes the plain G-code (stdout by default). `agentcad gcode info FILE` prints the header, the block table and the printer and print metadata. `agentcad gcode thumbnails FILE -o DIR` writes the preview images the file carries."
+     ],
+     [
+      60,
+      ""
+     ]
+    ]
+   },
+   "3": {
+    "rc": 0,
+    "lines": [
+     [
+      61,
+      "## 3 The Summary"
+     ],
+     [
+      62,
+      ""
+     ],
+     [
+      63,
+      "`agentcad gcode summary FILE` models the file by layer, object and feature (perimeters, infill kinds, bridges, support material, support interface, skirt and brim) and reports: layers and top height, filament used, extrusion per object and per feature, the support share and the first and last layers that carry supports. `--json` prints the record (schema `agentcad.gcode.summary/1`)."
+     ],
+     [
+      64,
+      ""
+     ],
+     [
+      65,
+      "The summary checks itself: its filament total is computed the way the slicer reports it and is printed beside the total the file states. The two must agree. A disagreement means the reader or the file is wrong; stop and find out which before trusting any other number."
+     ],
+     [
+      66,
+      ""
+     ]
+    ]
+   },
+   "4": {
+    "rc": 0,
+    "lines": [
+     [
+      67,
+      "## 4 Settings Against Intent"
+     ],
+     [
+      68,
+      ""
+     ],
+     [
+      69,
+      "`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with a `[slice]` table of intended values, keyed by the slicer's own setting names. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason; `--json` prints them."
+     ],
+     [
+      70,
+      ""
+     ],
+     [
+      71,
+      "With no `[slice]` table the command prints the file's key settings and says there is nothing to check against. That is not a pass. Print-host credentials in an embedded configuration are never printed."
+     ],
+     [
+      72,
+      ""
+     ]
+    ]
+   },
+   "5": {
+    "rc": 0,
+    "lines": [
+     [
+      73,
+      "## 5 Where Supports Touch"
+     ],
+     [
+      74,
+      ""
+     ],
+     [
+      75,
+      "`agentcad gcode supports FILE` finds the contact bands: the regions where support material lies within the contact distance (the file's own `support_material_contact_distance` unless `--contact-distance` is given) of a part, with each band's object, height range, area and bed position. Bands smaller than `--min-area` are hidden."
+     ],
+     [
+      76,
+      ""
+     ],
+     [
+      77,
+      "Bands are reported in the bed frame. With a placement sidecar (`--placement`, schema `agentcad.placement/1`), each band is also placed in its part's own frame, and a band inside a cavity of the part is reported as such and makes the command exit 1. `--png` renders the parts with their contact cells."
+     ],
+     [
+      78,
+      ""
+     ],
+     [
+      79,
+      "### 5.1 Testing a Band Without Placement"
+     ],
+     [
+      80,
+      ""
+     ],
+     [
+      81,
+      "A band's height needs no placement: add the contact distance to the band's top height and compare it with the height of the overhang the supports were meant for. A band at a height where no overhang was intended is a finding before any placement is known."
+     ],
+     [
+      82,
+      ""
+     ]
+    ]
+   },
+   "5.1": {
+    "rc": 0,
+    "lines": [
+     [
+      79,
+      "### 5.1 Testing a Band Without Placement"
+     ],
+     [
+      80,
+      ""
+     ],
+     [
+      81,
+      "A band's height needs no placement: add the contact distance to the band's top height and compare it with the height of the overhang the supports were meant for. A band at a height where no overhang was intended is a finding before any placement is known."
+     ],
+     [
+      82,
+      ""
+     ]
+    ]
+   },
+   "6": {
+    "rc": 0,
+    "lines": [
+     [
+      83,
+      "## 6 The Toolpath Page"
+     ],
+     [
+      84,
+      ""
+     ],
+     [
+      85,
+      "`agentcad gcode view FILE` writes a standalone page of the toolpaths: per-feature colours with toggles and a layer range. Toolpaths are embedded up to `--budget-mb`; above it every Nth layer is kept and the page says so. With `--placement` the support contact cells are marked. `--artifact DIR` writes a page fragment for an artifact host."
+     ],
+     [
+      86,
+      ""
+     ]
+    ]
+   },
+   "7": {
+    "rc": 0,
+    "lines": [
+     [
+      87,
+      "## 7 Integration with Other Policies"
+     ],
+     [
+      88,
+      ""
+     ],
+     [
+      89,
+      "- `agentcad-session`: a finalized project's print manifest lists the sliced files found among its exports, with a toolpath page for each, and carries the project's `[slice]` intent."
+     ],
+     [
+      90,
+      "- `agentcad-policies`: how this policy is found and read."
+     ],
+     [
+      91,
+      ""
+     ]
+    ]
+   },
+   "8": {
+    "rc": 0,
+    "lines": [
+     [
+      92,
+      "## 8 Anti-Patterns"
+     ],
+     [
+      93,
+      ""
+     ],
+     [
+      94,
+      "- **A clean check without intent**: no `[slice]` table means no verdict, not a passing one."
+     ],
+     [
+      95,
+      "- **Bed coordinates as part coordinates**: without placement, a band's x and y say where on the plate it is, not where on the part."
+     ],
+     [
+      96,
+      "- **Trusting a summary that disagrees with the file's stated total**: the disagreement is the first finding."
+     ],
+     [
+      97,
+      "- **Reading past a failed checksum**: `--no-verify` is for inspecting damage, not for silencing it."
+     ],
+     [
+      98,
+      ""
+     ]
+    ]
+   },
+   "9": {
+    "rc": 0,
+    "lines": [
+     [
+      99,
+      "## 9 Evolution and Feedback"
+     ],
+     [
+      100,
+      ""
+     ],
+     [
+      101,
+      "This policy ships with agentcad and changes with the commands it governs; a change to a gcode command's behaviour updates this policy in the same pull request."
+     ],
+     [
+      102,
+      ""
+     ]
+    ]
+   }
+  },
+  "from_nav_boundary": {
+   "rc": 0,
+   "lines": [
+    [
+     50,
+     ""
+    ],
+    [
+     51,
+     "## 1 What the Commands Read"
+    ],
+    [
+     52,
+     ""
+    ],
+    [
+     53,
+     "Every gcode command accepts a Prusa binary G-code file (`.bgcode`) or a plain G-code file; a plain file passes through decoding unchanged, so the same command works on either."
+    ],
+    [
+     54,
+     ""
+    ],
+    [
+     55,
+     "A binary file is a sequence of blocks (file metadata, printer metadata, thumbnails, print metadata, slicer metadata, G-code), each with a checksum. The checksums are verified on every read; `--no-verify` skips them and says so on stderr. Use it only to inspect a file already known to be damaged."
+    ],
+    [
+     56,
+     ""
+    ],
+    [
+     57,
+     "## 2 Decoding and Inspecting"
+    ],
+    [
+     58,
+     ""
+    ],
+    [
+     59,
+     "`agentcad gcode decode FILE [-o OUT]` writes the plain G-code (stdout by default). `agentcad gcode info FILE` prints the header, the block table and the printer and print metadata. `agentcad gcode thumbnails FILE -o DIR` writes the preview images the file carries."
+    ],
+    [
+     60,
+     ""
+    ],
+    [
+     61,
+     "## 3 The Summary"
+    ],
+    [
+     62,
+     ""
+    ],
+    [
+     63,
+     "`agentcad gcode summary FILE` models the file by layer, object and feature (perimeters, infill kinds, bridges, support material, support interface, skirt and brim) and reports: layers and top height, filament used, extrusion per object and per feature, the support share and the first and last layers that carry supports. `--json` prints the record (schema `agentcad.gcode.summary/1`)."
+    ],
+    [
+     64,
+     ""
+    ],
+    [
+     65,
+     "The summary checks itself: its filament total is computed the way the slicer reports it and is printed beside the total the file states. The two must agree. A disagreement means the reader or the file is wrong; stop and find out which before trusting any other number."
+    ],
+    [
+     66,
+     ""
+    ],
+    [
+     67,
+     "## 4 Settings Against Intent"
+    ],
+    [
+     68,
+     ""
+    ],
+    [
+     69,
+     "`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with a `[slice]` table of intended values, keyed by the slicer's own setting names. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason; `--json` prints them."
+    ],
+    [
+     70,
+     ""
+    ],
+    [
+     71,
+     "With no `[slice]` table the command prints the file's key settings and says there is nothing to check against. That is not a pass. Print-host credentials in an embedded configuration are never printed."
+    ],
+    [
+     72,
+     ""
+    ],
+    [
+     73,
+     "## 5 Where Supports Touch"
+    ],
+    [
+     74,
+     ""
+    ],
+    [
+     75,
+     "`agentcad gcode supports FILE` finds the contact bands: the regions where support material lies within the contact distance (the file's own `support_material_contact_distance` unless `--contact-distance` is given) of a part, with each band's object, height range, area and bed position. Bands smaller than `--min-area` are hidden."
+    ],
+    [
+     76,
+     ""
+    ],
+    [
+     77,
+     "Bands are reported in the bed frame. With a placement sidecar (`--placement`, schema `agentcad.placement/1`), each band is also placed in its part's own frame, and a band inside a cavity of the part is reported as such and makes the command exit 1. `--png` renders the parts with their contact cells."
+    ],
+    [
+     78,
+     ""
+    ],
+    [
+     79,
+     "### 5.1 Testing a Band Without Placement"
+    ],
+    [
+     80,
+     ""
+    ],
+    [
+     81,
+     "A band's height needs no placement: add the contact distance to the band's top height and compare it with the height of the overhang the supports were meant for. A band at a height where no overhang was intended is a finding before any placement is known."
+    ],
+    [
+     82,
+     ""
+    ],
+    [
+     83,
+     "## 6 The Toolpath Page"
+    ],
+    [
+     84,
+     ""
+    ],
+    [
+     85,
+     "`agentcad gcode view FILE` writes a standalone page of the toolpaths: per-feature colours with toggles and a layer range. Toolpaths are embedded up to `--budget-mb`; above it every Nth layer is kept and the page says so. With `--placement` the support contact cells are marked. `--artifact DIR` writes a page fragment for an artifact host."
+    ],
+    [
+     86,
+     ""
+    ],
+    [
+     87,
+     "## 7 Integration with Other Policies"
+    ],
+    [
+     88,
+     ""
+    ],
+    [
+     89,
+     "- `agentcad-session`: a finalized project's print manifest lists the sliced files found among its exports, with a toolpath page for each, and carries the project's `[slice]` intent."
+    ],
+    [
+     90,
+     "- `agentcad-policies`: how this policy is found and read."
+    ],
+    [
+     91,
+     ""
+    ],
+    [
+     92,
+     "## 8 Anti-Patterns"
+    ],
+    [
+     93,
+     ""
+    ],
+    [
+     94,
+     "- **A clean check without intent**: no `[slice]` table means no verdict, not a passing one."
+    ],
+    [
+     95,
+     "- **Bed coordinates as part coordinates**: without placement, a band's x and y say where on the plate it is, not where on the part."
+    ],
+    [
+     96,
+     "- **Trusting a summary that disagrees with the file's stated total**: the disagreement is the first finding."
+    ],
+    [
+     97,
+     "- **Reading past a failed checksum**: `--no-verify` is for inspecting damage, not for silencing it."
+    ],
+    [
+     98,
+     ""
+    ],
+    [
+     99,
+     "## 9 Evolution and Feedback"
+    ],
+    [
+     100,
+     ""
+    ],
+    [
+     101,
+     "This policy ships with agentcad and changes with the commands it governs; a change to a gcode command's behaviour updates this policy in the same pull request."
+    ],
+    [
+     102,
+     ""
+    ]
+   ]
+  },
+  "lines_3_9": {
+   "rc": 0,
+   "lines": [
+    [
+     3,
+     "**Type**: Capability Policy (print verification)"
+    ],
+    [
+     4,
+     "**Scope**: Any agent or person checking a sliced file before it prints"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**: agentcad gcode decode, agentcad gcode info, agentcad gcode summary, agentcad gcode check, agentcad gcode supports, agentcad gcode view, agentcad gcode thumbnails"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ]
+   ]
+  }
+ },
+ "agentcad-policies.md": {
+  "navigate": {
+   "rc": 0,
+   "lines": [
+    [
+     1,
+     "# Policies: How agentcad Explains Itself"
+    ],
+    [
+     2,
+     ""
+    ],
+    [
+     3,
+     "**Type**: Capability Policy (meta)"
+    ],
+    [
+     4,
+     "**Scope**: Any agent or person using agentcad, and anyone adding a command to it"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**: agentcad policy list, agentcad policy navigate, agentcad policy read"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ],
+    [
+     10,
+     "Every agentcad capability ships with a policy: a document, versioned with the code, that says what the capability is for, how to use it well, and how it fails. An agent reads the policy through the CLI before acting, so the guidance is always the guidance of the installed version and never a stale copy in a prompt. This policy says how to find and read policies, how they are written, and the contract that keeps every command covered."
+    ],
+    [
+     11,
+     ""
+    ],
+    [
+     12,
+     "## CEP Navigation Guide"
+    ],
+    [
+     13,
+     ""
+    ],
+    [
+     14,
+     "**1 Finding and Reading**"
+    ],
+    [
+     15,
+     "- How are the installed policies listed?"
+    ],
+    [
+     16,
+     "- How is a policy read without reading all of it?"
+    ],
+    [
+     17,
+     ""
+    ],
+    [
+     18,
+     "**2 The Format**"
+    ],
+    [
+     19,
+     "- What does a policy file contain, and in what order?"
+    ],
+    [
+     20,
+     "- How are sections numbered?"
+    ],
+    [
+     21,
+     ""
+    ],
+    [
+     22,
+     "**2.1 Parsing Rules**"
+    ],
+    [
+     23,
+     "- How is the navigation guide separated from the content?"
+    ],
+    [
+     24,
+     "- How is a section and its subsections found?"
+    ],
+    [
+     25,
+     ""
+    ],
+    [
+     26,
+     "**3 The Contract**"
+    ],
+    [
+     27,
+     "- Which commands must a policy cover?"
+    ],
+    [
+     28,
+     "- What checks hold every policy to the format?"
+    ],
+    [
+     29,
+     ""
+    ],
+    [
+     30,
+     "**4 Integration with Other Policies**"
+    ],
+    [
+     31,
+     "- Where else can these files be read?"
+    ],
+    [
+     32,
+     "- How should a skill or a document refer to a policy?"
+    ],
+    [
+     33,
+     ""
+    ],
+    [
+     34,
+     "**5 Anti-Patterns**"
+    ],
+    [
+     35,
+     "- Which ways of writing or citing policies fail?"
+    ],
+    [
+     36,
+     ""
+    ],
+    [
+     37,
+     "**6 Evolution and Feedback**"
+    ],
+    [
+     38,
+     "- How does this policy change?"
+    ],
+    [
+     39,
+     ""
+    ],
+    [
+     40,
+     ""
+    ]
+   ]
+  },
+  "sections": {
+   "1": {
+    "rc": 0,
+    "lines": [
+     [
+      42,
+      "## 1 Finding and Reading"
+     ],
+     [
+      43,
+      ""
+     ],
+     [
+      44,
+      "`agentcad policy list` prints every installed policy with the commands it governs (`--json` for a record). `agentcad policy navigate NAME` prints the policy's navigation guide: its numbered topics, each with the questions its section answers. `agentcad policy read NAME --section N` prints that section with its subsections; `--lines START:END` prints a line range and `--from-nav-boundary` everything after the guide. Names may be given with or without the `agentcad-` prefix."
+     ],
+     [
+      45,
+      ""
+     ],
+     [
+      46,
+      "The working order is list, navigate, read: scan the questions, then read only the sections that answer the question at hand."
+     ],
+     [
+      47,
+      ""
+     ]
+    ]
+   },
+   "2": {
+    "rc": 0,
+    "lines": [
+     [
+      48,
+      "## 2 The Format"
+     ],
+     [
+      49,
+      ""
+     ],
+     [
+      50,
+      "A policy is a markdown file in the package's `policies` folder, named `agentcad-<topic>.md`. In order it holds:"
+     ],
+     [
+      51,
+      ""
+     ],
+     [
+      52,
+      "- a title line and a header of `**Type**`, `**Scope**`, `**Status**` and `**Commands**` lines, where Commands lists the full commands the policy governs, comma-separated;"
+     ],
+     [
+      53,
+      "- `## Purpose`;"
+     ],
+     [
+      54,
+      "- `## CEP Navigation Guide`: bold numbered topics (`**1 Topic**`, `**1.1 Subtopic**`), each followed by the questions its section answers;"
+     ],
+     [
+      55,
+      "- the boundary line `=== CEP_NAV_BOUNDARY ===`;"
+     ],
+     [
+      56,
+      "- content sections numbered exactly like the guide (`## 1 Topic`, `### 1.1 Subtopic`), ending with integration, anti-pattern and evolution sections."
+     ],
+     [
+      57,
+      ""
+     ],
+     [
+      58,
+      "### 2.1 Parsing Rules"
+     ],
+     [
+      59,
+      ""
+     ],
+     [
+      60,
+      "The rules are fixed so that every reader of this format extracts the same text. The navigation guide is everything before the first boundary marker; a file without one shows its first 100 lines. A section is found by the first word of a heading, with a trailing dot ignored: section `2` matches headings numbered `2` and `2.x`, but not `20`, and reading stops at the next heading of the same or a higher level that does not match. Lines starting with three backticks or three tildes open and close code fences, and headings inside a fence are not headings."
+     ],
+     [
+      61,
+      ""
+     ]
+    ]
+   },
+   "2.1": {
+    "rc": 0,
+    "lines": [
+     [
+      58,
+      "### 2.1 Parsing Rules"
+     ],
+     [
+      59,
+      ""
+     ],
+     [
+      60,
+      "The rules are fixed so that every reader of this format extracts the same text. The navigation guide is everything before the first boundary marker; a file without one shows its first 100 lines. A section is found by the first word of a heading, with a trailing dot ignored: section `2` matches headings numbered `2` and `2.x`, but not `20`, and reading stops at the next heading of the same or a higher level that does not match. Lines starting with three backticks or three tildes open and close code fences, and headings inside a fence are not headings."
+     ],
+     [
+      61,
+      ""
+     ]
+    ]
+   },
+   "3": {
+    "rc": 0,
+    "lines": [
+     [
+      62,
+      "## 3 The Contract"
+     ],
+     [
+      63,
+      ""
+     ],
+     [
+      64,
+      "Every leaf command of the CLI is governed by exactly one policy, through its `**Commands**` line, and a test walks the command tree to hold that true. A pull request that adds a command adds or extends a policy in the same change. Policies that describe a practice rather than a command may govern none."
+     ],
+     [
+      65,
+      ""
+     ],
+     [
+      66,
+      "The same tests lint every policy: plain ASCII; no absolute file paths; no names of particular people, agents or labs; code fences at the start of a line and balanced; the header fields present; and the navigation guide's numbers equal to the content's."
+     ],
+     [
+      67,
+      ""
+     ]
+    ]
+   },
+   "4": {
+    "rc": 0,
+    "lines": [
+     [
+      68,
+      "## 4 Integration with Other Policies"
+     ],
+     [
+      69,
+      ""
+     ],
+     [
+      70,
+      "- The files follow a policy format other readers share, so an agent framework that mounts them can read them unchanged."
+     ],
+     [
+      71,
+      "- A skill or document should cite a policy by name and by the question it answers, not by section number: numbers change as a policy grows, questions do not."
+     ],
+     [
+      72,
+      ""
+     ]
+    ]
+   },
+   "5": {
+    "rc": 0,
+    "lines": [
+     [
+      73,
+      "## 5 Anti-Patterns"
+     ],
+     [
+      74,
+      ""
+     ],
+     [
+      75,
+      "- **Embedding the answer**: a skill that copies a policy's guidance goes stale when the policy changes; it should ask the question and read the answer."
+     ],
+     [
+      76,
+      "- **Citing by number from outside**: \"section 3.2\" breaks on the next insertion."
+     ],
+     [
+      77,
+      "- **A command without a policy**: the tests refuse it; write the policy with the command."
+     ],
+     [
+      78,
+      ""
+     ]
+    ]
+   },
+   "6": {
+    "rc": 0,
+    "lines": [
+     [
+      79,
+      "## 6 Evolution and Feedback"
+     ],
+     [
+      80,
+      ""
+     ],
+     [
+      81,
+      "This policy changes with the policy commands and the format; a change to either updates this policy in the same pull request."
+     ],
+     [
+      82,
+      ""
+     ]
+    ]
+   }
+  },
+  "from_nav_boundary": {
+   "rc": 0,
+   "lines": [
+    [
+     41,
+     ""
+    ],
+    [
+     42,
+     "## 1 Finding and Reading"
+    ],
+    [
+     43,
+     ""
+    ],
+    [
+     44,
+     "`agentcad policy list` prints every installed policy with the commands it governs (`--json` for a record). `agentcad policy navigate NAME` prints the policy's navigation guide: its numbered topics, each with the questions its section answers. `agentcad policy read NAME --section N` prints that section with its subsections; `--lines START:END` prints a line range and `--from-nav-boundary` everything after the guide. Names may be given with or without the `agentcad-` prefix."
+    ],
+    [
+     45,
+     ""
+    ],
+    [
+     46,
+     "The working order is list, navigate, read: scan the questions, then read only the sections that answer the question at hand."
+    ],
+    [
+     47,
+     ""
+    ],
+    [
+     48,
+     "## 2 The Format"
+    ],
+    [
+     49,
+     ""
+    ],
+    [
+     50,
+     "A policy is a markdown file in the package's `policies` folder, named `agentcad-<topic>.md`. In order it holds:"
+    ],
+    [
+     51,
+     ""
+    ],
+    [
+     52,
+     "- a title line and a header of `**Type**`, `**Scope**`, `**Status**` and `**Commands**` lines, where Commands lists the full commands the policy governs, comma-separated;"
+    ],
+    [
+     53,
+     "- `## Purpose`;"
+    ],
+    [
+     54,
+     "- `## CEP Navigation Guide`: bold numbered topics (`**1 Topic**`, `**1.1 Subtopic**`), each followed by the questions its section answers;"
+    ],
+    [
+     55,
+     "- the boundary line `=== CEP_NAV_BOUNDARY ===`;"
+    ],
+    [
+     56,
+     "- content sections numbered exactly like the guide (`## 1 Topic`, `### 1.1 Subtopic`), ending with integration, anti-pattern and evolution sections."
+    ],
+    [
+     57,
+     ""
+    ],
+    [
+     58,
+     "### 2.1 Parsing Rules"
+    ],
+    [
+     59,
+     ""
+    ],
+    [
+     60,
+     "The rules are fixed so that every reader of this format extracts the same text. The navigation guide is everything before the first boundary marker; a file without one shows its first 100 lines. A section is found by the first word of a heading, with a trailing dot ignored: section `2` matches headings numbered `2` and `2.x`, but not `20`, and reading stops at the next heading of the same or a higher level that does not match. Lines starting with three backticks or three tildes open and close code fences, and headings inside a fence are not headings."
+    ],
+    [
+     61,
+     ""
+    ],
+    [
+     62,
+     "## 3 The Contract"
+    ],
+    [
+     63,
+     ""
+    ],
+    [
+     64,
+     "Every leaf command of the CLI is governed by exactly one policy, through its `**Commands**` line, and a test walks the command tree to hold that true. A pull request that adds a command adds or extends a policy in the same change. Policies that describe a practice rather than a command may govern none."
+    ],
+    [
+     65,
+     ""
+    ],
+    [
+     66,
+     "The same tests lint every policy: plain ASCII; no absolute file paths; no names of particular people, agents or labs; code fences at the start of a line and balanced; the header fields present; and the navigation guide's numbers equal to the content's."
+    ],
+    [
+     67,
+     ""
+    ],
+    [
+     68,
+     "## 4 Integration with Other Policies"
+    ],
+    [
+     69,
+     ""
+    ],
+    [
+     70,
+     "- The files follow a policy format other readers share, so an agent framework that mounts them can read them unchanged."
+    ],
+    [
+     71,
+     "- A skill or document should cite a policy by name and by the question it answers, not by section number: numbers change as a policy grows, questions do not."
+    ],
+    [
+     72,
+     ""
+    ],
+    [
+     73,
+     "## 5 Anti-Patterns"
+    ],
+    [
+     74,
+     ""
+    ],
+    [
+     75,
+     "- **Embedding the answer**: a skill that copies a policy's guidance goes stale when the policy changes; it should ask the question and read the answer."
+    ],
+    [
+     76,
+     "- **Citing by number from outside**: \"section 3.2\" breaks on the next insertion."
+    ],
+    [
+     77,
+     "- **A command without a policy**: the tests refuse it; write the policy with the command."
+    ],
+    [
+     78,
+     ""
+    ],
+    [
+     79,
+     "## 6 Evolution and Feedback"
+    ],
+    [
+     80,
+     ""
+    ],
+    [
+     81,
+     "This policy changes with the policy commands and the format; a change to either updates this policy in the same pull request."
+    ],
+    [
+     82,
+     ""
+    ]
+   ]
+  },
+  "lines_3_9": {
+   "rc": 0,
+   "lines": [
+    [
+     3,
+     "**Type**: Capability Policy (meta)"
+    ],
+    [
+     4,
+     "**Scope**: Any agent or person using agentcad, and anyone adding a command to it"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**: agentcad policy list, agentcad policy navigate, agentcad policy read"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ]
+   ]
+  }
+ },
+ "agentcad-session.md": {
+  "navigate": {
+   "rc": 0,
+   "lines": [
+    [
+     1,
+     "# Design Sessions: the Iterate, Look, Record Loop"
+    ],
+    [
+     2,
+     ""
+    ],
+    [
+     3,
+     "**Type**: Capability Policy (design loop)"
+    ],
+    [
+     4,
+     "**Scope**: Any agent or person designing a part with agentcad"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**: agentcad session start, agentcad session iterate, agentcad session reopen, agentcad session tag, agentcad session note, agentcad session finalize, agentcad session status"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ],
+    [
+     10,
+     "A design session is agentcad's unit of design work: a numbered sequence of iterations of one part, each rendered and measured, with notes, frozen tags for review, and a final set of exports, a print manifest and a viewer. This policy says how to run one so that every iteration is looked at and measured before the next, and so that what was decided can be found again."
+    ],
+    [
+     11,
+     ""
+    ],
+    [
+     12,
+     "## CEP Navigation Guide"
+    ],
+    [
+     13,
+     ""
+    ],
+    [
+     14,
+     "**1 The Session Loop**"
+    ],
+    [
+     15,
+     "- What is a session, and when is one better than a plain render?"
+    ],
+    [
+     16,
+     "- What is the order of work inside a session?"
+    ],
+    [
+     17,
+     ""
+    ],
+    [
+     18,
+     "**1.1 Starting a Session**"
+    ],
+    [
+     19,
+     "- What does start create, and what do its defines do?"
+    ],
+    [
+     20,
+     "- What happens to an earlier session when one is started again?"
+    ],
+    [
+     21,
+     ""
+    ],
+    [
+     22,
+     "**1.2 Iterating**"
+    ],
+    [
+     23,
+     "- What does one iteration produce?"
+    ],
+    [
+     24,
+     "- How do per-iteration defines differ from session defines?"
+    ],
+    [
+     25,
+     "- What does iterating a project with part subprojects do?"
+    ],
+    [
+     26,
+     ""
+    ],
+    [
+     27,
+     "**2 Reading Each Iteration**"
+    ],
+    [
+     28,
+     "- What must be read after every iterate, before the next one?"
+    ],
+    [
+     29,
+     ""
+    ],
+    [
+     30,
+     "**2.1 The Tray**"
+    ],
+    [
+     31,
+     "- What does the measured report contain?"
+    ],
+    [
+     32,
+     "- Which warnings does it raise, and what does each mean?"
+    ],
+    [
+     33,
+     ""
+    ],
+    [
+     34,
+     "**2.2 The Render Gate**"
+    ],
+    [
+     35,
+     "- What must happen to a render before anyone acts on it or sends it?"
+    ],
+    [
+     36,
+     "- What can a render not show?"
+    ],
+    [
+     37,
+     ""
+    ],
+    [
+     38,
+     "**3 Recording and Freezing**"
+    ],
+    [
+     39,
+     "- How are findings recorded against an iteration?"
+    ],
+    [
+     40,
+     "- When is a tag the right tool, and what does it freeze?"
+    ],
+    [
+     41,
+     "- How is a finished session continued?"
+    ],
+    [
+     42,
+     ""
+    ],
+    [
+     43,
+     "**4 Finalizing**"
+    ],
+    [
+     44,
+     "- What does finalize write, and what does it reuse?"
+    ],
+    [
+     45,
+     "- What is the print manifest?"
+    ],
+    [
+     46,
+     ""
+    ],
+    [
+     47,
+     "**5 Session Status**"
+    ],
+    [
+     48,
+     "- How is a session's state inspected?"
+    ],
+    [
+     49,
+     ""
+    ],
+    [
+     50,
+     "**6 Integration with Other Policies**"
+    ],
+    [
+     51,
+     "- Which policies govern what happens after a session?"
+    ],
+    [
+     52,
+     ""
+    ],
+    [
+     53,
+     "**7 Anti-Patterns**"
+    ],
+    [
+     54,
+     "- What mistakes does the loop exist to prevent?"
+    ],
+    [
+     55,
+     ""
+    ],
+    [
+     56,
+     "**8 Evolution and Feedback**"
+    ],
+    [
+     57,
+     "- How does this policy change?"
+    ],
+    [
+     58,
+     ""
+    ],
+    [
+     59,
+     ""
+    ]
+   ]
+  },
+  "sections": {
+   "1": {
+    "rc": 0,
+    "lines": [
+     [
+      61,
+      "## 1 The Session Loop"
+     ],
+     [
+      62,
+      ""
+     ],
+     [
+      63,
+      "A session holds one part's design history in its project folder: every iteration's source copy, renders, measured metadata and notes, under `_work/`. Use a session whenever a part takes more than one attempt, which is almost always; `agentcad render` is for a single look at a source."
+     ],
+     [
+      64,
+      ""
+     ],
+     [
+      65,
+      "The order of work is fixed: start, then for each attempt iterate, read the renders and the tray, note what was learned; tag a revision before handing it to a reviewer; finalize when the design is accepted."
+     ],
+     [
+      66,
+      ""
+     ],
+     [
+      67,
+      "### 1.1 Starting a Session"
+     ],
+     [
+      68,
+      ""
+     ],
+     [
+      69,
+      "`agentcad session start PROJECT` begins iteration 1 of a new session for the project (a folder under the designs directory, or a path). `-D VAR=VAL` (repeatable) sets parameter overrides applied to every iteration; `--engine` overrides the project's default engine; `--max-iter` caps the iterations."
+     ],
+     [
+      70,
+      ""
+     ],
+     [
+      71,
+      "Starting again over an unfinalized session requires `--force`. The earlier session record and the iteration files it names are moved to `_work/archive_<timestamp>/`, not deleted; `--no-archive` (with `--force`) discards them instead."
+     ],
+     [
+      72,
+      ""
+     ],
+     [
+      73,
+      "### 1.2 Iterating"
+     ],
+     [
+      74,
+      ""
+     ],
+     [
+      75,
+      "`agentcad session iterate PROJECT SOURCE` renders the source at the project's views, measures the result and records iteration N: a copy of the source, the render images, the metadata and the tray report."
+     ],
+     [
+      76,
+      ""
+     ],
+     [
+      77,
+      "`-D VAR=VAL` on an iterate overrides a parameter for that iteration only, on top of the session's defines; the defines are recorded with the iteration and shown in the viewer."
+     ],
+     [
+      78,
+      ""
+     ],
+     [
+      79,
+      "`--all` also iterates every part subproject the project declares (`[project] parts` globs), with the same source."
+     ],
+     [
+      80,
+      ""
+     ]
+    ]
+   },
+   "1.1": {
+    "rc": 0,
+    "lines": [
+     [
+      67,
+      "### 1.1 Starting a Session"
+     ],
+     [
+      68,
+      ""
+     ],
+     [
+      69,
+      "`agentcad session start PROJECT` begins iteration 1 of a new session for the project (a folder under the designs directory, or a path). `-D VAR=VAL` (repeatable) sets parameter overrides applied to every iteration; `--engine` overrides the project's default engine; `--max-iter` caps the iterations."
+     ],
+     [
+      70,
+      ""
+     ],
+     [
+      71,
+      "Starting again over an unfinalized session requires `--force`. The earlier session record and the iteration files it names are moved to `_work/archive_<timestamp>/`, not deleted; `--no-archive` (with `--force`) discards them instead."
+     ],
+     [
+      72,
+      ""
+     ]
+    ]
+   },
+   "1.2": {
+    "rc": 0,
+    "lines": [
+     [
+      73,
+      "### 1.2 Iterating"
+     ],
+     [
+      74,
+      ""
+     ],
+     [
+      75,
+      "`agentcad session iterate PROJECT SOURCE` renders the source at the project's views, measures the result and records iteration N: a copy of the source, the render images, the metadata and the tray report."
+     ],
+     [
+      76,
+      ""
+     ],
+     [
+      77,
+      "`-D VAR=VAL` on an iterate overrides a parameter for that iteration only, on top of the session's defines; the defines are recorded with the iteration and shown in the viewer."
+     ],
+     [
+      78,
+      ""
+     ],
+     [
+      79,
+      "`--all` also iterates every part subproject the project declares (`[project] parts` globs), with the same source."
+     ],
+     [
+      80,
+      ""
+     ]
+    ]
+   },
+   "2": {
+    "rc": 0,
+    "lines": [
+     [
+      81,
+      "## 2 Reading Each Iteration"
+     ],
+     [
+      82,
+      ""
+     ],
+     [
+      83,
+      "After every iterate, before the next: read the tray and look at every render. An iteration that is not read is a measurement thrown away, and the next edit is then a guess."
+     ],
+     [
+      84,
+      ""
+     ],
+     [
+      85,
+      "### 2.1 The Tray"
+     ],
+     [
+      86,
+      ""
+     ],
+     [
+      87,
+      "The tray is the measured report printed by iterate (and by `agentcad render --report`). Its lines give the change since the previous iteration: volume and area, bounding box, solid and face counts, the face census by surface type, edge statistics, validity, and run time."
+     ],
+     [
+      88,
+      ""
+     ],
+     [
+      89,
+      "Its warnings each name a defect a render does not show:"
+     ],
+     [
+      90,
+      ""
+     ],
+     [
+      91,
+      "- the solid count differs from the expected count (one, unless the engine's `expected_solids` setting says otherwise): parts that should be one body are touching or apart;"
+     ],
+     [
+      92,
+      "- short edges, with the shortest length: slivers that break fillets and slicers;"
+     ],
+     [
+      93,
+      "- the kernel reports the shape invalid;"
+     ],
+     [
+      94,
+      "- twisted faces: a free-form face whose normal turns sharply along a ruling (a twisted loft);"
+     ],
+     [
+      95,
+      "- a measurement that failed, named by its key;"
+     ],
+     [
+      96,
+      "- the source changed but nothing measurable did: the edit did not land."
+     ],
+     [
+      97,
+      ""
+     ],
+     [
+      98,
+      "### 2.2 The Render Gate"
+     ],
+     [
+      99,
+      ""
+     ],
+     [
+      100,
+      "Look at every render before acting on the iteration or sending an image to anyone: open the image, describe what it shows, and compare that with what was intended. A metric that passed is not a render that was looked at."
+     ],
+     [
+      101,
+      ""
+     ],
+     [
+      102,
+      "A render cannot show connectivity (a tangent touch and a small gap look the same), wall thickness, or whether a feature is the requested size. Read the tray's solid count and measured values for those; a render is evidence of silhouette, orientation and gross error only."
+     ],
+     [
+      103,
+      ""
+     ]
+    ]
+   },
+   "2.1": {
+    "rc": 0,
+    "lines": [
+     [
+      85,
+      "### 2.1 The Tray"
+     ],
+     [
+      86,
+      ""
+     ],
+     [
+      87,
+      "The tray is the measured report printed by iterate (and by `agentcad render --report`). Its lines give the change since the previous iteration: volume and area, bounding box, solid and face counts, the face census by surface type, edge statistics, validity, and run time."
+     ],
+     [
+      88,
+      ""
+     ],
+     [
+      89,
+      "Its warnings each name a defect a render does not show:"
+     ],
+     [
+      90,
+      ""
+     ],
+     [
+      91,
+      "- the solid count differs from the expected count (one, unless the engine's `expected_solids` setting says otherwise): parts that should be one body are touching or apart;"
+     ],
+     [
+      92,
+      "- short edges, with the shortest length: slivers that break fillets and slicers;"
+     ],
+     [
+      93,
+      "- the kernel reports the shape invalid;"
+     ],
+     [
+      94,
+      "- twisted faces: a free-form face whose normal turns sharply along a ruling (a twisted loft);"
+     ],
+     [
+      95,
+      "- a measurement that failed, named by its key;"
+     ],
+     [
+      96,
+      "- the source changed but nothing measurable did: the edit did not land."
+     ],
+     [
+      97,
+      ""
+     ]
+    ]
+   },
+   "2.2": {
+    "rc": 0,
+    "lines": [
+     [
+      98,
+      "### 2.2 The Render Gate"
+     ],
+     [
+      99,
+      ""
+     ],
+     [
+      100,
+      "Look at every render before acting on the iteration or sending an image to anyone: open the image, describe what it shows, and compare that with what was intended. A metric that passed is not a render that was looked at."
+     ],
+     [
+      101,
+      ""
+     ],
+     [
+      102,
+      "A render cannot show connectivity (a tangent touch and a small gap look the same), wall thickness, or whether a feature is the requested size. Read the tray's solid count and measured values for those; a render is evidence of silhouette, orientation and gross error only."
+     ],
+     [
+      103,
+      ""
+     ]
+    ]
+   },
+   "3": {
+    "rc": 0,
+    "lines": [
+     [
+      104,
+      "## 3 Recording and Freezing"
+     ],
+     [
+      105,
+      ""
+     ],
+     [
+      106,
+      "`agentcad session note PROJECT TEXT` attaches a note to the current iteration: what was learned, what the next iteration will change, what a number means."
+     ],
+     [
+      107,
+      ""
+     ],
+     [
+      108,
+      "`agentcad session tag PROJECT NAME [--note TEXT]` copies the latest iteration's source, renders, exports and metadata into `tags/NAME/`, read-only, and refuses to overwrite an existing tag. Tag a revision before a review so the reviewer scores a frozen copy while work continues."
+     ],
+     [
+      109,
+      ""
+     ],
+     [
+      110,
+      "`agentcad session reopen PROJECT` clears a finalized session's finished state; iteration numbering continues from where it stopped."
+     ],
+     [
+      111,
+      ""
+     ]
+    ]
+   },
+   "4": {
+    "rc": 0,
+    "lines": [
+     [
+      112,
+      "## 4 Finalizing"
+     ],
+     [
+      113,
+      ""
+     ],
+     [
+      114,
+      "`agentcad session finalize PROJECT` writes the session's results: an export per iteration (an existing export newer than its source is reused; `--export-all` re-exports every one), the print manifest `exports/NAME.print.json`, and the HTML viewer `index.html`. `--all` also finalizes every declared part subproject."
+     ],
+     [
+      115,
+      ""
+     ],
+     [
+      116,
+      "The print manifest carries what a print job needs: the parts, the print settings, any `[slice]` intent declared in the project, recorded fit results, and the sliced files found among the exports."
+     ],
+     [
+      117,
+      ""
+     ]
+    ]
+   },
+   "5": {
+    "rc": 0,
+    "lines": [
+     [
+      118,
+      "## 5 Session Status"
+     ],
+     [
+      119,
+      ""
+     ],
+     [
+      120,
+      "`agentcad session status PROJECT` prints the session's state: the engine, the iteration count against the maximum, each iteration's status with its notes, and where the session was finalized if it was. Per-iteration defines are in the session record and the viewer's Parameters tab; tags are folders under `tags/`."
+     ],
+     [
+      121,
+      ""
+     ]
+    ]
+   },
+   "6": {
+    "rc": 0,
+    "lines": [
+     [
+      122,
+      "## 6 Integration with Other Policies"
+     ],
+     [
+      123,
+      ""
+     ],
+     [
+      124,
+      "- `agentcad-gcode`: reading the sliced file a finalized part was printed from."
+     ],
+     [
+      125,
+      "- `agentcad-policies`: how this and every other policy is found and read."
+     ],
+     [
+      126,
+      ""
+     ]
+    ]
+   },
+   "7": {
+    "rc": 0,
+    "lines": [
+     [
+      127,
+      "## 7 Anti-Patterns"
+     ],
+     [
+      128,
+      ""
+     ],
+     [
+      129,
+      "- **Iterating blind**: editing again before reading the tray and the renders of the last iteration."
+     ],
+     [
+      130,
+      "- **Trusting the render for connectivity**: a part that renders whole can be three solids; the tray's count is the gate."
+     ],
+     [
+      131,
+      "- **Reviewing a moving target**: handing a reviewer the live project instead of a tag."
+     ],
+     [
+      132,
+      "- **Restarting to hide history**: `start --force --no-archive` discards the record that explains the design; archive instead."
+     ],
+     [
+      133,
+      ""
+     ]
+    ]
+   },
+   "8": {
+    "rc": 0,
+    "lines": [
+     [
+      134,
+      "## 8 Evolution and Feedback"
+     ],
+     [
+      135,
+      ""
+     ],
+     [
+      136,
+      "This policy ships with agentcad and changes with the commands it governs; a change to a session command's behaviour updates this policy in the same pull request."
+     ],
+     [
+      137,
+      ""
+     ]
+    ]
+   }
+  },
+  "from_nav_boundary": {
+   "rc": 0,
+   "lines": [
+    [
+     60,
+     ""
+    ],
+    [
+     61,
+     "## 1 The Session Loop"
+    ],
+    [
+     62,
+     ""
+    ],
+    [
+     63,
+     "A session holds one part's design history in its project folder: every iteration's source copy, renders, measured metadata and notes, under `_work/`. Use a session whenever a part takes more than one attempt, which is almost always; `agentcad render` is for a single look at a source."
+    ],
+    [
+     64,
+     ""
+    ],
+    [
+     65,
+     "The order of work is fixed: start, then for each attempt iterate, read the renders and the tray, note what was learned; tag a revision before handing it to a reviewer; finalize when the design is accepted."
+    ],
+    [
+     66,
+     ""
+    ],
+    [
+     67,
+     "### 1.1 Starting a Session"
+    ],
+    [
+     68,
+     ""
+    ],
+    [
+     69,
+     "`agentcad session start PROJECT` begins iteration 1 of a new session for the project (a folder under the designs directory, or a path). `-D VAR=VAL` (repeatable) sets parameter overrides applied to every iteration; `--engine` overrides the project's default engine; `--max-iter` caps the iterations."
+    ],
+    [
+     70,
+     ""
+    ],
+    [
+     71,
+     "Starting again over an unfinalized session requires `--force`. The earlier session record and the iteration files it names are moved to `_work/archive_<timestamp>/`, not deleted; `--no-archive` (with `--force`) discards them instead."
+    ],
+    [
+     72,
+     ""
+    ],
+    [
+     73,
+     "### 1.2 Iterating"
+    ],
+    [
+     74,
+     ""
+    ],
+    [
+     75,
+     "`agentcad session iterate PROJECT SOURCE` renders the source at the project's views, measures the result and records iteration N: a copy of the source, the render images, the metadata and the tray report."
+    ],
+    [
+     76,
+     ""
+    ],
+    [
+     77,
+     "`-D VAR=VAL` on an iterate overrides a parameter for that iteration only, on top of the session's defines; the defines are recorded with the iteration and shown in the viewer."
+    ],
+    [
+     78,
+     ""
+    ],
+    [
+     79,
+     "`--all` also iterates every part subproject the project declares (`[project] parts` globs), with the same source."
+    ],
+    [
+     80,
+     ""
+    ],
+    [
+     81,
+     "## 2 Reading Each Iteration"
+    ],
+    [
+     82,
+     ""
+    ],
+    [
+     83,
+     "After every iterate, before the next: read the tray and look at every render. An iteration that is not read is a measurement thrown away, and the next edit is then a guess."
+    ],
+    [
+     84,
+     ""
+    ],
+    [
+     85,
+     "### 2.1 The Tray"
+    ],
+    [
+     86,
+     ""
+    ],
+    [
+     87,
+     "The tray is the measured report printed by iterate (and by `agentcad render --report`). Its lines give the change since the previous iteration: volume and area, bounding box, solid and face counts, the face census by surface type, edge statistics, validity, and run time."
+    ],
+    [
+     88,
+     ""
+    ],
+    [
+     89,
+     "Its warnings each name a defect a render does not show:"
+    ],
+    [
+     90,
+     ""
+    ],
+    [
+     91,
+     "- the solid count differs from the expected count (one, unless the engine's `expected_solids` setting says otherwise): parts that should be one body are touching or apart;"
+    ],
+    [
+     92,
+     "- short edges, with the shortest length: slivers that break fillets and slicers;"
+    ],
+    [
+     93,
+     "- the kernel reports the shape invalid;"
+    ],
+    [
+     94,
+     "- twisted faces: a free-form face whose normal turns sharply along a ruling (a twisted loft);"
+    ],
+    [
+     95,
+     "- a measurement that failed, named by its key;"
+    ],
+    [
+     96,
+     "- the source changed but nothing measurable did: the edit did not land."
+    ],
+    [
+     97,
+     ""
+    ],
+    [
+     98,
+     "### 2.2 The Render Gate"
+    ],
+    [
+     99,
+     ""
+    ],
+    [
+     100,
+     "Look at every render before acting on the iteration or sending an image to anyone: open the image, describe what it shows, and compare that with what was intended. A metric that passed is not a render that was looked at."
+    ],
+    [
+     101,
+     ""
+    ],
+    [
+     102,
+     "A render cannot show connectivity (a tangent touch and a small gap look the same), wall thickness, or whether a feature is the requested size. Read the tray's solid count and measured values for those; a render is evidence of silhouette, orientation and gross error only."
+    ],
+    [
+     103,
+     ""
+    ],
+    [
+     104,
+     "## 3 Recording and Freezing"
+    ],
+    [
+     105,
+     ""
+    ],
+    [
+     106,
+     "`agentcad session note PROJECT TEXT` attaches a note to the current iteration: what was learned, what the next iteration will change, what a number means."
+    ],
+    [
+     107,
+     ""
+    ],
+    [
+     108,
+     "`agentcad session tag PROJECT NAME [--note TEXT]` copies the latest iteration's source, renders, exports and metadata into `tags/NAME/`, read-only, and refuses to overwrite an existing tag. Tag a revision before a review so the reviewer scores a frozen copy while work continues."
+    ],
+    [
+     109,
+     ""
+    ],
+    [
+     110,
+     "`agentcad session reopen PROJECT` clears a finalized session's finished state; iteration numbering continues from where it stopped."
+    ],
+    [
+     111,
+     ""
+    ],
+    [
+     112,
+     "## 4 Finalizing"
+    ],
+    [
+     113,
+     ""
+    ],
+    [
+     114,
+     "`agentcad session finalize PROJECT` writes the session's results: an export per iteration (an existing export newer than its source is reused; `--export-all` re-exports every one), the print manifest `exports/NAME.print.json`, and the HTML viewer `index.html`. `--all` also finalizes every declared part subproject."
+    ],
+    [
+     115,
+     ""
+    ],
+    [
+     116,
+     "The print manifest carries what a print job needs: the parts, the print settings, any `[slice]` intent declared in the project, recorded fit results, and the sliced files found among the exports."
+    ],
+    [
+     117,
+     ""
+    ],
+    [
+     118,
+     "## 5 Session Status"
+    ],
+    [
+     119,
+     ""
+    ],
+    [
+     120,
+     "`agentcad session status PROJECT` prints the session's state: the engine, the iteration count against the maximum, each iteration's status with its notes, and where the session was finalized if it was. Per-iteration defines are in the session record and the viewer's Parameters tab; tags are folders under `tags/`."
+    ],
+    [
+     121,
+     ""
+    ],
+    [
+     122,
+     "## 6 Integration with Other Policies"
+    ],
+    [
+     123,
+     ""
+    ],
+    [
+     124,
+     "- `agentcad-gcode`: reading the sliced file a finalized part was printed from."
+    ],
+    [
+     125,
+     "- `agentcad-policies`: how this and every other policy is found and read."
+    ],
+    [
+     126,
+     ""
+    ],
+    [
+     127,
+     "## 7 Anti-Patterns"
+    ],
+    [
+     128,
+     ""
+    ],
+    [
+     129,
+     "- **Iterating blind**: editing again before reading the tray and the renders of the last iteration."
+    ],
+    [
+     130,
+     "- **Trusting the render for connectivity**: a part that renders whole can be three solids; the tray's count is the gate."
+    ],
+    [
+     131,
+     "- **Reviewing a moving target**: handing a reviewer the live project instead of a tag."
+    ],
+    [
+     132,
+     "- **Restarting to hide history**: `start --force --no-archive` discards the record that explains the design; archive instead."
+    ],
+    [
+     133,
+     ""
+    ],
+    [
+     134,
+     "## 8 Evolution and Feedback"
+    ],
+    [
+     135,
+     ""
+    ],
+    [
+     136,
+     "This policy ships with agentcad and changes with the commands it governs; a change to a session command's behaviour updates this policy in the same pull request."
+    ],
+    [
+     137,
+     ""
+    ]
+   ]
+  },
+  "lines_3_9": {
+   "rc": 0,
+   "lines": [
+    [
+     3,
+     "**Type**: Capability Policy (design loop)"
+    ],
+    [
+     4,
+     "**Scope**: Any agent or person designing a part with agentcad"
+    ],
+    [
+     5,
+     "**Status**: ACTIVE"
+    ],
+    [
+     6,
+     "**Commands**: agentcad session start, agentcad session iterate, agentcad session reopen, agentcad session tag, agentcad session note, agentcad session finalize, agentcad session status"
+    ],
+    [
+     7,
+     ""
+    ],
+    [
+     8,
+     "## Purpose"
+    ],
+    [
+     9,
+     ""
+    ]
+   ]
+  }
+ }
+}

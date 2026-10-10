@@ -41,6 +41,9 @@ def wheel_files(tmp_path_factory, pytestconfig):
     "agentcad/templates/vendor/OrbitControls.js",
     "agentcad/templates/vendor/STLLoader.js",
     "agentcad/templates/vendor/hljs-openscad.min.js",
+    "agentcad/policies/agentcad-policies.md",
+    "agentcad/policies/agentcad-session.md",
+    "agentcad/policies/agentcad-gcode.md",
 ])
 def test_the_wheel_carries_the_viewer_templates(wheel_files, name):
     assert name in wheel_files, f"{name} is missing from the wheel"
