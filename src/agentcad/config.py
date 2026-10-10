@@ -93,6 +93,11 @@ class ProjectConfig:
     #: The ``[slice]`` table: intended slicer settings by the slicer's own key names, each a value or a table
     #: with ``value`` or ``min``/``max`` and ``why``; ``agentcad gcode check`` compares a sliced file with it.
     slice_intent: Dict[str, Any] = field(default_factory=dict)
+    #: The ``[qc]`` table (gate, printer, limits, severity, pose), or None when the project declares
+    #: none: QC runs at finalize only for a project that asks for it.
+    qc: Optional[Dict[str, Any]] = None
+    #: ``[printers.<name>]`` tables: printers this project adds to the registry, or replaces by name.
+    printer_tables: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     # Source path (where agentcad.toml was loaded from)
     _project_dir: Optional[Path] = field(default=None, repr=False)
@@ -201,6 +206,11 @@ class ProjectConfig:
 
         # Slice intent: the [slice] table, verbatim
         config.slice_intent = dict(data.get("slice", {}))
+
+        # QC: the [qc] table when declared, and any [printers.<name>] tables
+        if isinstance(data.get("qc"), dict):
+            config.qc = dict(data["qc"])
+        config.printer_tables = {k: dict(v) for k, v in (data.get("printers") or {}).items() if isinstance(v, dict)}
 
         # Engine configs: every [engine.<name>] table, verbatim
         engines = data.get("engine", {})

@@ -75,6 +75,8 @@ class DesignProject:
 
     def __init__(self, name: str, config: Optional[OutputConfig] = None,
                  source_extension: str = "", syntax_language: str = "plaintext"):
+        #: A line shown at the top of the page (a QC gate that held the manifest back), or None.
+        self.banner: Optional[str] = None
         self.name = name
         self.config = config or OutputConfig()
         self.variants: List[DesignVariant] = []

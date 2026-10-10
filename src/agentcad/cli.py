@@ -513,6 +513,7 @@ def cmd_session_finalize(args):
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    failed = []          # parts (and the project) that a QC gate held back or that could not be finalized
     if getattr(args, "all", False):
         gathered = []
         for folder, part_cfg in cfg.part_projects():
@@ -521,11 +522,15 @@ def cmd_session_finalize(args):
                 part_session = DesignSession.load_state(folder.name, engine=part_engine, config=part_cfg)
                 part_html = part_session.finalize(export_all=getattr(args, "export_all", False))
                 part_session.save_state()
+                if part_session.qc_failed:
+                    failed.append(folder.name)
+                    print(f"  part {folder.name}: {part_session.project.banner}", file=sys.stderr)
                 print(f"  part {folder.name}: finalized ({part_session.iteration_count} iteration(s)) {part_html}")
                 latest = part_session.project.variants[0] if part_session.project.variants else None
                 if latest is not None and latest.stl_path and latest.stl_path.exists():
                     gathered.append((folder.name, latest.stl_path, part_cfg.quantity))
             except (FileNotFoundError, ValueError, RuntimeError) as e:
+                failed.append(folder.name)
                 print(f"  part {folder.name}: {e}", file=sys.stderr)
         session.part_meshes = gathered
         if gathered:
@@ -534,10 +539,22 @@ def cmd_session_finalize(args):
     already = session._finalized
     html_path = session.finalize(export_all=getattr(args, "export_all", False))
     session.save_state()
-    print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
+    if session.qc_failed:
+        print("Session held by the QC gate: viewer written, no print manifest, not marked finalized.")
+    else:
+        print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
     print(f"  HTML viewer: {html_path}")
     print(f"  Iterations:  {session.iteration_count}")
+    if session.qc_report is not None:
+        for f in session.qc_report["findings"]:
+            print(f"  QC {f['severity']}: {f['sentence']}")
+    if session.qc_failed:
+        failed.append(session.name)
+        print(f"  {session.project.banner}", file=sys.stderr)
     _finalize_fits(cfg, session)
+    if failed:
+        print(f"finalize: held back or failed: {', '.join(failed)}", file=sys.stderr)
+        return 1
 
 
 def _finalize_fits(cfg, session):
