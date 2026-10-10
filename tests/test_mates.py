@@ -53,3 +53,31 @@ def test_load_reads_a_part_toml(tmp_path):
 def test_no_toml_means_no_mates_with_a_note(tmp_path, capsys):
     assert mates.load(tmp_path) == {}
     assert "no mates read" in capsys.readouterr().err
+
+
+def _apply(m, p):
+    return tuple(sum(m[i][j] * p[j] for j in range(3)) + m[i][3] for i in range(3))
+
+
+def test_pose_from_datums_puts_axis_key_and_rim_together():
+    slot = mates.parse("key_in_slot", {"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]},
+                                       "key_line": {"point": [0, 0, 0], "direction": [1, 0, 0]},
+                                       "rim_plane": {"point": [0, 0, 2], "normal": [0, 0, 1]}})
+    key = mates.parse("key_in_slot", {"axis": {"point": [10, 0, 0], "direction": [0, 0, 1]},
+                                      "key_line": {"point": [10, 0, 0], "direction": [0, 1, 0]},
+                                      "rim_plane": {"point": [10, 0, 5], "normal": [0, 0, -1]}})
+    m, notes = mates.pose_from_datums(slot, key)
+    assert notes == []
+    p = _apply(m, (10, 0, 0))                     # B's axis point lands on A's axis
+    assert math.isclose(p[0], 0, abs_tol=1e-9) and math.isclose(p[1], 0, abs_tol=1e-9)
+    q = _apply(m, (10, 1, 0))                     # B's key direction (+y) becomes A's (+x)
+    assert math.isclose(q[0] - p[0], 1.0, abs_tol=1e-9) and math.isclose(q[1] - p[1], 0.0, abs_tol=1e-9)
+    r = _apply(m, (10, 0, 5))                     # B's rim lands in A's rim plane (z = 2)
+    assert math.isclose(r[2], 2.0, abs_tol=1e-9)
+
+
+def test_pose_without_key_lines_says_the_spin_is_free():
+    a = mates.parse("a", {"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}})
+    b = mates.parse("b", {"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}})
+    _, notes = mates.pose_from_datums(a, b)
+    assert any("spin" in n for n in notes) and any("along the axis" in n for n in notes)

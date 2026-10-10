@@ -121,3 +121,76 @@ def read_table(where: Path) -> Dict[str, Any]:
 def load(where: Path) -> Dict[str, Mate]:
     """Every mate declared at ``where``, parsed."""
     return {name: parse(name, entry) for name, entry in read_table(where).items()}
+
+
+# --- posing a body from declared datums ---------------------------------------------
+
+def _sub(a, b):
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _unit(v):
+    n = math.sqrt(_dot(v, v))
+    return (v[0] / n, v[1] / n, v[2] / n)
+
+
+def _frame(mate: Mate) -> Tuple[Vec, Vec, Vec, Vec, bool]:
+    """(origin, x, y, z) of a mate's datum frame: z along the axis, x toward the key line
+    (or a fixed perpendicular when none is declared, and the spin is then free)."""
+    z = mate.axis.direction
+    if mate.key_line is not None:
+        k = mate.key_line.direction
+        x = _sub(k, tuple(_dot(k, z) * c for c in z))
+        if _dot(x, x) < 1e-12:
+            raise MateError(f"mate {mate.name}: key_line is parallel to the axis")
+        spin_fixed = True
+    else:
+        helper = (1.0, 0.0, 0.0) if abs(z[0]) < 0.9 else (0.0, 1.0, 0.0)
+        x = _cross(helper, z)
+        spin_fixed = False
+    x = _unit(x)
+    y = _cross(z, x)
+    return mate.axis.point, x, y, z, spin_fixed
+
+
+def pose_from_datums(a: Mate, b: Mate) -> Tuple[List[List[float]], List[str]]:
+    """A 4x4 transform (row-major) that places body B so its mate's datums meet A's:
+    axis onto axis, key line onto key line about it, rim plane onto rim plane along it."""
+    if not (a.has_datums and b.has_datums):
+        raise MateError(f"mates {a.name}/{b.name}: both need an axis to pose from datums")
+    oa, xa, ya, za, fixed_a = _frame(a)
+    ob, xb, yb, zb, fixed_b = _frame(b)
+    # rotation R = Fa * Fb^T (columns are the frame axes)
+    fa = (xa, ya, za)
+    fb = (xb, yb, zb)
+    rot = [[sum(fa[k][i] * fb[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    det = (rot[0][0] * (rot[1][1] * rot[2][2] - rot[1][2] * rot[2][1])
+           - rot[0][1] * (rot[1][0] * rot[2][2] - rot[1][2] * rot[2][0])
+           + rot[0][2] * (rot[1][0] * rot[2][1] - rot[1][1] * rot[2][0]))
+    if abs(det - 1.0) > 1e-9:
+        raise MateError(f"mates {a.name}/{b.name}: the datum frames give an improper rotation (det {det:.6g})")
+
+    def apply(p):
+        return tuple(sum(rot[i][j] * p[j] for j in range(3)) for i in range(3))
+
+    rb = apply(ob)
+    t = _sub(oa, rb)
+    notes = []
+    if a.rim_plane is not None and b.rim_plane is not None:
+        rim_b = tuple(c + d for c, d in zip(apply(b.rim_plane.point), t))
+        shift = _dot(_sub(a.rim_plane.point, rim_b), za)
+        t = tuple(c + shift * d for c, d in zip(t, za))
+    else:
+        notes.append("no rim planes on both sides: the position along the axis is the axis points'")
+    if not (fixed_a and fixed_b):
+        notes.append("no key line on both sides: the spin about the axis is free (a fixed choice was made)")
+    matrix = [rot[0] + [t[0]], rot[1] + [t[1]], rot[2] + [t[2]], [0.0, 0.0, 0.0, 1.0]]
+    return matrix, notes
