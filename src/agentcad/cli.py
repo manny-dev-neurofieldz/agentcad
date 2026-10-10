@@ -1441,7 +1441,7 @@ def _register_gcode(sub, groups):
     pg.add_argument("--json", action="store_true", help="Print the summary record (schema agentcad.gcode.summary/1)")
     pg.set_defaults(func=cmd_gcode_summary)
     pg = sub_gcode.add_parser("check", help="Compare a sliced file's settings with the [slice] intent; exit 1 on an error")
-    pg.add_argument("file", help=SLICED_FILE_HELP)
+    pg.add_argument("file", help="Sliced file (.bgcode or plain G-code), or a PrusaSlicer project 3MF whose settings to check")
     pg.add_argument("--project", default=None, help="Project folder or agentcad.toml carrying the [slice] table")
     pg.add_argument("--intent", default=None, help="Any TOML file with a [slice] table (a job.toml, for one)")
     pg.add_argument("--json", action="store_true", help="Findings as JSON, each with its sentence")

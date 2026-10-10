@@ -23,6 +23,8 @@ How a part should print is decided once, by the designer, and should not be rewr
 **3 Staging**
 - What does stage write, and from what?
 - How is a part posed and placed on the bed?
+- How does a target that starts from the user's own configuration get it?
+- What does stage print besides the files, and how does a refusal look?
 
 **4 Integration with Other Policies**
 - Which policies govern the targets and the checks around staging?
@@ -47,11 +49,14 @@ A target's settings are the intent as the target maps it, then its native tables
 
 ## 3 Staging
 
-`agentcad stage PROJECT --target NAME` writes a finalized project's parts for one output target (`agentcad-targets`): each part's export of its latest iteration (a project with part subprojects stages every part), posed by its `[qc] pose` (else the project's), placed with its lowest point on the bed and centred on the bed of the project's QC printer, parts of an assembly in a row along y with a 10 mm gap. `--copies N` sets the copies of each part (default: each part's `[project] quantity`); `-o`/`--output` the folder (default: `exports/stage_<target>`). It prints the files written and every conflict between intent and native settings. A target that does not write jobs is refused with its capabilities, and a part without an export of its latest iteration is refused with "finalize it first".
+`agentcad stage PROJECT --target NAME` writes a finalized project's parts for one output target (`agentcad-targets`): each part's export of its latest iteration (a project with part subprojects stages every part), posed by its `[qc] pose` (else the project's), placed with its lowest point on the bed and centred on the bed of the project's QC printer, parts of an assembly in a row along y with a 10 mm gap. `--copies N` sets the copies of each part (default: each part's `[project] quantity`); `-o`/`--output` the folder (default: `exports/stage_<target>`). A target that starts from a complete configuration of the user's (the slicer targets, `agentcad-prusaslicer`) takes it with `--base-config PATH`, else from its entry in `targets.toml` in the agentcad user config folder; a target that takes none refuses the flag. The configuration is never part of a project, and neither it nor its credentials are printed.
+
+It prints the files written, then one `note:` line for each thing the target left out or changed and why, every `conflict:` between intent and native settings, and every `not mapped:` intent key with its reason. A target that does not write jobs is refused with its capabilities, and a part without an export of its latest iteration is refused with "finalize it first". Any other refusal (a missing or incomplete base configuration, a native key the base configuration does not carry, a placement that leaves the bed) is one line on stderr beginning `Error:` with exit status 2, and no file is written.
 
 ## 4 Integration with Other Policies
 
 - `agentcad-targets`: the targets, their capabilities and the placement sidecar.
+- `agentcad-prusaslicer`: the base configuration, the mapping of the intent and what the project holds.
 - `agentcad-qc`: the printer, the pose and the checks to run before staging.
 - `agentcad-gcode`: checking a sliced file against the native settings.
 - `agentcad-policies`: how this policy is found and read.

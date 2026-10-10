@@ -21,6 +21,11 @@ def bed_transform(points, pose, bed_centre):
     return T.tolist(), (hi - lo)
 
 
+def _refuse(message):
+    print(f"Error: {message}", file=sys.stderr)
+    return 2
+
+
 def cmd_stage(args):
     from agentcad import qc as qcmod
     from agentcad import targets
@@ -32,12 +37,20 @@ def cmd_stage(args):
     try:
         target = targets.get_target(args.target)
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
+        return _refuse(e)
     if "write_job" not in target.capabilities:
-        print(f"Error: target {target.name!r} does not write a job (its capabilities: "
-              f"{', '.join(sorted(target.capabilities)) or 'none'})", file=sys.stderr)
-        return 2
+        return _refuse(f"target {target.name!r} does not write a job (its capabilities: "
+                       f"{', '.join(sorted(target.capabilities)) or 'none'})")
+    if args.base_config and "base_config" not in target.job_options:
+        return _refuse(f"target {target.name!r} takes no base configuration (--base-config); it starts from "
+                       f"nothing the user supplies")
+    intent = dict(cfg.print_intent)
+    mapped, unmapped = {}, []
+    if "map_intent" in target.capabilities:
+        try:
+            mapped, unmapped = target.map_intent(intent)
+        except targets.TargetError as e:
+            return _refuse(e)
     qs = qcmod.settings(cfg) or qcmod.QCSettings()
     printer = qcmod.printer_for(cfg, qs)
     centre = (printer.build_volume[0] / 2.0, printer.build_volume[1] / 2.0)
@@ -47,13 +60,11 @@ def cmd_stage(args):
         try:
             session = DesignSession.load_state(Path(folder).name, engine=_engine_for(None, part_cfg), config=part_cfg)
         except (FileNotFoundError, ValueError) as e:
-            print(f"Error: {e}", file=sys.stderr)
-            return 2
+            return _refuse(e)
         it = session.iterations[-1] if session.iterations else None
         stl = session.project.exports_dir / f"{session.name}_v{it.number}.stl" if it else None
         if stl is None or not stl.is_file():
-            print(f"Error: {session.name} has no export of its latest iteration: finalize it first", file=sys.stderr)
-            return 2
+            return _refuse(f"{session.name} has no export of its latest iteration: finalize it first")
         part_qc = qcmod.settings(part_cfg) or qs
         V, _ = read_stl(stl)
         T, extent = bed_transform(V, part_qc.pose if part_qc.pose is not None else qs.pose, centre)
@@ -62,16 +73,25 @@ def cmd_stage(args):
         y_next = (y_next or 0.0) + float(extent[1]) + GAP_MM
         copies = args.copies if args.copies else int(part_cfg.quantity or 1)
         parts.append(targets.JobPart(session.name, stl, copies=copies, transform=T))
-    native, conflicts = targets.native_settings(cfg, target.name)
-    job = targets.Job(name, parts, intent=dict(cfg.print_intent), native=native)
+    native = targets.native_tables(cfg, target.name)
+    _, conflicts = targets.layer_native(mapped, native)
+    options = {"base_config": Path(args.base_config)} if args.base_config else {}
+    job = targets.Job(name, parts, intent=intent, native=native, options=options)
     out_dir = Path(args.output) if args.output else Path(cfg.project_dir) / "exports" / f"stage_{target.name}"
-    written = target.write_job(job, out_dir)
+    try:
+        written = target.write_job(job, out_dir)
+    except targets.TargetError as e:
+        return _refuse(e)
     print(f"staged {name} for {target.name} on {printer.label}: {len(parts)} part(s), "
           f"{sum(p.copies for p in parts)} instance(s)")
     for path in written:
         print(f"  {path}")
+    for note in getattr(written, "notes", ()):
+        print(f"  note: {note}")
     for c in conflicts:
         print(f"  conflict: {c}")
+    for u in unmapped:
+        print(f"  not mapped: {u}")
     return 0
 
 
@@ -82,4 +102,8 @@ def register(subparsers, groups):
     p.add_argument("-o", "--output", default=None, help="Folder for the staged files (default: exports/stage_<target>)")
     p.add_argument("--copies", type=int, default=None,
                    help="Copies of each part (default: each part's [project] quantity)")
+    p.add_argument("--base-config", default=None,
+                   help="Complete configuration a slicer target starts from: an exported .ini, a project 3MF or a "
+                        "sliced .gcode/.bgcode (default: the target's entry in targets.toml in the agentcad user "
+                        "config folder)")
     p.set_defaults(func=cmd_stage)

@@ -9,11 +9,13 @@ keyed by the slicer's own setting names. A value is either the intended value, o
     temperature = { min = 270, max = 285, why = "layer bond in ASA-CF" }
     support_material_buildplate_only = { value = 1, why = "supports must not grow inside the bores" }
 
-The file's configuration comes from the slicer metadata block of a .bgcode, or the ``; key = value`` comment
-block a plain G-code export carries. Each finding is a sentence: the key, both values, where the intent was
-declared, why it matters, and the usual fix.
+The file's configuration comes from the slicer metadata block of a .bgcode, the ``; key = value`` comment
+block a plain G-code export carries, or the configuration a PrusaSlicer 3MF project keeps in
+``Metadata/Slic3r_PE.config`` (the same ``; key = value`` lines). Each finding is a sentence: the key, both
+values, where the intent was declared, why it matters, and the usual fix.
 """
 
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -32,11 +34,39 @@ KEY_SETTINGS = (
 PRIVATE_KEYS = ("printhost_apikey", "printhost_password", "printhost_user", "printhost_cafile", "post_process")
 
 
+#: Where PrusaSlicer keeps a project's configuration inside a 3MF.
+THREEMF_CONFIG = "Metadata/Slic3r_PE.config"
+
+
+def is_3mf(path: Union[str, Path]) -> bool:
+    """Whether the file is a 3MF (a zip archive), by its first bytes, not its name."""
+    with open(path, "rb") as f:
+        return f.read(4) == b"PK\x03\x04"
+
+
+def config_from_3mf(path: Union[str, Path]) -> Dict[str, str]:
+    """The configuration a PrusaSlicer 3MF project carries. A 3MF written by another tool has none: ValueError."""
+    path = Path(path)
+    try:
+        with zipfile.ZipFile(path) as z:
+            data = z.read(THREEMF_CONFIG)
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"{path.name} is not a readable 3MF: {e}") from None
+    except KeyError:
+        raise ValueError(f"{path.name} is a 3MF without {THREEMF_CONFIG}: it carries no PrusaSlicer "
+                         f"configuration (save the project from PrusaSlicer, or stage it with the prusaslicer "
+                         f"target)") from None
+    return config_from_text(data.decode("utf-8", errors="replace"))
+
+
 def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
-    """The slicer configuration a sliced file carries (.bgcode metadata, or a plain file's comment block)."""
+    """The slicer configuration a file carries: a .bgcode's metadata, a 3MF project's configuration, or a
+    plain G-code file's comment block."""
     path = Path(path)
     if bgcode.is_bgcode(path):
         return dict(bgcode.read(path).metadata.get("slicer_metadata", {}))
+    if is_3mf(path):
+        return config_from_3mf(path)
     return config_from_text(path.read_text(encoding="utf-8", errors="replace"))
 
 
