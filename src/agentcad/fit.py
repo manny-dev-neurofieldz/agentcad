@@ -282,7 +282,7 @@ def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
         windows: Optional[Dict[str, Sequence[float]]] = None,
         sweep_axis: Optional[str] = None, sweep_travel: float = 10.0, sweep_steps: int = 10,
         sample_step: Optional[float] = None, contact_mm: Optional[float] = 0.05,
-        out_dir: Optional[Path] = None) -> Dict[str, Any]:
+        out_dir: Optional[Path] = None, frame: Optional[Sequence[Sequence[float]]] = None) -> Dict[str, Any]:
     from agentcad.probe import load_shape
 
     a_defines, b_defines = _assembly_frame(a_source, a_defines), _assembly_frame(b_source, b_defines)
@@ -312,7 +312,129 @@ def fit(a_source: Path, b_source: Path, *, a_defines=None, b_defines=None,
         result["insertion"] = insertion_sweep(a, b, sweep_axis, sweep_travel, steps=sweep_steps)
     if out_dir is not None:
         result["renders"] = _render_pair(a, b, Path(out_dir))
+        result["renders"].update(render_cut(a, b, Path(out_dir), frame))
     return result
+
+
+PENETRATION_RGB = (224, 0, 0)       # the colour that marks overlapping material in every cut view
+_A_RGB, _B_RGB = (190, 198, 210), (74, 123, 208)
+
+
+def cut_frame(b, frame: Optional[Sequence[Sequence[float]]] = None):
+    """(origin, x, axis) unit vectors for the cut views: the mate's own frame when one is known
+    (A's axis point and direction, and its key line), else B's bounding-box centre with z as the
+    axis and x across it."""
+    import numpy as np
+    if frame is not None:
+        o, x, z = (np.array(v, dtype=float) for v in frame)
+    else:
+        c = b.bounding_box().center()
+        o, x, z = np.array([c.X, c.Y, c.Z]), np.array([1.0, 0, 0]), np.array([0, 0, 1.0])
+    z = z / np.linalg.norm(z)
+    x = x - np.dot(x, z) * z
+    if np.linalg.norm(x) < 1e-9:
+        x = np.cross([0.0, 1.0, 0.0] if abs(z[0]) > 0.9 else [1.0, 0.0, 0.0], z)
+    x = x / np.linalg.norm(x)
+    return o, x, z
+
+
+def _section_triangles(shape, b3d, origin, normal, x_dir, tol):
+    """Triangles of the faces where a plane cuts ``shape`` (empty when it misses)."""
+    import numpy as np
+    plane = b3d.Plane(origin=tuple(origin), x_dir=tuple(x_dir), z_dir=tuple(normal))
+    try:
+        cut = b3d.section(shape, section_by=plane)
+        faces = list(cut.faces()) if cut is not None else []
+    except Exception:
+        faces = []
+    tris = []
+    for f in faces:
+        verts, idx = f.tessellate(tolerance=tol, angular_tolerance=0.2)
+        V = np.array([[v.X, v.Y, v.Z] for v in verts], dtype=float)
+        tris.extend(V[list(t)] for t in idx)
+    return tris
+
+
+def render_cut(a, b, out_dir: Path, frame: Optional[Sequence[Sequence[float]]] = None) -> Dict[str, str]:
+    """A cutaway of the pair through the mate's axis and two section overlays in the planes that
+    contain the axis; overlapping material is filled in PENETRATION_RGB in all three."""
+    try:
+        import numpy as np
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.collections import PolyCollection
+    except ImportError as e:
+        print(f"agentcad fit: cut views skipped ({e})", file=sys.stderr)
+        return {}
+    b3d = _b3d()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    o, x, z = cut_frame(b, frame)
+    y = np.cross(z, x)
+    bb = (a + b).bounding_box()
+    diag = math.sqrt(bb.size.X ** 2 + bb.size.Y ** 2 + bb.size.Z ** 2)
+    tol = max(diag / 1500.0, 1e-4)
+    try:
+        common = a & b
+        overlap = common if common is not None and float(common.volume) > 1e-9 else None
+    except Exception:
+        overlap = None
+    renders: Dict[str, str] = {}
+    hex_of = lambda rgb: "#%02x%02x%02x" % rgb
+    for name, normal, across in (("section_1", y, x), ("section_2", x, y)):
+        fig, ax = plt.subplots(figsize=(6, 6))
+        for shape, rgb, alpha in ((a, _A_RGB, 1.0), (b, _B_RGB, 0.75), (overlap, PENETRATION_RGB, 1.0)):
+            if shape is None:
+                continue
+            tris = _section_triangles(shape, b3d, o, normal, across, tol)
+            uv = [np.stack([(t - o) @ across, (t - o) @ z], axis=1) for t in tris]
+            if uv:   # edges in the face colour close the hairline seams between triangles
+                ax.add_collection(PolyCollection(uv, facecolors=hex_of(rgb), edgecolors=hex_of(rgb),
+                                                 linewidths=0.4, alpha=alpha))
+        ax.autoscale(); ax.set_aspect("equal")
+        ax.set_xlabel("across the axis (mm)"); ax.set_ylabel("along the axis (mm)")
+        ax.set_title(f"{name}: part A grey, part B blue, overlap red")
+        path = out_dir / f"fit_{name}.png"
+        fig.savefig(path, dpi=110); plt.close(fig)
+        renders[name] = str(path)
+    try:
+        import pyvista as pv
+    except ImportError as e:
+        print(f"agentcad fit: cutaway skipped (pyvista unavailable: {e})", file=sys.stderr)
+        return renders
+    pv.OFF_SCREEN = True
+    size = 4.0 * diag
+    keep = b3d.Location(b3d.Plane(origin=tuple(o), x_dir=tuple(x), z_dir=tuple(y))) * b3d.Pos(0, 0, -size / 2) \
+        * b3d.Box(size, size, size)      # the half-space behind the cut plane: what stays
+
+    def mesh_of(shape):
+        verts, idx = shape.tessellate(tolerance=tol, angular_tolerance=0.1)
+        V = np.array([[v.X, v.Y, v.Z] for v in verts]); F = np.array(idx)
+        return pv.PolyData(V, np.hstack([np.full((len(F), 1), 3), F]).ravel()) if len(F) else None
+
+    plotter = pv.Plotter(off_screen=True, window_size=[900, 900])
+    plotter.set_background("white")
+    for shape, rgb, opacity in ((a, _A_RGB, 1.0), (b, _B_RGB, 0.9), (overlap, PENETRATION_RGB, 1.0)):
+        if shape is None:
+            continue
+        try:
+            half = shape & keep
+            mesh = mesh_of(half) if half is not None else None
+        except Exception:
+            mesh = None
+        if mesh is not None:
+            if rgb == PENETRATION_RGB:
+                # its cut face is coplanar with both parts' cut faces: nudge it toward the camera so
+                # the depth test shows it instead of hiding it behind them
+                mesh = mesh.translate(tuple(y * diag * 0.003), inplace=False)
+            plotter.add_mesh(mesh, color=hex_of(rgb), opacity=opacity, smooth_shading=False,
+                             lighting=rgb != PENETRATION_RGB)      # the mark is flat colour, never shaded
+    eye = o + y * diag * 1.6 + z * diag * 0.35 + x * diag * 0.35
+    plotter.camera_position = [tuple(eye), tuple(o), tuple(z)]
+    path = out_dir / "fit_cutaway.png"
+    plotter.screenshot(str(path)); plotter.close()
+    renders["cutaway"] = str(path)
+    return renders
 
 
 def _render_pair(a, b, out_dir: Path) -> Dict[str, str]:
@@ -458,7 +580,7 @@ def _build_takes(source: Path, param: str) -> bool:
 
 
 def declared_fits(project_dir: Path, own: str, sources: Dict[str, Any], assembly: bool = False,
-                  contact_mm: Optional[float] = 0.05) -> List[Dict[str, Any]]:
+                  contact_mm: Optional[float] = 0.05, out_dir: Optional[Path] = None) -> List[Dict[str, Any]]:
     """Fit every mate a project declares between two parts it can name, and record each fit in
     both parts' manifests and the project's (``session finalize`` runs this).
 
@@ -496,17 +618,21 @@ def declared_fits(project_dir: Path, own: str, sources: Dict[str, Any], assembly
                                                      f"of the source's part parameter"})
             continue
         (a_src, a_defs, a_dir), (b_src, b_defs, b_dir) = sides
-        transform, pose_info = None, {"mate": name}
+        transform, frame, pose_info = None, None, {"mate": name}
         try:
             posed = mates_mod.pose_for(name, Path(a_src), Path(b_src))
             transform = posed["matrix"]
+            side = posed["a"]
+            frame = (side.axis.point, side.key_line.direction if side.key_line else (1.0, 0.0, 0.0),
+                     side.axis.direction)
             pose_info.update(a_declared_in=str(posed["a_path"]), b_declared_in=str(posed["b_path"]),
                              notes=posed["notes"])
         except mates_mod.MateError as e:
             pose_info["notes"] = [f"posed as modelled ({e})"]
         try:
             res = fit(Path(a_src), Path(b_src), a_defines=a_defs or None, b_defines=b_defs or None,
-                      transform=transform, windows={name: m.window} if m.window else None, contact_mm=contact_mm)
+                      transform=transform, windows={name: m.window} if m.window else None, contact_mm=contact_mm,
+                      out_dir=Path(out_dir) / name if out_dir is not None else None, frame=frame)
         except Exception as e:  # one mate that cannot be fitted never stops the others or the finalize
             results.append({"mate": name, "pair": pair, "skipped": f"fit failed: {type(e).__name__}: {e}"})
             continue

@@ -340,3 +340,24 @@ def test_finalize_fits_every_declared_mate_and_records_it_in_both_parts(tmp_path
         assert fits[0]["verdict"] == "pass"
         assert fits[0]["windows"]["key_in_slot"]["min_mm"] == pytest.approx(0.1, abs=0.005)
         assert fits[0]["pose"]["b_declared_in"].endswith("key/agentcad.toml")
+
+
+def _red_pixels(path):
+    import matplotlib.image as mpimg
+    img = mpimg.imread(str(path))
+    rgb = img[..., :3] if img.dtype != "uint8" else img[..., :3] / 255.0
+    return int(((rgb[..., 0] > 0.8) & (rgb[..., 1] < 0.1) & (rgb[..., 2] < 0.1)).sum())
+
+
+def test_section_views_mark_overlap_in_red_and_only_overlap(tmp_path):
+    pytest.importorskip("matplotlib")
+    from agentcad import fit as fitmod
+    b3d = fitmod._b3d()
+    slot = b3d.Box(20, 20, 10) - b3d.Pos(0, 0, 2.5) * b3d.Box(6.2, 30, 5)
+    frame = ((0, 0, 0), (1, 0, 0), (0, 0, 1))                     # the slot's axis and its width direction
+    tight = fitmod.render_cut(slot, b3d.Pos(0, 0, 2) * b3d.Box(6.6, 10, 4), tmp_path / "tight", frame)
+    clear = fitmod.render_cut(slot, b3d.Pos(0, 0, 2) * b3d.Box(6.0, 10, 4), tmp_path / "clear", frame)
+    assert _red_pixels(tight["section_1"]) > 20       # the 0.2 mm a side the key pushes into the walls
+    assert _red_pixels(clear["section_1"]) == 0 and _red_pixels(clear["section_2"]) == 0
+    if "cutaway" in tight:
+        assert _red_pixels(tight["cutaway"]) > 0 and _red_pixels(clear["cutaway"]) == 0

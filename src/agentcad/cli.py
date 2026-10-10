@@ -1002,6 +1002,7 @@ def cmd_fit(args):
             nominals.setdefault(name, (m.get("nominal_mm"), m.get("tol_mm")))
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
     transform = None
+    frame = None
     pose_info = {}
     if args.mate:
         if args.map or args.offset or args.spin:
@@ -1016,6 +1017,9 @@ def cmd_fit(args):
                 sys.exit(2)
         first = posed[0]
         transform = first["matrix"]
+        a_side = first["a"]
+        frame = (a_side.axis.point, a_side.key_line.direction if a_side.key_line else (1.0, 0.0, 0.0),
+                 a_side.axis.direction)
         pose_info = {"mate": args.mate[0], "a_declared_in": str(first["a_path"]),
                      "b_declared_in": str(first["b_path"]), "notes": first["notes"]}
         for name, p in zip(args.mate, posed):
@@ -1055,7 +1059,7 @@ def cmd_fit(args):
                      sweep_axis=args.sweep, sweep_travel=args.travel,
                      out_dir=Path(args.output_dir) if args.output_dir else None,
                      sweep_steps=args.sweep_steps, sample_step=args.step,
-                     contact_mm=None if args.contact_mm < 0 else args.contact_mm)
+                     contact_mm=None if args.contact_mm < 0 else args.contact_mm, frame=frame)
     res["pose"].update(pose_info)
     if nominals and res.get("windows"):
         res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)
