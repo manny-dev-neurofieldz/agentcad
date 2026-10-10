@@ -115,6 +115,18 @@ def test_inventory_cli_prints_the_warning_beside_the_zero(spline_step, bore_bloc
     assert "warning:" not in out and "1 cylindrical/conical face(s) with axes:" in out
 
 
+def test_the_tray_reads_the_engines_own_census(bore_block, spline_step):
+    """The metadata the build123d engine measures, not a hand-written one: the converted body warns, the original does not."""
+    from agentcad import probe
+    from agentcad.engines.build123d_worker import _bootstrap, _measure
+    from agentcad.report import feature_effect, render_lines
+    b3d = _bootstrap()
+    original = feature_effect(None, _measure(b3d, probe.load_shape(bore_block)))
+    converted = feature_effect(None, _measure(b3d, probe.load_shape(spline_step)))
+    assert not any("BSpline" in w for w in original.warnings)
+    assert any("7 of 7 faces (100%) are BSpline surfaces" in line for line in render_lines(converted))
+
+
 def test_inventory_refuses_a_mesh_by_name(bore_stl, capsys):
     from agentcad import cli
     with pytest.raises(SystemExit) as exc:
