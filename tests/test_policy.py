@@ -3,9 +3,9 @@
 Parity: agentcad's reader extracts exactly what a reference reader of the same
 format extracts from the same files (goldens and frozen copies of the texts they
 were generated from, in ``tests/data/policy_golden/``).
-Contract: every leaf command is governed by at most one policy, and a command
-no policy governs must be on a frozen allow-list that may only shrink, so a
-new command arrives with its policy. Lints: every packaged policy is ASCII,
+Contract: every leaf command is governed by exactly one policy, and a policy
+names every flag of the commands it governs, so a new command or flag arrives
+with its policy text. Lints: every packaged policy is ASCII,
 names no absolute path or particular person or lab, keeps fences at column 0,
 carries the header fields, and numbers its content like its navigation guide.
 """
@@ -21,16 +21,6 @@ from agentcad import cli, policy as pol
 
 DATA = Path(__file__).resolve().parent / "data"
 GOLDENS = json.loads((DATA / "policy_golden" / "goldens.json").read_text())
-
-# Leaf commands no policy governed when the policy format arrived. A command may
-# leave this list (its policy written) but never join it: a new command ships
-# with its policy.
-UNCLAIMED_ALLOWED = {
-    ("render",), ("export",), ("info",), ("new-project",), ("projects",), ("status",), ("open",),
-    ("config-init",), ("config-show",),
-    ("probe", "fillet"), ("probe", "draft"), ("compare",), ("gallery", "build"),
-    ("gallery", "check"), ("viewer",), ("check",),
-}
 
 LAB_NAMES = re.compile(r"\b(Manny|Craig|NeuroFieldz|Dropbox|pa_manny\w*)\b")
 ABS_PATH = re.compile(r"(^|[\s(`'\"])/(home|opt|tmp|Users|shared_workspace|mnt|var)/")
@@ -103,18 +93,17 @@ def test_every_command_is_governed_by_at_most_one_policy():
     assert not doubled, f"commands claimed by several policies: {doubled}"
 
 
-def test_a_command_without_a_policy_must_be_on_the_frozen_list():
-    claimed = set(_claims())
-    unclaimed = set(_leaves(cli.build_parser())) - claimed
-    newcomers = unclaimed - UNCLAIMED_ALLOWED
-    assert not newcomers, ("new commands without a policy (write one; do not extend the list): "
-                           + ", ".join(" ".join(c) for c in sorted(newcomers)))
+def test_every_command_is_governed_by_a_policy():
+    unclaimed = set(_leaves(cli.build_parser())) - set(_claims())
+    assert not unclaimed, ("commands no policy governs (name each in a policy's Commands line): "
+                           + ", ".join(" ".join(c) for c in sorted(unclaimed)))
 
 
-def test_the_frozen_list_only_shrinks():
-    stale = UNCLAIMED_ALLOWED & set(_claims())
-    assert not stale, ("commands now governed by a policy: remove them from UNCLAIMED_ALLOWED: "
-                       + ", ".join(" ".join(c) for c in sorted(stale)))
+def test_a_practice_policy_governs_no_command():
+    assert pol.Policy("x", "", {"Commands": "none"}).commands == []
+    assert pol.Policy("x", "", {"Commands": "agentcad fit, agentcad gcode view"}).commands == [("fit",), ("gcode", "view")]
+    practice = [p.name for p in pol.all_policies() if p.header.get("Commands", "").strip().lower() == "none"]
+    assert practice, "the practice policies ship too"
 
 
 def test_no_policy_claims_a_command_that_does_not_exist():
@@ -130,22 +119,38 @@ def _command_parser(path):
     return parser
 
 
-def test_the_inspection_policy_names_every_flag_of_the_commands_it_governs():
-    p = pol.get_policy("probe-inspect")
-    assert p.commands, "the policy claims its commands in the header"
+def _names(text, option):
+    """``option`` appears in ``text`` as a whole flag: ``--output`` is not named by ``--output-dir``."""
+    return re.search(r"(?<![\w-])" + re.escape(option) + r"(?![\w-])", text) is not None
+
+
+@pytest.mark.parametrize("name", [p.name for p in pol.all_policies() if p.commands])
+def test_a_policy_names_every_flag_of_the_commands_it_governs(name):
+    p = pol.get_policy(name)
     missing = []
     for command in p.commands:
         for action in _command_parser(command)._actions:
-            if isinstance(action, argparse._HelpAction):
+            if isinstance(action, argparse._HelpAction) or not action.option_strings:
                 continue
-            for option in action.option_strings:
-                if option not in p.text:
-                    missing.append(f"{' '.join(command)} {option}")
-    assert not missing, "flags the policy does not mention: " + ", ".join(missing)
-    # probe section belongs to another policy; the flags only an STL source uses are documented here
+            spelled = [o for o in action.option_strings if o.startswith("--")] or action.option_strings
+            if not any(_names(p.text, option) for option in spelled):
+                missing.append(f"{' '.join(command)} {spelled[0]}")
+    assert not missing, "flags the policy does not name: " + ", ".join(missing)
+
+
+def test_the_flag_check_reads_whole_flags():
+    assert _names("use `--output-dir` here", "--output-dir")
+    assert not _names("use `--output-dir` here", "--output")
+    assert not _names("a --json-schema", "--json")
+    assert _names("-o/--output, then", "--output")
+
+
+def test_the_inspection_policy_documents_the_stl_section_flags():
+    # probe section belongs to the recovery policy; the flags only an STL source uses are documented here too
     section = [o for a in _command_parser(("probe", "section"))._actions for o in a.option_strings]
     assert {"--axis", "--axis-center"} <= set(section)
-    assert all(flag in p.text for flag in ("--axis", "--axis-center"))
+    text = pol.get_policy("probe-inspect").text
+    assert all(_names(text, flag) for flag in ("--axis", "--axis-center"))
 
 
 # --- lints ---------------------------------------------------------------------------
@@ -206,3 +211,23 @@ def test_policy_read_of_an_unknown_name_fails(capsys):
         cli.main(["policy", "read", "no-such-policy"])
     assert exc.value.code == 1
     assert "no policy named" in capsys.readouterr().err
+
+
+def test_the_ledger_points_at_policies_and_sections_that_exist():
+    ledger = (Path(__file__).resolve().parents[1] / "docs" / "policy_ledger.md").read_text()
+    assert ledger.isascii()
+    refs, missing = 0, []
+    for line in ledger.split("\n"):
+        cells = [c.strip() for c in line.strip().strip("|").split("|")] if line.startswith("|") else []
+        if len(cells) < 2 or set(cells[-1]) <= set("-"):
+            continue
+        for name, number in re.findall(r"`([a-z0-9-]+)(?: (\d+(?:\.\d+)*))?`", cells[-1]):
+            refs += 1
+            try:
+                text = pol.get_policy(name).text
+                if number:
+                    pol.section(text, number)
+            except pol.PolicyError:
+                missing.append(f"{name} {number}".strip())
+    assert refs > 100, "the ledger maps its sources"
+    assert not missing, "the ledger points at missing policies or sections: " + ", ".join(sorted(set(missing)))

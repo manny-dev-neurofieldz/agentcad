@@ -473,7 +473,24 @@ agentcad policy navigate session          # a policy's numbered topics and their
 agentcad policy read session --section 2  # one section, with its subsections
 ```
 
-Policies follow a fixed format (a header, a navigation guide of numbered questions, one boundary line, numbered sections), so another tool that reads the same format can mount them unchanged. `tests/test_policy.py` checks the reader against reference outputs committed under `tests/data/policy_golden/`, holds every command to a governing policy (a command added without one fails the suite), and lints each policy (plain ASCII, no absolute paths, fences at column 0, the navigation guide numbered like the content).
+The set covers every command and the practice around them:
+
+| Policy | Governs |
+|---|---|
+| `projects` | `new-project`, `projects`, `status`, `open`, `config-init`, `config-show`; the `agentcad.toml` tables |
+| `engines` | `info`; the engine contract, the program contract, OpenSCAD, build123d and VoxelCAD settings |
+| `session` | `session start`, `iterate`, `reopen`, `tag`, `note`, `finalize`, `status`; the tray and the render gate |
+| `render-export` | `render`, `export`, variant plates |
+| `viewer` | `viewer`, `check`, `gallery build`, `gallery check` |
+| `probe-recover`, `probe-inspect`, `probe-construction` | `probe section`, `sketches`; `rays`, `knobs`, `inventory`; `fillet`, `draft` |
+| `compare`, `fit` | `compare`; `fit` and `[mates]` |
+| `qc`, `printers`, `targets`, `print-intent` | `qc`, `printers`, `targets`, `stage` |
+| `gcode` | every `gcode` command |
+| `printer-hosts` | `printer list`, `files`, `get`, `status`; read-only by contract |
+| `policies` | `policy list`, `navigate`, `read`; the format |
+| `design-practice`, `build123d`, `reverse-engineering`, `design-review` | practice: posture and evidence, construction pitfalls, recovering intent, the review rubric |
+
+Policies follow a fixed format (a header, a navigation guide of numbered questions, one boundary line, numbered sections), so another tool that reads the same format can mount them unchanged. `tests/test_policy.py` checks the reader against reference outputs committed under `tests/data/policy_golden/`, holds every command to exactly one governing policy and every flag to a mention in that policy's text (a command or flag added without its policy text fails the suite), and lints each policy (plain ASCII, no absolute paths, fences at column 0, the navigation guide numbered like the content). `docs/policy_ledger.md` records where the guidance came from.
 
 ## Adding a Command
 

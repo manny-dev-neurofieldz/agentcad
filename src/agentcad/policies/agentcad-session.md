@@ -66,7 +66,7 @@ The order of work is fixed: start, then for each attempt iterate, read the rende
 
 ### 1.1 Starting a Session
 
-`agentcad session start PROJECT` begins iteration 1 of a new session for the project (a folder under the designs directory, or a path). `-D VAR=VAL` (repeatable) sets parameter overrides applied to every iteration; `--engine` overrides the project's default engine; `--max-iter` caps the iterations.
+`agentcad session start PROJECT` begins iteration 1 of a new session for the project (a folder under the designs directory, or a path). `-D`/`--define VAR=VAL` (repeatable) sets parameter overrides applied to every iteration; `--engine` overrides the project's default engine; `--max-iter` caps the iterations.
 
 Starting again over an unfinalized session requires `--force`. The earlier session record and the iteration files it names are moved to `_work/archive_<timestamp>/`, not deleted; `--no-archive` (with `--force`) discards them instead.
 
@@ -74,7 +74,7 @@ Starting again over an unfinalized session requires `--force`. The earlier sessi
 
 `agentcad session iterate PROJECT SOURCE` renders the source at the project's views, measures the result and records iteration N: a copy of the source, the render images, the metadata and the tray report.
 
-`-D VAR=VAL` on an iterate overrides a parameter for that iteration only, on top of the session's defines; the defines are recorded with the iteration and shown in the viewer.
+`-D`/`--define VAR=VAL` on an iterate overrides a parameter for that iteration only, on top of the session's defines; the defines are recorded with the iteration and shown in the viewer.
 
 `--all` also iterates every part subproject the project declares (`[project] parts` globs), with the same source.
 

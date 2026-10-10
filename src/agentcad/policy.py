@@ -42,9 +42,13 @@ class Policy:
 
     @property
     def commands(self) -> List[Tuple[str, ...]]:
-        """The leaf commands this policy governs, as word tuples without ``agentcad``."""
+        """The leaf commands this policy governs, as word tuples without ``agentcad``; ``none`` for a
+        policy about a practice rather than a command."""
+        value = self.header.get("Commands", "")
+        if value.strip().lower() == "none":
+            return []
         out = []
-        for item in self.header.get("Commands", "").split(","):
+        for item in value.split(","):
             words = item.split()
             if words and words[0] == "agentcad":
                 words = words[1:]

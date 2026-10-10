@@ -88,11 +88,11 @@ A build123d program whose `build()` takes `print_orient` is built with it false 
 
 `interference_mm3` is the volume both bodies occupy; zero is the only passing value for parts that must not overlap, and a boolean that fails is reported, never read as zero. `clearance_mm` is the smallest distance between the bodies; a line-to-line mate reads 0 here while every single-part instrument passes. Neither says where.
 
-A window is a box where one gap matters: a key tip, a flange, a hole wall. Per window, fit reports the smallest distance between the two surfaces inside the box, measured both ways over a lattice of points covering each surface (`min_mm`, with `p05_mm` the fifth percentile). A window in which one part has no surface says so; it is never read as clear. Windows come from `--window NAME=x0,y0,z0,x1,y1,z1`, from `--mates-from PROJECT` and from `--mate`; when the parts are chosen with `part` defines, `--mates-from` keeps only that pair's entries.
+A window is a box where one gap matters: a key tip, a flange, a hole wall. Per window, fit reports the smallest distance between the two surfaces inside the box, measured both ways over a lattice of points covering each surface (`min_mm`, with `p05_mm` the fifth percentile). A window in which one part has no surface says so; it is never read as clear. A window that holds two mates reports the nearer of them, so give each pair of faces its own window. Windows come from `--window NAME=x0,y0,z0,x1,y1,z1`, from `--mates-from PROJECT` and from `--mate`; when the parts are chosen with `part` defines, `--mates-from` keeps only that pair's entries.
 
 Contacts answer where the parts meet, which a window answers only for the box it names. The points of A's surface lattice within `--contact-mm` (default 0.05; a negative value skips the report) of B's surface, measured to B's tessellated surface rather than to its sample points, are joined into regions; each region gives its centroid, its box and its closest distance.
 
-`--step MM` sets the spacing of the surface lattice for windows and contacts (default: part A's bounding-box diagonal / 100). A finer step resolves smaller features and costs time.
+`--step MM` sets the spacing of the surface lattice for windows and contacts (default: part A's bounding-box diagonal / 100). A finer step resolves smaller features and costs time; a minimum that changes when the step is halved was not resolved.
 
 ### 3.1 The Insertion Sweep
 
@@ -106,7 +106,7 @@ The overall verdict of a fit is `fail` (overlap beyond `--allow`, or a failing w
 
 ## 5 The Views
 
-With `-o DIR`, fit writes `fit.json` and its views: `fit_assembled.png` and `fit_exploded.png`; `fit_cutaway.png`, both parts cut open along the plane through the mate's axis and key line; and `fit_section_1.png` and `fit_section_2.png`, the two planes that contain the axis, part A grey and part B blue. Overlapping material is filled in one flat red in the cutaway and both sections. The frame is A's side of the mate when the pose came from datums; otherwise it is B's bounding-box centre with z as the axis.
+With `-o`/`--output-dir DIR`, fit writes `fit.json` and its views: `fit_assembled.png` and `fit_exploded.png`; `fit_cutaway.png`, both parts cut open along the plane through the mate's axis and key line; and `fit_section_1.png` and `fit_section_2.png`, the two planes that contain the axis, part A grey and part B blue. Overlapping material is filled in one flat red in the cutaway and both sections. The frame is A's side of the mate when the pose came from datums; otherwise it is B's bounding-box centre with z as the axis.
 
 A view shows where to look; the numbers in section 4 decide. Look at every view before acting on it.
 
