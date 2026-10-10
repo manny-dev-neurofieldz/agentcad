@@ -144,6 +144,24 @@ both surfaces with a lattice, so a window in the middle of a flat face still
 reads the gap; a mate is checked only on its own pair. The result is recorded
 in the project's print manifest keyed by the two parts' defines.
 
+## Reading sliced files
+
+A design is not finished when it is exported: the slicer decides where supports go, which settings
+apply and how each layer is printed, and Prusa printers receive that as binary G-code (`.bgcode`).
+The `gcode` commands read it, in pure Python, with no slicer installed:
+
+```bash
+agentcad gcode info part.bgcode           # header, block table, printer and print metadata, thumbnails
+agentcad gcode decode part.bgcode -o part.gcode   # plain G-code (a plain .gcode passes through)
+agentcad gcode thumbnails part.bgcode -o thumbs/
+```
+
+Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
+its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
+compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code encodings (none, MeatPack,
+MeatPack keeping comments). The reader is written from the published format specification of Prusa's
+libbgcode and the descriptions of heatshrink and MeatPack; it does not contain libbgcode code.
+
 ## Program-side helpers (build123d)
 
 ```python

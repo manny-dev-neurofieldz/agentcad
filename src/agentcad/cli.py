@@ -663,6 +663,51 @@ def cmd_probe_fillet(args):
         print(f"fillet.json: {probe.write_json(res, Path(args.output))}")
 
 
+def cmd_gcode_decode(args):
+    """A sliced file as plain G-code text (a .bgcode is decoded; a plain file passes through)."""
+    from agentcad.gcode import bgcode
+
+    if args.no_verify:
+        print("warning: CRC checks skipped (--no-verify)", file=sys.stderr)
+    text = bgcode.gcode_text(Path(args.file), verify=not args.no_verify)
+    if args.output:
+        Path(args.output).write_text(text, encoding="utf-8")
+        print(f"{args.output}: {len(text.splitlines())} lines")
+    else:
+        sys.stdout.write(text)
+
+
+def cmd_gcode_info(args):
+    """The file header, the block table and the metadata of a .bgcode."""
+    from agentcad.gcode import bgcode
+
+    g = bgcode.read(Path(args.file), verify=not args.no_verify)
+    print(f"bgcode version {g.version}, checksums {'CRC32' if g.checksum_type == 1 else 'none'}, {len(g.blocks)} blocks")
+    counts = {}
+    for b in g.blocks:
+        counts[b.name] = counts.get(b.name, 0) + 1
+    print("  " + ", ".join(f"{n} x{k}" for n, k in counts.items()))
+    for t in g.thumbnails():
+        print(f"  thumbnail {t.format} {t.width}x{t.height} ({len(t.data)} bytes)")
+    for section in ("printer_metadata", "print_metadata"):
+        for k, v in g.metadata.get(section, {}).items():
+            print(f"  {k} = {v}")
+    print(f"  slicer settings: {len(g.metadata.get('slicer_metadata', {}))} keys (gcode check reads them)")
+
+
+def cmd_gcode_thumbnails(args):
+    """Write the thumbnails a .bgcode carries."""
+    from agentcad.gcode import bgcode
+
+    out = Path(args.output)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = Path(args.file).stem
+    for i, t in enumerate(bgcode.read(Path(args.file)).thumbnails()):
+        f = out / f"{stem}_{t.width}x{t.height}_{i}.{t.format}"
+        f.write_bytes(t.data)
+        print(f)
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -913,6 +958,22 @@ def main():
     pd.add_argument("-o", "--output", default=None, help="Write draft.json here")
     pd.add_argument("-D", "--define", action="append", metavar="VAR=VAL")
     pd.set_defaults(func=cmd_probe_draft)
+
+    p_gcode = sub.add_parser("gcode", help="READ what the slicer produced: decode .bgcode, block table, metadata, thumbnails")
+    sub_gcode = p_gcode.add_subparsers(dest="gcode_cmd", required=True)
+    pg = sub_gcode.add_parser("decode", help="A .bgcode as plain G-code (plain files pass through)")
+    pg.add_argument("file")
+    pg.add_argument("-o", "--output", default=None, help="Write here instead of stdout")
+    pg.add_argument("--no-verify", action="store_true", help="Skip the CRC32 checks (says so on stderr)")
+    pg.set_defaults(func=cmd_gcode_decode)
+    pg = sub_gcode.add_parser("info", help="Header, block table, printer and print metadata, thumbnails")
+    pg.add_argument("file")
+    pg.add_argument("--no-verify", action="store_true", help="Skip the CRC32 checks")
+    pg.set_defaults(func=cmd_gcode_info)
+    pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
+    pg.add_argument("file")
+    pg.add_argument("-o", "--output", required=True, help="Directory to write into")
+    pg.set_defaults(func=cmd_gcode_thumbnails)
 
     p_cmp = sub.add_parser("compare", help="COMPARE: loop counts per plane (a gate), sampled deviation, overlays")
     p_cmp.add_argument("original")
