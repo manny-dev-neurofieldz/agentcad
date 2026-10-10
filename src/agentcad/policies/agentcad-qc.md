@@ -47,7 +47,15 @@ Every print problem found after a print was a number that could have been read b
 
 `agentcad qc PROJECT` judges the project's latest iteration. It measures the mesh of that iteration: the export finalize wrote, or, before a finalize, one exported for QC alone.
 
-Measured today: `build_volume`, the part's extent in its print pose against the printer's build volume. The process rules of the printer (minimum wall and feature, maximum overhang and bridge) have limits, and the report lists them with their layers, but they are not measured yet: wall, overhang and bridge measurement comes with feature annotations in a later capability.
+Measured today, on the mesh in its print pose:
+
+- `build_volume`: the part's extent against the printer's build volume (section 3).
+- `min_feature` and `min_wall`: the in-layer width of the material, the width the printer lays down. The part is cut at layer pitch (the project's `[print] layer_height`, coarser for a tall part, at most 400 sections, and the report says which); from points along every section edge a ray runs inward to the far boundary of the section, so the width is exact on the mesh. A corner is never read from inside itself: a hit closer than the limit along the boundary is two edges meeting, not the far side of a wall. Each thin region is then checked through the part, along the inward normal of the faces it lies on: thin there too, it is a wall; thick behind, it is a layer cutting a sloped edge (a layer sliver), counted in the report and not judged.
+- `max_overhang`: faces turned down further than the limit from vertical, the face on the bed (within one layer of the lowest point) excepted, grouped into regions that share a vertex, each with its area and worst angle.
+
+Not measured yet: bridges, and floors (a thin horizontal floor is wide in every layer, so the in-layer width does not see it). The report lists them as not measured.
+
+Until a feature annotation in the design names the feature (a later capability), a wall finding is unattributed and never more than a warning, whatever its severity setting.
 
 A part is judged against `--printer NAME` when given, else the project's `[qc] printer`, else the printer whose label equals the project's `[print] printer_profile`, else the Original Prusa MK4. `agentcad printers` lists the printers known (`agentcad-printers`).
 
@@ -71,7 +79,7 @@ The build-volume rule takes the part's extent in that pose. A part taller than t
 
 ## 4 Reading a Report
 
-A finding carries the rule, the severity (`error`, `warning` or `ok`), what was measured and what was intended, why the rule matters, the layer that set the limit, and the usual fix; its sentence says all of it. `--json` prints the printer, the pose, every limit with its layer, the findings, and the rules not measured with the reason for each.
+A finding carries the rule, the severity (`error`, `warning` or `ok`), what was measured and what was intended, why the rule matters, the layer that set the limit, where on the part (in the part's own frame), and the usual fix; its sentence says all of it. A wall finding gives its narrowest in-layer width, the layers it runs over, and the material through the part at its thinnest. `--json` prints the printer, the pose, every limit with its layer, what each measurement sampled (section pitch and spacing, layer slivers counted), the findings, and the rules not measured with the reason for each.
 
 A rule that is not measured has no finding: QC never fails a part on a number it did not take, and a part with no mesh to read is reported as not measured, not as passing.
 

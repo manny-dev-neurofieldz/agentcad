@@ -47,7 +47,7 @@ def cmd_qc(args):
             print(f"agentcad qc: no mesh of v{it.number} ({'; '.join(result.errors)}); nothing measured", file=sys.stderr)
             stl = None
     try:
-        report = qcmod.run(cfg, qcmod.mesh_vertices(stl), qs, printer_override=args.printer)
+        report = qcmod.run(cfg, stl, qs, printer_override=args.printer)
     except (KeyError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
