@@ -24,7 +24,7 @@ Every agentcad capability ships with a policy: a document, versioned with the co
 - How is a section and its subsections found?
 
 **3 The Contract**
-- Which commands must a policy cover?
+- Which commands must a policy cover, and which of their flags must it name?
 - What checks hold every policy to the format?
 
 **4 Integration with Other Policies**
@@ -49,7 +49,7 @@ The working order is list, navigate, read: scan the questions, then read only th
 
 A policy is a markdown file in the package's `policies` folder, named `agentcad-<topic>.md`. In order it holds:
 
-- a title line and a header of `**Type**`, `**Scope**`, `**Status**` and `**Commands**` lines, where Commands lists the full commands the policy governs, comma-separated;
+- a title line and a header of `**Type**`, `**Scope**`, `**Status**` and `**Commands**` lines, where Commands lists the full commands the policy governs, comma-separated, or says `none` for a policy about a practice rather than a command;
 - `## Purpose`;
 - `## CEP Navigation Guide`: bold numbered topics (`**1 Topic**`, `**1.1 Subtopic**`), each followed by the questions its section answers;
 - the boundary line `=== CEP_NAV_BOUNDARY ===`;
@@ -61,7 +61,7 @@ The rules are fixed so that every reader of this format extracts the same text. 
 
 ## 3 The Contract
 
-Every leaf command of the CLI is governed by exactly one policy, through its `**Commands**` line, and a test walks the command tree to hold that true. A pull request that adds a command adds or extends a policy in the same change. Policies that describe a practice rather than a command may govern none.
+Every leaf command of the CLI is governed by exactly one policy, through its `**Commands**` line, and a test walks the command tree to hold that true. A policy also names every flag of the commands it governs: another test reads each command's options and looks for each one's long form, as a whole flag, in the policy's text. A pull request that adds a command or a flag adds its policy text in the same change. Policies that describe a practice rather than a command govern none.
 
 The same tests lint every policy: plain ASCII; no absolute file paths; no names of particular people, agents or labs; code fences at the start of a line and balanced; the header fields present; and the navigation guide's numbers equal to the content's.
 
@@ -74,7 +74,7 @@ The same tests lint every policy: plain ASCII; no absolute file paths; no names 
 
 - **Embedding the answer**: a skill that copies a policy's guidance goes stale when the policy changes; it should ask the question and read the answer.
 - **Citing by number from outside**: "section 3.2" breaks on the next insertion.
-- **A command without a policy**: the tests refuse it; write the policy with the command.
+- **A command without a policy, or a flag the policy never names**: the tests refuse both; write the policy text with the code.
 
 ## 6 Evolution and Feedback
 

@@ -68,7 +68,7 @@ A binary file is a sequence of blocks (file metadata, printer metadata, thumbnai
 
 ## 2 Decoding and Inspecting
 
-`agentcad gcode decode FILE [-o OUT]` writes the plain G-code (stdout by default). `agentcad gcode info FILE` prints the header, the block table and the printer and print metadata. `agentcad gcode thumbnails FILE -o DIR` writes the preview images the file carries.
+`agentcad gcode decode FILE` writes the plain G-code to stdout, or to the file `-o`/`--output` names. `agentcad gcode info FILE` prints the header, the block table and the printer and print metadata. `agentcad gcode thumbnails FILE -o DIR` writes the preview images the file carries into the folder `-o`/`--output` names (required).
 
 ## 3 The Summary
 
@@ -86,7 +86,7 @@ With no `[slice]` table the command prints the file's key settings and says ther
 
 `agentcad gcode supports FILE` finds the contact bands: the regions where support material lies within the contact distance (the file's own `support_material_contact_distance` unless `--contact-distance` is given) of a part, with each band's object, height range, area and bed position. Bands smaller than `--min-area` are hidden.
 
-Bands are reported in the bed frame. With a placement sidecar (`--placement`, schema `agentcad.placement/1`), each band is also placed in its part's own frame, and a band inside a cavity of the part is reported as such and makes the command exit 1. `--png` renders the parts with their contact cells.
+Bands are reported in the bed frame. With a placement sidecar (`--placement`, schema `agentcad.placement/1` or `/2`; its STL paths are relative to the sidecar's folder unless `--stl-root` names another), each band is also placed in its part's own frame, and a band inside a cavity of the part is reported as such and makes the command exit 1. `--png` renders the parts with their contact cells.
 
 ### 5.1 Testing a Band Without Placement
 
@@ -94,7 +94,7 @@ A band's height needs no placement: add the contact distance to the band's top h
 
 ## 6 The Toolpath Page
 
-`agentcad gcode view FILE` writes a standalone page of the toolpaths: per-feature colours with toggles and a layer range. Toolpaths are embedded up to `--budget-mb`; above it every Nth layer is kept and the page says so. With `--placement` the support contact cells are marked. `--artifact DIR` writes a page fragment for an artifact host.
+`agentcad gcode view FILE` writes a standalone page of the toolpaths (to `<file>.toolpaths.html`, or the path `-o`/`--output` names): per-feature colours with toggles and a layer range. Toolpaths are embedded up to `--budget-mb`; above it every Nth layer is kept and the page says so. With `--placement` (and `--stl-root`, as for supports) the support contact cells are marked. `--artifact DIR` writes a page fragment for an artifact host.
 
 ## 7 Comparing Two Slices
 
