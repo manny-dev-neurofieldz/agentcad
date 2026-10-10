@@ -398,7 +398,7 @@ def render_cut(a, b, out_dir: Path, frame: Optional[Sequence[Sequence[float]]] =
         ax.set_xlabel("across the axis (mm)"); ax.set_ylabel("along the axis (mm)")
         ax.set_title(f"{name}: part A grey, part B blue, overlap red")
         path = out_dir / f"fit_{name}.png"
-        fig.savefig(path, dpi=110); plt.close(fig)
+        fig.savefig(path, dpi=110, bbox_inches="tight"); plt.close(fig)
         renders[name] = str(path)
     try:
         import pyvista as pv
