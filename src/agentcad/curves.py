@@ -19,7 +19,9 @@ tangency), with a scale added so it can be trusted on other parts:
   arc, because at a tangent joint position cannot yet tell the two apart, so every
   boundary is then moved to the position at which the two segments around it fit
   best, found by trying every position at which both still fit (and a short segment's
-  two boundaries together);
+  two boundaries together). Only vertices joined by edges of comparable length (the
+  longest at most ``EDGE_RATIO`` times the median) are called an arc: a mesher samples an
+  arc evenly, so a long edge among short ones is a straight side;
 * edges that are already exact lines or arcs pass through with their own numbers;
 * edges that are neither are listed in ``unsupported`` and break the chain there,
   never guessed into lines.
@@ -49,6 +51,7 @@ FIT_TOL = 0.005        # mm: how far a vertex may lie from the line or arc it is
 TANGENT_TOL = 0.01     # mm: how far the centres may sit from the tangent distance
 CORNER_DEG = 30.0      # a vertex turning more than this is a corner, not a sample of an arc
 MIN_ARC_POINTS = 4     # fewer vertices than this always fit a circle, so they cannot show one
+EDGE_RATIO = 5.0       # a mesher samples an arc evenly: its longest edge is at most this many times the median
 JOIN_TOL = 1e-3        # mm: end points this close are the same vertex when edges are chained
 MIN_LEN = 0.02         # mm: segments shorter than this are slivers a chain merges into a neighbour
 KINK_DEG = 1.0         # a joint whose gap passes but whose curves cross at more than this is called kinked
@@ -212,6 +215,15 @@ def _line_fit(Q: np.ndarray) -> Dict[str, Any]:
             "rms": float(np.sqrt((res ** 2).mean())), "n": int(len(Q))}
 
 
+def _evenly_sampled(Q: np.ndarray) -> bool:
+    """Whether the edges between the vertices are of comparable length, as a mesher's samples of one arc are.
+    Four vertices fit three circle parameters almost exactly, so a long straight edge with one vertex of each
+    neighbouring arc on either end can pass for a shallow arc even through noise, where no residual can say
+    otherwise; edges of 0.2, 25 and 0.2 mm are not the samples of an arc."""
+    lengths = np.hypot(*np.diff(Q, axis=0).T)
+    return bool(lengths.max() <= EDGE_RATIO * np.median(lengths))
+
+
 def _classify(Q: np.ndarray, fit_tol: float, min_pts: int):
     """('line', fit) when one straight line holds every vertex within ``fit_tol``, else ('arc', fit) when
     one circle does and there are enough vertices to show one, else (None, None). A line is tried first:
@@ -219,7 +231,7 @@ def _classify(Q: np.ndarray, fit_tol: float, min_pts: int):
     line = _line_fit(Q)
     if line["max"] <= fit_tol:
         return "line", line
-    if len(Q) >= min_pts:
+    if len(Q) >= min_pts and _evenly_sampled(Q):
         arc = fit_circle(Q)
         if arc and arc["max"] <= fit_tol:
             arc["center"] = np.asarray(arc["center"], dtype=float)
@@ -390,9 +402,12 @@ def _segment_open(Q: np.ndarray, p: Dict[str, float]) -> List[Dict[str, Any]]:
 
 
 def _segment_ring(P: np.ndarray, p: Dict[str, float]) -> List[Dict[str, Any]]:
-    """Segments of a closed polyline. With a corner the ring is opened there; with none it is opened at
-    the largest jump in signed curvature (where one arc most likely gives way to another) and, when it
-    breaks into several segments, once more at the first boundary found, so no arc is split by the cut."""
+    """Segments of a closed polyline. With a corner the ring is opened there. With none it is opened at the
+    largest jump in signed curvature (where one arc most likely gives way to another; on finely sampled
+    noisy data that is no better than a guess), the segments found, and the ring opened a second time in
+    the middle of the longest one. The cut is the one boundary that is never refined, since nothing lies
+    beyond it, so it is put where there is no boundary to refine; the two halves of the segment it split
+    are one primitive, and are joined again if one line or circle holds both."""
     if len(P) < 2:
         return []
     turns = _turns(P, True, p["d_min"])
@@ -406,11 +421,18 @@ def _segment_ring(P: np.ndarray, p: Dict[str, float]) -> List[Dict[str, Any]]:
         return Q, _fit_chain(Q, p["fit_tol"], p["min_pts"])
 
     kap = signed_curvature(P, True)
-    at = int(np.argmax(np.abs(kap - np.roll(kap, 1))))            # the largest jump: where one curvature gives way to another
+    at = int(np.argmax(np.abs(kap - np.roll(kap, 1))))
     Q, segs = opened(at)
     if len(segs) > 1:
-        at = (at + segs[0][1]) % len(P)
+        longest = max(range(len(segs)), key=lambda j: segs[j][1] - segs[j][0])
+        at = (at + (segs[longest][0] + segs[longest][1]) // 2) % len(P)
         Q, segs = opened(at)
+        first, last = segs[0], segs[-1]
+        union = np.vstack([Q[last[0]:], Q[1:first[1] + 1]])
+        kind, fit = _classify(union, p["fit_tol"], p["min_pts"])
+        if kind is not None and kind == first[2] == last[2]:
+            return ([_fit_segment(union, 0, len(union) - 1, kind, fit)]
+                    + [_fit_segment(Q, a, b, k, f) for a, b, k, f in segs[1:-1]])
     return [_fit_segment(Q, a, b, kind, fit) for a, b, kind, fit in segs]
 
 

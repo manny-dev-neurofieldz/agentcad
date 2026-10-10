@@ -7,13 +7,20 @@ geometry tests need no CAD backend; the ones that section a real shape skip
 without build123d.
 """
 
+import argparse
+import ast
+import json
 import math
 import random
+import re
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
 
-from agentcad import curves
+from agentcad import cli, curves, policy as pol, probe
+from agentcad.engines import get_engine, list_engines
 
 # --- builders -----------------------------------------------------------------------------------
 
@@ -406,6 +413,52 @@ def test_a_short_side_between_coarsely_sampled_arcs_is_a_line_and_needs_both_its
     assert not ((len(arcs), len(lines)) == (4, 4) and all(j["verdict"] == "tangent" for j in rec["joints"]))
 
 
+def random_rounded_polygon(rng, step_deg, scatter):
+    """A random convex polygon of 4 to 7 corners, each filleted at a random radius that leaves part of both
+    sides straight, sampled every ``step_deg`` with ``scatter`` mm of noise on every vertex; None if the draw
+    is not convex enough to fillet."""
+    k = rng.randint(4, 7)
+    angles = sorted(rng.uniform(0, 2 * math.pi) for _ in range(k))
+    gaps = [(angles[(i + 1) % k] - angles[i]) % (2 * math.pi) for i in range(k)]
+    if max(gaps) > 0.85 * math.pi or min(gaps) < 0.35:
+        return None
+    ax, by = rng.uniform(8, 20), rng.uniform(8, 20)
+    corners = [(ax * math.cos(a), by * math.sin(a)) for a in angles]
+    radii = []
+    for i in range(k):
+        before, here, after = corners[i - 1], corners[i], corners[(i + 1) % k]
+        u = (before[0] - here[0], before[1] - here[1])
+        w = (after[0] - here[0], after[1] - here[1])
+        phi = math.acos(max(-1.0, min(1.0, (u[0] * w[0] + u[1] * w[1]) / (math.hypot(*u) * math.hypot(*w)))))
+        if not math.radians(35) < phi < math.radians(150):
+            return None
+        radii.append(rng.uniform(0.3, 1.0) * 0.45 * min(math.hypot(*u), math.hypot(*w)) * math.tan(phi / 2))
+    pts, arcs = filleted_polygon(corners, radii, step_deg)
+    return [(x + rng.gauss(0, scatter), y + rng.gauss(0, scatter)) for x, y in pts], arcs
+
+
+@pytest.mark.parametrize("seed", list(range(24)) + [29, 221, 575])
+def test_generated_rounded_polygons_come_back_with_their_arcs_lines_radii_and_tangent_joints(seed):
+    """Ground truth nobody tuned the algorithm against: each seed is a different random polygon, step
+    (0.25 to 5 degrees) and scatter (0 to 3e-5 mm). The hand-made fixtures above missed 30 failing
+    configurations of this generator; a fixed set of seeds keeps that from coming back. Seeds 29 and 221
+    (exact data) and 575 (with scatter) are loops at 5 degrees where a long straight side and one vertex of
+    each neighbour fitted a four-vertex arc of radius 100 to 300 mm."""
+    rng = random.Random(seed)
+    step, scatter = [0.25, 0.5, 1.0, 2.0, 3.0, 5.0][seed % 6], [0.0, 0.0, 1e-5, 3e-5][seed % 4]
+    drawn = None
+    while drawn is None:
+        drawn = random_rounded_polygon(rng, step, scatter)
+    pts, arcs = drawn
+    rec, got_arcs, got_lines = read_counts(pts)
+    assert (len(got_arcs), len(got_lines)) == (len(arcs), len(arcs)), f"seed {seed}: {rec['segments']}"
+    for centre, radius, sweep in arcs:
+        nearest = min(got_arcs, key=lambda s: math.dist(s["center"], centre) + abs(s["radius"] - radius))
+        assert math.dist(nearest["center"], centre) < 0.3, f"seed {seed}: no arc near the one of radius {radius}"
+        assert abs(nearest["radius"] - radius) < 2e-3 + 400 * scatter, f"seed {seed}: radius {radius}"
+    assert [j["verdict"] for j in rec["joints"]] == ["tangent"] * len(rec["joints"])
+
+
 def test_a_bend_under_the_corner_angle_that_is_not_an_arc_stays_two_lines():
     """Three vertices cannot show an arc, so a 20 degree bend between long edges is two lines and a joint
     that says how far they turn, not a corner and not a circle."""
@@ -450,12 +503,6 @@ def test_signed_curvature_is_one_over_the_radius_and_negative_when_turning_right
 
 
 # --- chains -------------------------------------------------------------------------------------------
-
-import ast
-import re
-
-from agentcad import policy as pol, probe
-from agentcad.engines import get_engine, list_engines
 
 HAS_B123D = "build123d" in list_engines() and get_engine("build123d").available()
 needs_build123d = pytest.mark.skipif(not HAS_B123D, reason="build123d backend not available")
@@ -655,12 +702,6 @@ def test_an_open_chain_is_emitted_with_the_word_open_and_no_wrap_around():
 
 # --- the command: probe section --arcs / --chain on real shapes ----------------------------------------------
 
-import json
-import subprocess
-import sys
-
-from agentcad import cli
-
 SLOT_PLATE = ("from build123d import *\n\n"
               "def build():\n"
               "    return Box(40, 20, 6) - extrude(SlotOverall(16, 6), amount=10, both=True)\n")
@@ -794,9 +835,6 @@ def test_the_tolerance_defaults_in_the_help_are_the_ones_the_code_uses():
 
 # --- the policy and the commands it governs ---------------------------------------------------------------------
 
-import argparse
-
-
 def command_parser(words):
     parser = cli.build_parser()
     for word in words:
@@ -820,8 +858,6 @@ def test_the_policy_recipe_is_the_one_the_tests_run():
 
 
 # --- design dumps: probe sketches ----------------------------------------------------------------------------
-
-from pathlib import Path
 
 DUMP = Path(__file__).resolve().parent / "data" / "design_dump_synthetic.json"
 

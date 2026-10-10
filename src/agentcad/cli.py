@@ -598,7 +598,8 @@ def cmd_probe_section(args):
     shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
     planes = args.planes or ["z=mid"]
     chain_n = getattr(args, "chain", None)
-    recover = getattr(args, "arcs", False) or chain_n is not None
+    want_arcs = getattr(args, "arcs", False)
+    recover = want_arcs or chain_n is not None
     out = sys.stderr if chain_n is not None else sys.stdout        # with --chain, stdout carries only the literal
     if recover:
         from agentcad import curves
@@ -622,7 +623,7 @@ def cmd_probe_section(args):
             desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
             fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
             print(f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}", file=out)
-            if args.arcs:
+            if want_arcs:
                 for line in curves.render_arcs(L["arcs"], show=args.show):
                     print(f"    {line}", file=out)
         if chain_n is not None:
