@@ -121,6 +121,9 @@ the check: the gallery is a test of the tool on every engine.
 
 ```bash
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
+agentcad probe section part.step --planes z=mid --arcs               # ... and the lines and arcs in each loop, every joint judged
+agentcad probe section part.step --planes y=3.2 --chain 2 > outline.py   # loop 2 as a literal a build123d program pastes
+agentcad probe sketches design.dump.json --against part.step        # what was drawn, and what the part still carries
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
 agentcad probe rays part.py --line -30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
 agentcad probe knobs part.py --knob width=2 --knob wall=10%          # which parameters move the part, which do nothing
@@ -132,6 +135,32 @@ surface points) are the two exchange formats; every probe writes them and
 `compare` reads them. A cap an instrument applies is printed with its
 value. A cylindrical face reports its axis, never its centroid. Meshes are
 compared in the sampled compartment only, and the output says so.
+
+`--arcs` reads each loop as the designer drew it. A mesh-converted body gives hundreds of short `line`
+edges; they are fitted back into arcs and lines (a run grows while one line or one circle holds every
+vertex within `--fit-tol`, 0.005 mm by default; a vertex turning more than 30 degrees is a corner), and
+edges that are already lines or arcs pass through. Directions are in the section plane's own 2D frame,
+with every loop read counter-clockwise, so `cw` and `ccw` mean one thing. Each joint is judged from the
+fitted primitives: `not tangent` when the centre distance is more than `--tangent-tol` (0.01 mm) from
+|r1 - r2| (arcs turning the same way), r1 + r2 (opposite ways) or r (an arc and a line), `kinked` when
+that passes but the curves cross at over a degree (the centre distance is second order in that angle),
+else `tangent`. The record in `loops.json` gains `arcs` per loop, and each circular edge gains `via`, a point
+a quarter of the way along it, because the end points cannot say which way a semicircle runs.
+
+`--chain N` prints loop N of the listing as a Python list of `("line", p0, p1)` and
+`("arc", center, radius, p0, p1, direction)` tuples, each segment ending on the numbers the next begins
+with, and sends the listing to stderr so the output can be redirected into a program. Segments shorter
+than `--min-len` (0.02 mm) are removed, the joint moving to where their neighbours meet; an edge that is
+neither a line nor an arc is left as a commented gap, reported, and makes the exit status 1. It is never
+turned into a line. `agentcad policy read probe-recover` says how far to trust each number.
+
+`probe sketches` reads a design dump (the JSON of a parametric-CAD design: sketches, parameters and a
+timeline, geometry in centimetres) and prints its sketches in millimetres with a flag on construction
+curves. Every dimension is labelled `DRAWN`. With `--against PART` (a STEP file or a build123d program)
+a dimension is also `APPLIED` when the part's section on the sketch's plane carries it within `--tol`
+(0.01 mm), and printed `absent from the section` when it does not: it was drawn and the part lacks it.
+Reading the dump needs no CAD backend; `--against` needs build123d and says so when it is missing. The
+dump format is `agentcad policy read probe-recover --section 5.1`.
 
 ### Compare detail
 

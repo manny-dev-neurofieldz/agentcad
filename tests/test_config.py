@@ -79,3 +79,28 @@ def test_template_names_all_three_engines():
     assert 'engine = "voxelcad"' in text
     for name in ("openscad", "voxelcad", "build123d"):
         assert f"[engine.{name}]" in text
+
+
+def _session_folder(folder):
+    """Where a session started on the project in ``folder`` writes: its designs dir plus the folder's name."""
+    from agentcad.config import find_project
+    from agentcad.output import DesignProject
+    cfg = find_project(folder)
+    return DesignProject(Path(folder).name, cfg.output).project_dir.resolve()
+
+
+def test_a_new_project_keeps_its_outputs_in_its_own_folder(tmp_path, capsys):
+    from agentcad.cli import main
+    main(["new-project", "demo", "-b", str(tmp_path), "-e", "build123d"])
+    folder = tmp_path / "mechanical_designs" / "demo"
+    assert (folder / "agentcad.toml").is_file()
+    assert _session_folder(folder) == folder.resolve()
+
+
+def test_config_init_anywhere_keeps_outputs_in_that_folder(tmp_path, monkeypatch, capsys):
+    from agentcad.cli import main
+    folder = tmp_path / "elsewhere" / "bracket"
+    folder.mkdir(parents=True)
+    monkeypatch.chdir(folder)
+    main(["config-init"])
+    assert _session_folder(folder) == folder.resolve()
