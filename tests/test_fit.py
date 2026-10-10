@@ -295,3 +295,48 @@ def test_overall_verdict_reads_overlap_before_windows():
     assert fitmod.overall_verdict({"interference_mm3": 2.0}, allow_mm3=5.0) == "measured"
     assert fitmod.overall_verdict({"interference_mm3": 0.0, "verdicts": {"w": {"verdict": "unmeasured"}}}) == "unmeasured"
     assert fitmod.overall_verdict({"interference_mm3": 0.0, "verdicts": {"w": {"verdict": "pass"}}}) == "pass"
+
+
+def test_finalize_fits_every_declared_mate_and_records_it_in_both_parts(tmp_path, monkeypatch, capsys):
+    """An assembly lists the pair; each part declares its side's datums; finalize --all fits the
+    mate posed from those datums and leaves the record in the slot's, the key's and the assembly's
+    manifests."""
+    import json
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})
+    designs = tmp_path / "designs"
+    asm = designs / "asm"
+    out = 'image_size = 64\ndefault_views = ["iso"]\n'
+    (asm / "parts").mkdir(parents=True)
+    (asm / "agentcad.toml").write_text(
+        f'[project]\nname = "asm"\nengine = "build123d"\nparts = ["parts/*"]\n'
+        f'[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\n{out}'
+        '[mates.key_in_slot]\nparts = ["slot", "key"]\nnominal_mm = 0.1\nwindow = [-3.6, -4, 0.5, 3.6, 4, 3.5]\n')
+    sides = {"slot": ("[0, 0, 0]", "[1, 0, 0]", "[0, 0, 0]", "[0, 0, 1]", SLOT),
+             "key": ("[0, 0, 0]", "[0, 1, 0]", "[0, 0, -2]", "[0, 0, -1]", KEY)}
+    for name, (axis_pt, key_dir, rim_pt, rim_n, src) in sides.items():
+        d = asm / "parts" / name
+        d.mkdir()
+        (d / "agentcad.toml").write_text(
+            f'[project]\nname = "{name}"\nengine = "build123d"\n'
+            f'[output]\nbase_dir = "{asm}"\nsub_dir = "parts"\n{out}'
+            f'[mates.key_in_slot]\ncounterpart = "{"key" if name == "slot" else "slot"}"\n'
+            f'[mates.key_in_slot.axis]\npoint = {axis_pt}\ndirection = [0, 0, 1]\n'
+            f'[mates.key_in_slot.key_line]\npoint = [0, 0, 0]\ndirection = {key_dir}\n'
+            f'[mates.key_in_slot.rim_plane]\npoint = {rim_pt}\nnormal = {rim_n}\n')
+        (d / f"{name}.py").write_text(src)
+        cli.main(["session", "start", str(d)])
+        cli.main(["session", "iterate", str(d), str(d / f"{name}.py")])
+    (asm / "asm.py").write_text(SLOT)
+    cli.main(["session", "start", str(asm)])
+    cli.main(["session", "iterate", str(asm), str(asm / "asm.py")])
+    capsys.readouterr()
+    cli.main(["session", "finalize", str(asm), "--all"])
+    printed = capsys.readouterr().out
+    assert "key_in_slot (slot / key): PASS" in printed and "recorded in 3 manifest(s)" in printed
+    for folder, name in ((asm / "parts" / "slot", "slot"), (asm / "parts" / "key", "key"), (asm, "asm")):
+        fits = json.loads((folder / "exports" / f"{name}.print.json").read_text())["fit"]
+        assert [f["mate"] for f in fits] == ["key_in_slot"]
+        assert fits[0]["verdict"] == "pass"
+        assert fits[0]["windows"]["key_in_slot"]["min_mm"] == pytest.approx(0.1, abs=0.005)
+        assert fits[0]["pose"]["b_declared_in"].endswith("key/agentcad.toml")

@@ -537,6 +537,52 @@ def cmd_session_finalize(args):
     print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
     print(f"  HTML viewer: {html_path}")
     print(f"  Iterations:  {session.iteration_count}")
+    _finalize_fits(cfg, session)
+
+
+def _finalize_fits(cfg, session):
+    """Fit every mate the project declares and record each fit in both parts' manifests."""
+    from agentcad import fit as fitmod
+    from agentcad import mates
+    from agentcad.session import DesignSession
+
+    project_dir = cfg.project_dir
+    try:
+        declared = mates.load_all(project_dir) if project_dir else {}
+    except mates.MateError as e:
+        print(f"  Mates: not read ({e})", file=sys.stderr)
+        return
+    if not declared:
+        return
+
+    def latest(sess, folder):
+        it = sess.iterations[-1]
+        return (Path(it.source_path), dict(it.defines or sess.defines or {}), Path(folder))
+
+    sources = {session.name: latest(session, project_dir)}
+    parts = cfg.part_projects()
+    for folder, part_cfg in parts:
+        try:
+            part_session = DesignSession.load_state(folder.name, engine=_engine_for(None, part_cfg), config=part_cfg)
+        except (FileNotFoundError, ValueError, RuntimeError):
+            continue
+        if part_session.iterations:
+            sources[folder.name] = latest(part_session, folder)
+    print(f"  Mates:       {len(declared)} declared")
+    for r in fitmod.declared_fits(project_dir, session.name, sources, assembly=bool(parts)):
+        if "skipped" in r:
+            print(f"    {r['mate']}: not fitted ({r['skipped']})")
+            continue
+        rec = r["record"]
+        line = (f"    {r['mate']} ({r['pair'][0]} / {r['pair'][1]}): {rec['verdict'].upper()}; interference "
+                f"{rec['interference_mm3']:.4g} mm^3, clearance {rec['clearance_mm']:.4g} mm")
+        for v in (rec.get("verdicts") or {}).values():
+            if "min_mm" in v:
+                line += f", window {v['min_mm']:.3g} mm against {v['nominal_mm']:.3g} +/- {v['tol_mm']:.3g}"
+        print(line + f"; {rec.get('contact_regions', 0)} contact region(s)")
+        for note in rec.get("pose", {}).get("notes") or []:
+            print(f"      pose: {note}")
+        print(f"      recorded in {len(r['written'])} manifest(s)")
 
 
 def cmd_session_status(args):
@@ -978,13 +1024,14 @@ def cmd_fit(args):
                 if diff > 1e-6:
                     print(f"Warning: mate {name} poses B differently from {args.mate[0]} (largest entry "
                           f"difference {diff:.3g}); the pose of {args.mate[0]} is used", file=sys.stderr)
-            side = p["a"] if p["a"].window else None
+            # the window and nominal are A's side's, or else the enclosing assembly's (in A's frame)
+            above = mates.enclosing(name, p["a_path"])
+            side = p["a"] if p["a"].window else (above[0] if above and above[0].window else None)
             if side is not None:
                 windows.setdefault(name, side.window)
-            nominal = p["a"].nominal_mm if p["a"].nominal_mm is not None else p["b"].nominal_mm
-            tol = p["a"].tol_mm if p["a"].tol_mm is not None else p["b"].tol_mm
-            if side is not None and nominal is not None:
-                nominals.setdefault(name, (nominal, tol))
+            stated = [m for m in (p["a"], side, p["b"]) if m is not None and m.nominal_mm is not None]
+            if side is not None and stated:
+                nominals.setdefault(name, (stated[0].nominal_mm, stated[0].tol_mm))
         for note in first["notes"]:
             print(f"  pose: {note}")
     elif args.map:
@@ -1043,8 +1090,10 @@ def cmd_fit(args):
         print(f"fit.json: {fitmod.write_json(res, Path(args.output_dir) / 'fit.json')}")
     if args.record is not None:
         record = fitmod.fit_record(res, allow_mm3=args.allow or 0.0)
-        projects = [Path(p) for p in args.record] or [q for q in (fitmod.project_of(Path(args.a)),
-                                                                  fitmod.project_of(Path(args.b))) if q]
+        # each part's record goes where the part is declared: the folder of its side of the mate,
+        # or else the project holding its source
+        homes = ((pose_info["a_declared_in"], pose_info["b_declared_in"]) if pose_info else (args.a, args.b))
+        projects = [Path(p) for p in args.record] or [q for q in (fitmod.project_of(Path(h)) for h in homes) if q]
         if not projects:
             print("Warning: --record found no project (agentcad.toml) above either part; name one", file=sys.stderr)
         for project in dict.fromkeys(p.resolve() for p in projects):

@@ -123,6 +123,18 @@ def load(where: Path) -> Dict[str, Mate]:
     return {name: parse(name, entry) for name, entry in read_table(where).items()}
 
 
+def load_all(folder: Path) -> Dict[str, Mate]:
+    """Every mate declared in a folder's agentcad.toml, job.toml and part.toml together (the
+    first declaration of a name, in that order, wins)."""
+    found: Dict[str, Mate] = {}
+    for fname in _FILES:
+        path = Path(folder) / fname
+        if path.is_file():
+            for name, entry in read_table(path).items():
+                found.setdefault(name, parse(name, entry))
+    return found
+
+
 def find(name: str, start: Path, max_up: int = 4) -> Optional[Tuple[Mate, Path]]:
     """The nearest declaration of mate ``name`` at or above ``start`` (a source file, a toml file or
     a folder): each folder's agentcad.toml, job.toml and part.toml in that order, walking up at
@@ -144,6 +156,12 @@ def find(name: str, start: Path, max_up: int = 4) -> Optional[Tuple[Mate, Path]]
             break
         folder = folder.parent
     return None
+
+
+def enclosing(name: str, declared_in: Path, max_up: int = 4) -> Optional[Tuple[Mate, Path]]:
+    """The nearest declaration of ``name`` above the folder of ``declared_in``: an assembly's,
+    which states the pair's window and nominal while each part states its own datums."""
+    return find(name, Path(declared_in).parent.parent, max_up)
 
 
 def pose_for(name: str, a_start: Path, b_start: Path) -> Dict[str, Any]:

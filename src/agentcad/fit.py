@@ -444,6 +444,82 @@ def project_of(source: Path, max_up: int = 4) -> Optional[Path]:
     return None
 
 
+def _build_takes(source: Path, param: str) -> bool:
+    """Whether a build123d program's build() has a parameter named ``param``."""
+    import inspect
+    if Path(source).suffix.lower() != ".py":
+        return False
+    try:
+        from agentcad.engines.build123d_worker import _execute
+        build = _execute(str(Path(source).resolve())).get("build")
+        return callable(build) and param in inspect.signature(build).parameters
+    except Exception:
+        return False
+
+
+def declared_fits(project_dir: Path, own: str, sources: Dict[str, Any], assembly: bool = False,
+                  contact_mm: Optional[float] = 0.05) -> List[Dict[str, Any]]:
+    """Fit every mate a project declares between two parts it can name, and record each fit in
+    both parts' manifests and the project's (``session finalize`` runs this).
+
+    ``sources`` maps a part name to (source, defines, project folder): the project itself under
+    ``own`` and each part subproject under its folder name. A mate names its pair with
+    ``parts = [a, b]``, or, in a project that is not an assembly, with ``counterpart`` (the
+    project being the other part). A name that is not in ``sources`` is taken as a value of the
+    project source's ``part`` parameter when its build() has one. The pose comes from both parts'
+    own declarations of the mate when both declare datums; otherwise the parts are fitted as
+    modelled (one assembly frame) and the pose notes say so."""
+    from agentcad import mates as mates_mod
+    results: List[Dict[str, Any]] = []
+    own_src, own_defs, _ = sources[own]
+    takes_part = _build_takes(own_src, "part")
+    for name, m in mates_mod.load_all(project_dir).items():
+        if m.parts and len(m.parts) == 2:
+            pair = [str(x) for x in m.parts]
+        elif m.counterpart and not assembly:
+            pair = [own, str(m.counterpart)]
+        else:
+            results.append({"mate": name, "skipped": "an assembly's mate lists its parts = [a, b]" if m.counterpart
+                            else "the mate names no parts"})
+            continue
+        sides, missing = [], None
+        for part in pair:
+            if part in sources and not (assembly and part == own):
+                sides.append(sources[part])
+            elif takes_part:
+                sides.append((own_src, {**own_defs, "part": part}, project_dir))
+            else:
+                missing = part
+                break
+        if missing is not None:
+            results.append({"mate": name, "skipped": f"part {missing} is neither a part subproject nor a value "
+                                                     f"of the source's part parameter"})
+            continue
+        (a_src, a_defs, a_dir), (b_src, b_defs, b_dir) = sides
+        transform, pose_info = None, {"mate": name}
+        try:
+            posed = mates_mod.pose_for(name, Path(a_src), Path(b_src))
+            transform = posed["matrix"]
+            pose_info.update(a_declared_in=str(posed["a_path"]), b_declared_in=str(posed["b_path"]),
+                             notes=posed["notes"])
+        except mates_mod.MateError as e:
+            pose_info["notes"] = [f"posed as modelled ({e})"]
+        try:
+            res = fit(Path(a_src), Path(b_src), a_defines=a_defs or None, b_defines=b_defs or None,
+                      transform=transform, windows={name: m.window} if m.window else None, contact_mm=contact_mm)
+        except Exception as e:  # one mate that cannot be fitted never stops the others or the finalize
+            results.append({"mate": name, "pair": pair, "skipped": f"fit failed: {type(e).__name__}: {e}"})
+            continue
+        res["pose"].update(pose_info)
+        if m.window and m.nominal_mm is not None and res.get("windows"):
+            res["verdicts"] = judge_windows(res["windows"], {name: (m.nominal_mm, m.tol_mm)})
+        record = fit_record(res, mate=name)
+        folders = dict.fromkeys(Path(d).resolve() for d in (a_dir, b_dir, project_dir))
+        written = [str(w) for w in (record_fit(d, record) for d in folders) if w]
+        results.append({"mate": name, "pair": pair, "record": record, "written": written})
+    return results
+
+
 def load_mates(project_dir: Path) -> Dict[str, Any]:
     """The raw [mates] table of a project's agentcad.toml, job.toml or part.toml (or a file path):
     name -> {window: [x0,y0,z0,x1,y1,z1], nominal_mm, parts: [a, b] or counterpart, and any datums}.

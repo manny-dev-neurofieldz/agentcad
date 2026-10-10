@@ -7,3 +7,14 @@ base_dir = ".."
 sub_dir = "."
 image_size = 512
 default_views = ["iso", "front", "top", "right"]
+
+# The plate's side of the middle_peg mate: the middle hole's axis, and the plate's
+# underside, where a seated peg's base sits flush (plate_t 6.0, centred on z = 0).
+[mates.middle_peg]
+counterpart = "peg"
+[mates.middle_peg.axis]
+point = [0.0, 0.0, 0.0]
+direction = [0.0, 0.0, 1.0]
+[mates.middle_peg.rim_plane]
+point = [0.0, 0.0, -3.0]
+normal = [0.0, 0.0, -1.0]
