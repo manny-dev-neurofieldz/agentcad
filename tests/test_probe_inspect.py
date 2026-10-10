@@ -336,3 +336,126 @@ def test_an_empty_mesh_and_a_zero_direction_are_named_errors(tmp_path):
         meshprobe.load_mesh(empty)
     with pytest.raises(ValueError, match="direction"):
         meshprobe.basis([0, 0, 0])
+
+
+# --- sections of a mesh -----------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def cylinder_stl(tmp_path_factory) -> Path:
+    """A cylinder of radius 5 and height 20 on the origin, z from -10 to 10, meshed."""
+    from build123d import Cylinder, export_stl
+    path = tmp_path_factory.mktemp("inspect_cyl") / "cylinder.stl"
+    export_stl(Cylinder(5, 20), str(path), tolerance=0.01, angular_tolerance=0.2)
+    return path
+
+
+def test_a_meshed_cylinder_section_is_one_polylined_circle(cylinder_stl):
+    from agentcad import meshprobe, probe
+    mesh = meshprobe.load_mesh(cylinder_stl)
+    rec = probe.mesh_section_plane(mesh, "z=mid")
+    assert rec["plane"] == "z=mid" and rec["coordinate"] == pytest.approx(0.0, abs=1e-6) and rec["n_loops"] == 1
+    loop = rec["loops"][0]
+    assert loop["closed"] and loop["n_edges"] >= 12 and {e["type"] for e in loop["edges"]} == {"line"}
+    assert loop["total_on_plane"] == 1 and loop["length"] == pytest.approx(2 * math.pi * 5.0, rel=5e-3)
+    assert loop["fit"]["radius"] == pytest.approx(5.0, abs=0.01) and loop["fit"]["rms"] < 0.01    # the polyline reads as a circle
+    ex = loop["extents"]
+    assert ex["axis"] == "z" and ex["center"] == pytest.approx([0.0, 0.0], abs=0.01)    # the middle of the bounding box, a sagitta off
+    assert ex["radial"] == pytest.approx([5.0, 5.0], abs=0.01) and ex["axial"] == pytest.approx([0.0, 0.0], abs=1e-6)
+    assert rec["extents"]["radial"] == ex["radial"]
+
+
+def test_a_mesh_section_through_the_axis_reads_the_profile(cylinder_stl):
+    """The plane y=0 contains the cylinder's axis: a rectangle, 10 wide and 20 tall, whose radial extent runs
+    from the axis to the wall and whose axial extent is the height. Flat faces cut by many triangles give
+    one straight edge each, not a segment per triangle."""
+    from agentcad import meshprobe, probe
+    mesh = meshprobe.load_mesh(cylinder_stl)
+    rec = probe.mesh_section_plane(mesh, "y=0", axis="z")
+    loop = rec["loops"][0]
+    assert rec["n_loops"] == 1 and loop["closed"] and loop["n_edges"] == 4
+    assert sorted(round(e["length"], 3) for e in loop["edges"]) == pytest.approx([10.0, 10.0, 20.0, 20.0], abs=0.02)
+    assert loop["fit"] is None                                                   # four edges are not a polylined arc
+    assert loop["extents"]["radial"] == pytest.approx([0.0, 5.0], abs=0.01)
+    assert loop["extents"]["axial"] == pytest.approx([-10.0, 10.0], abs=1e-6)
+    assert probe.mesh_section_plane(mesh, "z=50")["n_loops"] == 0                # a plane past the mesh cuts nothing
+
+
+def test_a_plane_in_the_lowest_and_highest_face_gives_that_face_s_outline(cylinder_stl):
+    """A part standing on z=0 and cut at z=0 is cut in its bottom face; the exact kernel gives the outline
+    there, and so does the mesh, at either end."""
+    from agentcad import meshprobe, probe
+    mesh = meshprobe.load_mesh(cylinder_stl)
+    for spec in ("z=-10", "z=10"):
+        rec = probe.mesh_section_plane(mesh, spec)
+        assert rec["n_loops"] == 1 and rec["loops"][0]["closed"], spec
+        assert rec["loops"][0]["fit"]["radius"] == pytest.approx(5.0, abs=0.01), spec
+
+
+def test_mesh_loops_carry_the_keys_of_exact_loops(bore_block, cylinder_stl):
+    from agentcad import meshprobe, probe
+    exact_plane, _ = probe.parse_plane("z=mid", probe.load_shape(bore_block))
+    exact = probe.section_loops(probe.load_shape(bore_block), exact_plane)[0]
+    mesh = probe.mesh_section_plane(meshprobe.load_mesh(cylinder_stl), "z=mid")["loops"][0]
+    assert set(exact) - {"total_on_plane"} <= set(mesh) and set(exact["edges"][0]) == set(mesh["edges"][0])
+
+
+def test_the_axis_defaults_to_the_middle_of_the_mesh_and_can_be_named(tmp_path):
+    from build123d import Cylinder, Pos, export_stl
+    from agentcad import meshprobe, probe
+    off = tmp_path / "off.stl"
+    export_stl(Pos(30, 0, 0) * Cylinder(5, 20), str(off), tolerance=0.01, angular_tolerance=0.2)
+    mesh = meshprobe.load_mesh(off)
+    own = probe.mesh_section_plane(mesh, "z=mid")["loops"][0]["extents"]
+    assert own["center"] == pytest.approx([30.0, 0.0], abs=0.01) and own["radial"] == pytest.approx([5.0, 5.0], abs=0.02)
+    origin = probe.mesh_section_plane(mesh, "z=mid", center=[0.0, 0.0])["loops"][0]["extents"]
+    assert origin["radial"] == pytest.approx([25.0, 35.0], abs=0.02)
+
+
+def test_a_mesh_with_a_hole_gives_open_chains_and_the_cap_is_printed(cylinder_stl, bore_stl, tmp_path, capsys):
+    import numpy as np
+    from agentcad import meshprobe, probe
+    from agentcad.meshmeasure import read_stl
+    V, _ = read_stl(cylinder_stl)
+    tri = V.reshape(-1, 3, 3)
+    keep = ~np.all(np.abs(tri[:, :, 2] - 10.0) < 1e-6, axis=1)                  # no top cap
+    open_mesh = meshprobe.load_mesh(_write_stl(tmp_path / "open_cyl.stl", tri[keep]))
+    chain = probe.mesh_section_plane(open_mesh, "y=0", axis="z")["loops"][0]
+    assert chain["closed"] is False and chain["n_edges"] == 3                    # bottom and two walls: a U
+    plate = meshprobe.load_mesh(bore_stl)
+    capped = probe.mesh_section_plane(plate, "z=mid", max_loops=1)
+    assert len(capped["loops"]) == 1 and capped["loops"][0]["total_on_plane"] == 2 and capped["n_loops"] == 2
+    assert "cap max_loops=1 applied: 2 loops" in capsys.readouterr().err
+
+
+def test_probe_section_takes_an_stl_through_the_cli(cylinder_stl, tmp_path, capsys):
+    from agentcad import cli
+    out = tmp_path / "loops.json"
+    cli.main(["probe", "section", str(cylinder_stl), "--planes", "z=mid", "y=0", "--axis", "z", "--axis-center", "0,0",
+              "-o", str(out)])
+    text = capsys.readouterr().out
+    assert "mesh" in text and "tessellation" in text
+    assert "z=mid (at 0): 1 loop(s)" in text and "fits a circle r 5" in text
+    assert "extents about axis z through (0, 0): radial 0 .. 5" in text and "axial -10 .. 10" in text
+    data = json.loads(out.read_text())
+    assert data["kind"] == "mesh" and [p["plane"] for p in data["planes"]] == ["z=mid", "y=0"]
+    assert data["planes"][1]["loops"][0]["n_edges"] == 4
+    cli.main(["probe", "section", str(cylinder_stl), "--axis-center", "10,0", "-D", "x=1"])
+    captured = capsys.readouterr()
+    assert "radial 5 .. 15" in captured.out and "ignored: a mesh has no parameters" in captured.err
+    for bad in ("10", "a,b"):
+        with pytest.raises(SystemExit) as exc:
+            cli.main(["probe", "section", str(cylinder_stl), "--axis-center", bad])
+        assert exc.value.code == 2 and "--axis-center" in capsys.readouterr().err
+
+
+def test_plane_specs_name_what_is_wrong_and_degenerate_polylines_survive():
+    import numpy as np
+    from agentcad import meshprobe, probe
+    assert probe.plane_spec("z=mid", (1.0, 2.0, 3.0)) == ("z", 3.0) and probe.plane_spec("X=-4") == ("x", -4.0)
+    with pytest.raises(ValueError, match="expected x=|y=|z="):
+        probe.plane_spec("q=3")
+    with pytest.raises(ValueError, match="'mid' needs a shape"):
+        probe.plane_spec("z=mid")
+    back_and_forth = np.array([[0.0, 0, 0], [1.0, 0, 0], [0.0, 0, 0]])           # a chain that returns on itself
+    assert [(a.tolist(), b.tolist()) for a, b in meshprobe._runs(back_and_forth, 1e-6)] \
+        == [([0, 0, 0], [1, 0, 0]), ([1, 0, 0], [0, 0, 0])]

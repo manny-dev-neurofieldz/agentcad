@@ -151,6 +151,26 @@ with a minus sign is written `--line=-30,0,0:1,0,0`. For checks built on rays,
 `agentcad.rays.ray_intervals(target, origin, direction)` is the library entry
 point (`load_target` builds the target from a program, STEP or STL).
 
+### Sections of a mesh
+
+`probe section` also takes an STL. The loops come from intersecting each
+triangle with the plane, joined end to end; collinear segments merge, so a flat
+face is one edge and a polylined circle is a run of short ones that `fit` reads
+back as a circle. The records have the keys of the exact loops (`kind` `mesh`
+at the top says whose section it is), and each loop and plane adds `extents`:
+the radial extent (nearest and farthest distance from an axis) and the axial
+extent (lowest and highest position along it). `--axis x|y|z` names the axis
+(default each plane's own normal) and `--axis-center A,B` where it passes
+(default the middle of the bounding box):
+
+```bash
+agentcad probe section turned.stl --planes y=0 --axis z    # a profile through the axis: radii and height
+```
+
+A plane through vertices reads as moved a hair toward lower coordinates, and at
+the mesh's lowest coordinate as moved a hair up, so a part standing on z=0 and
+cut at z=0 gives the outline of its bottom face.
+
 ### The census says when it cannot see
 
 A body converted to splines reports every face as a BSpline, so its census

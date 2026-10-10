@@ -138,6 +138,10 @@ def test_the_inspection_policy_names_every_flag_of_the_commands_it_governs():
                 if option not in p.text:
                     missing.append(f"{' '.join(command)} {option}")
     assert not missing, "flags the policy does not mention: " + ", ".join(missing)
+    # probe section belongs to another policy; the flags only an STL source uses are documented here
+    section = [o for a in _command_parser(("probe", "section"))._actions for o in a.option_strings]
+    assert {"--axis", "--axis-center"} <= set(section)
+    assert all(flag in p.text for flag in ("--axis", "--axis-center"))
 
 
 # --- lints ---------------------------------------------------------------------------

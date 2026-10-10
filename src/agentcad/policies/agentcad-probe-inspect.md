@@ -44,13 +44,25 @@ A render shows a silhouette; it does not show how thick a wall is, how deep a bo
 - When do inventory and the iteration tray say the representation hides analytic types?
 - What follows from that warning?
 
-**4 Integration with Other Policies**
+**4 Meshes in probe section**
+- What changes when probe section is given an STL?
+- Where are the flags that apply to every source documented?
+
+**4.1 Loops from Triangles**
+- How does a mesh loop differ from an exact one?
+- How is a plane that passes through vertices, or lies in a face, read?
+
+**4.2 Radial and Axial Extents**
+- What are the radial and axial extents of a loop?
+- How are the axis and its centre chosen, and when must they be named?
+
+**5 Integration with Other Policies**
 - Which policies govern what surrounds these probes?
 
-**5 Anti-Patterns**
+**6 Anti-Patterns**
 - Which readings of these probes mislead?
 
-**6 Evolution and Feedback**
+**7 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -59,7 +71,7 @@ A render shows a silhouette; it does not show how thick a wall is, how deep a bo
 
 - A wall, a floor, a bore, a gap or a rib along a direction: `agentcad probe rays`. It returns lengths, which a render cannot.
 - What the whole part is made of (bounding box, volume, area, solid and face counts, face types, cylinder axes, loops on planes): `agentcad probe inventory`.
-- The outline of the part on a plane: `agentcad probe section`, governed by the recover policy; section 4 names it.
+- The outline of the part on a plane: `agentcad probe section`, governed by the recover policy; section 4 covers an STL source.
 
 A render is evidence of silhouette, orientation and gross error only. A number that a feature must meet (a wall of at least so much) is read from a ray or an inventory, never from a picture.
 
@@ -110,20 +122,39 @@ A body converted to splines (a STEP written from a spline export, a mesh-to-soli
 
 When 90 percent or more of the counted faces are BSpline, `probe inventory` prints a warning and records it in `census_notes` (for a compound it checks the whole shape, then each solid), and the iteration tray prints the same sentence in its warnings. Read the zero as unknown, not as none. To learn whether the part has a round feature, measure it: a fan of rays about the suspected axis (a bore shows as a constant radius in every direction), or the section loops on a plane across it.
 
-## 4 Integration with Other Policies
+## 4 Meshes in probe section
+
+`agentcad probe section SOURCE` accepts an STL as well as a program or a STEP file; the file's suffix decides. The planes (`--planes`), the cap on loops (`--max-loops`), the number of lines printed (`--show`) and the JSON output (`-o`) behave as for an exact source and are described in `agentcad-probe-recover`, which governs the command. This section covers what an STL changes. `-D` is ignored for a mesh and the command says so.
+
+### 4.1 Loops from Triangles
+
+Each triangle is cut by the plane and the cut segments are joined into loops. A loop record has the keys of an exact loop (`edges`, `closed`, `n_edges`, `length`, `fit`, `total_on_plane`), and every edge is a `line`. Collinear segments are merged, so a flat face gives one edge however many triangles it is made of; a polylined circle stays a run of short edges, and `fit` reads a run of at least 12 as a circle with its radius and residual. `closed` is false for a chain that does not return to its start: a hole in the mesh.
+
+The JSON carries `kind` `mesh` and a note, and the text says it too: the loops are the tessellation's section, not the part's exact edges, so lengths and radii are compared to a tolerance. A plane that passes exactly through vertices reads as moved a hair toward lower coordinates, so a face lying in it belongs to the part above it. At the lowest coordinate of the mesh nothing is below, so the plane reads as moved a hair up: a part standing on z=0 and cut at z=0 gives the outline of its bottom face, as the exact kernel does.
+
+### 4.2 Radial and Axial Extents
+
+Every mesh loop, and each plane over all its loops (including any a cap dropped), carries `extents`: the radial extent (the nearest and the farthest distance of the loop from an axis) and the axial extent (its lowest and highest position along that axis). These are the numbers a turned part or a profile is checked by.
+
+`--axis x|y|z` names the axis the extents are measured about; the default is the normal of each plane, so a section at z=mid gives radii about the Z axis and an axial extent that is the plane's own coordinate. To read a profile through the axis, cut with a plane that contains it and name the axis: for a part turned about Z, `--planes y=0 --axis z` gives the distance from the axis to the wall as the radial extent and the height as the axial extent.
+
+`--axis-center A,B` names where the axis passes, as the two coordinates across it in x, y, z order (for the Z axis, x then y). The default is the middle of the mesh's bounding box, which for a polygonal body of revolution is within a sagitta of the true axis; name the centre for a part whose axis lies elsewhere.
+
+## 5 Integration with Other Policies
 
 - `agentcad-session`: the tray after each iteration carries the census warning of section 3.1.
-- `agentcad-probe-recover`: section loops of an exact source, fits and comparison; it governs `agentcad probe section`.
+- `agentcad-probe-recover`: section loops of an exact source, fits and comparison; it governs `agentcad probe section` for every source, and section 4 here adds what an STL changes.
 - `agentcad-policies`: how this and every other policy is found and read.
 
-## 5 Anti-Patterns
+## 6 Anti-Patterns
 
 - **Reading a clipped interval as a thickness**: an interval cut short by the range is a lower bound, whatever its length.
 - **Trusting a zero from a spline census**: no cylinders counted is not no cylinders present when the census says it cannot see them.
 - **Measuring a wall on a slant**: only a line along the wall's normal gives its thickness; aim it, or use a fan.
 - **Comparing a mesh to the nominal to the last digit**: the tessellation is a stated approximation; the tolerance belongs to the comparison.
 - **Judging a wall by its render**: a picture shows no thickness; ask a ray.
+- **Reading mesh loops as exact edges**: a polylined circle has the tessellation's perimeter; read the fitted radius or the extents.
 
-## 6 Evolution and Feedback
+## 7 Evolution and Feedback
 
 This policy ships with agentcad and changes with the commands it governs; a change to an inspection command's behaviour updates this policy in the same pull request.

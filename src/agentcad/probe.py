@@ -49,10 +49,27 @@ def load_shape(source: Path, defines: Optional[Dict[str, str]] = None):
         for w in warnings:
             print(f"agentcad probe: {w}", file=sys.stderr)
         return shape
-    raise ValueError(f"{source}: probes read STEP or build123d programs exactly; meshes only through compare")
+    raise ValueError(f"{source}: probes read STEP or build123d programs exactly (probe section and probe rays also read "
+                     f"an STL); other meshes only through compare")
 
 
 # --- planes -----------------------------------------------------------------
+
+def plane_spec(spec: str, centre: Optional[Sequence[float]] = None) -> Tuple[str, float]:
+    """'y=3.2' | 'z=mid' | 'x=-4' -> ('y', 3.2): the axis and the coordinate.
+
+    'mid' is the centre of the part's bounding box on that axis, given as ``centre`` (x, y, z).
+    """
+    axis, _, value = spec.partition("=")
+    axis = axis.strip().lower()
+    if axis not in ("x", "y", "z") or not value:
+        raise ValueError(f"plane spec {spec!r}: expected x=|y=|z= followed by a number or 'mid'")
+    if value.strip() == "mid":
+        if centre is None:
+            raise ValueError("'mid' needs a shape")
+        return axis, float(centre["xyz".index(axis)])
+    return axis, float(value)
+
 
 def parse_plane(spec: str, shape=None):
     """'y=3.2' | 'z=mid' | 'x=-4' -> a build123d Plane through that coordinate.
@@ -60,17 +77,11 @@ def parse_plane(spec: str, shape=None):
     'mid' is the centre of the shape's bounding box on that axis.
     """
     b3d = _b3d()
-    axis, _, value = spec.partition("=")
-    axis = axis.strip().lower()
-    if axis not in ("x", "y", "z") or not value:
-        raise ValueError(f"plane spec {spec!r}: expected x=|y=|z= followed by a number or 'mid'")
-    if value.strip() == "mid":
-        if shape is None:
-            raise ValueError("'mid' needs a shape")
-        bb = shape.bounding_box()
-        coord = {"x": bb.center().X, "y": bb.center().Y, "z": bb.center().Z}[axis]
-    else:
-        coord = float(value)
+    centre = None
+    if shape is not None:
+        c = shape.bounding_box().center()
+        centre = (c.X, c.Y, c.Z)
+    axis, coord = plane_spec(spec, centre)
     if axis == "x":
         return b3d.Plane(origin=(coord, 0, 0), x_dir=(0, 1, 0), z_dir=(1, 0, 0)), coord
     if axis == "y":
@@ -120,6 +131,11 @@ def section_loops(shape, plane, max_loops: Optional[int] = None) -> List[Dict[st
         edges = [_edge_record(b3d, e) for e in w.edges()]
         loops.append({"edges": edges, "closed": bool(w.is_closed), "n_edges": len(edges),
                       "length": float(w.length), "fit": None})
+    return _cap_loops(loops, max_loops)
+
+
+def _cap_loops(loops: List[Dict[str, Any]], max_loops: Optional[int]) -> List[Dict[str, Any]]:
+    """Longest loop first, each carrying the plane's total; a cap is printed and recorded, never silent."""
     loops.sort(key=lambda L: -L["length"])
     total = len(loops)
     if max_loops is not None and total > max_loops:
@@ -129,6 +145,36 @@ def section_loops(shape, plane, max_loops: Optional[int] = None) -> List[Dict[st
     for L in loops:
         L["total_on_plane"] = total
     return loops
+
+
+# --- section loops of a mesh --------------------------------------------------------------------
+
+def mesh_section_plane(mesh, spec: str, axis: Optional[str] = None, center: Optional[Sequence[float]] = None,
+                       max_loops: Optional[int] = None) -> Dict[str, Any]:
+    """Loops where a plane cuts a mesh (``meshprobe.Mesh``), as the plane record ``probe section`` writes.
+
+    The loops are the exact loops' records (``edges`` of type ``line``, ``closed``, ``n_edges``,
+    ``length``, ``fit``, ``total_on_plane``) and are polylines: the tessellation's section, not the
+    part's. Each also carries ``extents``: its radial extent (nearest and farthest distance from the
+    axis) and axial extent (lowest and highest position along it). The axis runs along ``axis``
+    ('x', 'y' or 'z'; default the plane's own normal) through ``center`` (the two coordinates across
+    the axis, ascending; default the middle of the mesh's bounding box). The plane's ``extents`` cover
+    every loop on it, kept or capped.
+    """
+    from agentcad import meshprobe
+
+    plane_axis, coord = plane_spec(spec, (mesh.lo + mesh.hi) / 2.0)
+    loops = meshprobe.plane_loops(mesh, "xyz".index(plane_axis), coord)
+    along = "xyz".index((axis or plane_axis).lower())
+    across = [k for k in range(3) if k != along]
+    centre = [float(c) for c in center] if center is not None else [float((mesh.lo[k] + mesh.hi[k]) / 2.0) for k in across]
+    for L in loops:
+        L["fit"] = fit_polyline_loop(L)
+        L["extents"] = meshprobe.loop_extents(L, along, centre)
+    extents = meshprobe.merge_extents([L["extents"] for L in loops])
+    loops = _cap_loops(loops, max_loops)
+    return {"plane": spec, "coordinate": coord, "n_loops": loops[0]["total_on_plane"] if loops else 0,
+            "extents": extents, "loops": loops}
 
 
 # --- arc fit ---------------------------------------------------------------------
