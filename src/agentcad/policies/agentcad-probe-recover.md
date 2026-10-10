@@ -127,7 +127,7 @@ On generated loops whose joints are all truly tangent, no joint was flagged `not
 - Coarse tessellation: the vertices lie on the arc but the edges lie inside it by length squared over eight radii. The fit uses vertices, so the radius is right; `--fit-tol` does not bound the edges.
 - Vertex scatter above about 1e-3 mm: raise `--fit-tol` to a few times the scatter, and read `rms`.
 - An edge that is neither a line nor an arc makes the orientation of the loop approximate, because it is taken as the chord between its ends.
-- Time grows with the number of edges: a loop of 54,000 edges takes about four seconds.
+- Time grows with the number of edges: a loop of 54,000 edges takes about three seconds.
 
 ## 4 A Loop as a Chain
 

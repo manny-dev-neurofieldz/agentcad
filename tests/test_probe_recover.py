@@ -10,6 +10,7 @@ without build123d.
 import math
 import random
 
+import numpy as np
 import pytest
 
 from agentcad import curves
@@ -359,6 +360,95 @@ def test_the_report_names_each_arc_with_its_numbers_and_never_hides_a_cap():
     assert "fit-tol 0.005" in text and "tangent-tol 0.01" in text      # and so are the tolerances
 
 
+def filleted_polygon(corners, radii, step_deg):
+    """A counter-clockwise convex polygon with a circular fillet of the stated radius at every corner:
+    the outline's vertices (arcs sampled every step_deg, each side left as one edge) and the arcs drawn."""
+    k = len(corners)
+    pts, arcs = [], []
+    for i in range(k):
+        before, here, after = (math.hypot(0, 0),) * 0 or (corners[i - 1], corners[i], corners[(i + 1) % k])
+        u = (before[0] - here[0], before[1] - here[1])
+        w = (after[0] - here[0], after[1] - here[1])
+        u = (u[0] / math.hypot(*u), u[1] / math.hypot(*u))
+        w = (w[0] / math.hypot(*w), w[1] / math.hypot(*w))
+        phi = math.acos(max(-1.0, min(1.0, u[0] * w[0] + u[1] * w[1])))
+        reach = radii[i] / math.tan(phi / 2)
+        bis = (u[0] + w[0], u[1] + w[1])
+        bis = (bis[0] / math.hypot(*bis), bis[1] / math.hypot(*bis))
+        centre = (here[0] + bis[0] * radii[i] / math.sin(phi / 2), here[1] + bis[1] * radii[i] / math.sin(phi / 2))
+        t1 = (here[0] + u[0] * reach, here[1] + u[1] * reach)
+        t2 = (here[0] + w[0] * reach, here[1] + w[1] * reach)
+        a0 = math.degrees(math.atan2(t1[1] - centre[1], t1[0] - centre[0]))
+        sweep = (math.degrees(math.atan2(t2[1] - centre[1], t2[0] - centre[0])) - a0) % 360
+        pts += arc_vertices(centre, radii[i], a0, sweep, step_deg) + [t2]
+        arcs.append((centre, radii[i], sweep))
+    return pts, arcs
+
+
+def read_counts(points):
+    rec = curves.recover_loop(polyline_loop(points), "z=0")
+    arcs = [s for s in rec["segments"] if s["kind"] == "arc"]
+    lines = [s for s in rec["segments"] if s["kind"] == "line"]
+    return rec, arcs, lines
+
+
+def test_a_short_side_between_coarsely_sampled_arcs_is_a_line_and_needs_both_its_boundaries_moved_together(monkeypatch):
+    """At 5 degree steps the short side and one vertex from each neighbour fit one shallow arc of four
+    vertices, and giving back either vertex alone leaves three that fit nothing."""
+    pts, drawn = filleted_polygon([(10, 2), (0, 6), (-5, -5), (5, -5)], [4.0, 2.5, 5.0, 2.0], 5.0)
+    rec, arcs, lines = read_counts(pts)
+    assert (len(arcs), len(lines)) == (4, 4) and all(j["verdict"] == "tangent" for j in rec["joints"])
+    for centre, radius, sweep in drawn:
+        s = match(arcs, "fillet", centre, radius)
+        assert abs(s["radius"] - radius) < 1e-3 and abs(s["sweep_deg"] - sweep) < 1e-3
+    monkeypatch.setattr(curves, "_refine_short", lambda *a, **k: False)         # the control
+    rec, arcs, lines = read_counts(pts)
+    assert not ((len(arcs), len(lines)) == (4, 4) and all(j["verdict"] == "tangent" for j in rec["joints"]))
+
+
+def test_a_bend_under_the_corner_angle_that_is_not_an_arc_stays_two_lines():
+    """Three vertices cannot show an arc, so a 20 degree bend between long edges is two lines and a joint
+    that says how far they turn, not a corner and not a circle."""
+    pts = [(0, 0), (10, 0), (20, 3.6), (20, 10), (0, 10)]
+    rec = curves.recover_loop(polyline_loop(pts), "z=0")
+    assert [s["kind"] for s in rec["segments"]] == ["line"] * 5
+    turns = sorted(round(j["kink_deg"]) for j in rec["joints"])
+    assert 20 in turns and all(j["verdict"] == "corner" for j in rec["joints"])
+
+
+def test_repeated_vertices_and_zero_length_edges_change_nothing():
+    pts = arc_vertices((3.0, -2.0), 7.5, 17.0, 360.0, 3.0)
+    doubled = [p for p in pts for _ in (0, 1)]
+    (a,) = curves.recover_loop(polyline_loop(doubled), "z=0")["segments"]
+    assert abs(a["radius"] - 7.5) < 1e-6 and abs(a["sweep_deg"] - 360.0) < 1e-6
+    closed_twice = curves.recover_loop(polyline_loop(pts + [pts[0]]), "z=0")["segments"]
+    assert len(closed_twice) == 1 and abs(closed_twice[0]["radius"] - 7.5) < 1e-6
+    nothing = curves.recover_loop(polyline_loop([(1, 1), (1, 1)]), "z=0")
+    assert nothing["segments"] == [] and nothing["joints"] == [] and "no length" in nothing["notes"][-1]
+
+
+def test_an_empty_loop_and_a_stray_edge_are_said_to_be_so():
+    empty = curves.recover_loop(loop_of([]), "z=0")
+    assert empty["segments"] == [] and "no edges" in empty["notes"][0]
+    out = curves.chain_literal(empty)
+    assert out["complete"] is False and literal_of(out["text"]) == []
+    square = polyline_loop([(0, 0), (4, 0), (4, 4), (0, 4)])
+    square["edges"].append(line_edge((50, 50), (60, 60)))
+    rec = curves.recover_loop(square, "z=0")
+    assert len(rec["segments"]) == 4 and any("1 of 5 edge(s) did not join" in n and "edges 4" in n for n in rec["notes"])
+    assert any(line.strip().startswith("note:") and "did not join" in line for line in curves.render_arcs(rec))
+
+
+def test_signed_curvature_is_one_over_the_radius_and_negative_when_turning_right():
+    ccw = np.array(arc_vertices((1.0, 2.0), 4.0, 0.0, 360.0, 10.0))
+    assert curves.signed_curvature(ccw, cyclic=True) == pytest.approx(np.full(len(ccw), 0.25))
+    assert curves.signed_curvature(ccw[::-1], cyclic=True) == pytest.approx(np.full(len(ccw), -0.25))
+    open_chain = np.array(arc_vertices((0.0, 0.0), 4.0, 0.0, 90.0, 10.0))
+    k = curves.signed_curvature(open_chain)
+    assert k[0] == k[1] and k[-1] == k[-2] and k == pytest.approx(np.full(len(k), 0.25))
+    assert curves.signed_curvature(np.array([[0.0, 0.0], [1.0, 0.0]])).tolist() == [0.0, 0.0]
+
+
 # --- chains -------------------------------------------------------------------------------------------
 
 import ast
@@ -475,15 +565,66 @@ def test_a_chain_with_its_slivers_merged_still_makes_the_same_face():
     assert abs(face.area - shoelace(pts)) / shoelace(pts) < 1e-3
 
 
-def test_a_sliver_beside_an_unsupported_edge_is_kept_not_stretched_over_it():
-    edges = [line_edge((0, 0), (10, 0)), line_edge((10, 0), (10.005, 0.005)),
-             {"type": "bspline", "start": [10.005, 0.005, 0], "end": [10, 6, 0], "length": 6.1,
-              "center": None, "radius": None, "sweep_deg": None, "via": None},
-             line_edge((10, 6), (0, 6)), line_edge((0, 6), (0, 0))]
+BSPLINE = {"type": "bspline", "center": None, "radius": None, "sweep_deg": None, "via": None}
+
+
+def bspline_edge(p, q, length):
+    return dict(BSPLINE, start=[p[0], p[1], 0], end=[q[0], q[1], 0], length=length)
+
+
+def test_a_sliver_after_an_unsupported_edge_is_covered_by_the_line_that_follows_not_stretched_over_the_gap():
+    edges = [line_edge((0, 0), (10, 0)), bspline_edge((10, 0), (10, 5), 5.2), line_edge((10, 5), (10.005, 5.005)),
+             line_edge((10.005, 5.005), (10, 10)), line_edge((10, 10), (0, 10)), line_edge((0, 10), (0, 0))]
     rec = curves.recover_loop(loop_of(edges), "z=0")
     out = curves.chain_literal(rec, min_len=0.02)
-    assert [s["length"] < 0.02 for s in out["segments"] if s["kind"] == "line"].count(True) <= 1
-    assert out["complete"] is False
+    chain = literal_of(out["text"])
+    assert len(out["slivers"]) == 1 and out["complete"] is False
+    follows = [seg for seg in chain if seg[0] == "line" and seg[2][1] == 10.0 and seg[2][0] == 10.0]
+    assert follows and follows[0][1] == (10.0, 5.0)         # it now starts where the spline ended, not 0.005 mm past it
+
+
+def test_a_sliver_before_an_unsupported_edge_is_covered_by_the_line_before_it():
+    edges = [line_edge((0, 0), (10, 0)), line_edge((10, 0), (10.005, 0.005)), bspline_edge((10.005, 0.005), (10, 10), 10.1),
+             line_edge((10, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    out = curves.chain_literal(curves.recover_loop(loop_of(edges), "z=0"), min_len=0.02)
+    chain = literal_of(out["text"])
+    assert len(out["slivers"]) == 1
+    first = [seg for seg in chain if seg[0] == "line" and seg[1] == (0.0, 0.0)][0]
+    assert first[2] == (10.005, 0.005)                    # it runs on to where the spline begins
+
+
+def test_a_sliver_between_two_unsupported_edges_stays_and_is_listed():
+    edges = [line_edge((0, 0), (10, 0)), bspline_edge((10, 0), (10, 5), 5.2), line_edge((10, 5), (10.005, 5.005)),
+             bspline_edge((10.005, 5.005), (10, 10), 5.2), line_edge((10, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    out = curves.chain_literal(curves.recover_loop(loop_of(edges), "z=0"), min_len=0.02)
+    assert out["slivers"] == [] and out["complete"] is False
+    assert any(seg[0] == "line" and seg[1] == (10.0, 5.0) and seg[2] == (10.005, 5.005) for seg in literal_of(out["text"]))
+
+
+def test_a_sliver_at_the_start_of_an_open_chain_is_covered_by_the_segment_after_it():
+    rec = curves.recover_loop(polyline_loop([(0, 0), (0.01, 0), (0.01, 5), (5, 5)], closed=False), "z=0")
+    assert len(rec["segments"]) == 3 and rec["segments"][0]["length"] < 0.02
+    out = curves.chain_literal(rec, min_len=0.02)
+    chain = literal_of(out["text"])
+    assert len(chain) == 2 and len(out["slivers"]) == 1 and chain[0][1] == (0.0, 0.0) and chain[0][2] == (0.01, 5.0)
+    notes = curves.chain_notes(out)
+    assert any("merged a line" in n for n in notes) and any("do not close" in n for n in notes)
+    assert out["closed"] is False
+
+
+def test_a_sliver_between_a_line_and_an_arc_is_removed_without_changing_the_area():
+    edges = [line_edge((0, 0), (9, 0)), line_edge((9, 0), (9.01, 0.01)), arc_edge((9.01, 3.01), 3, -90, 90),
+             line_edge((12.01, 3.01), (12.01, 10)), line_edge((12.01, 10), (0, 10)), line_edge((0, 10), (0, 0))]
+    rec = curves.recover_loop(loop_of(edges), "z=0")
+    out = curves.chain_literal(rec, min_len=0.02)
+    chain = literal_of(out["text"])
+    assert sorted(seg[0] for seg in chain) == ["arc", "line", "line", "line", "line"] and len(out["slivers"]) == 1
+    arc = [seg for seg in chain if seg[0] == "arc"][0]
+    assert abs(arc[2] - 3.0) < 1e-3 and arc[5] == "ccw"
+    outline = [(0, 0), (9, 0), (9.01, 0.01)] + arc_vertices((9.01, 3.01), 3, -90, 90, 0.25) + [(12.01, 3.01), (12.01, 10), (0, 10)]
+    if HAS_B123D:
+        face = chain_face(chain)
+        assert face.is_valid and abs(face.area - shoelace(outline)) / shoelace(outline) < 1e-3
 
 
 def test_an_edge_that_is_neither_a_line_nor_an_arc_is_reported_in_the_chain_and_never_straightened():
@@ -862,3 +1003,64 @@ def test_the_command_is_registered_under_probe_without_editing_the_cli_module():
     parser = command_parser(("probe", "sketches"))
     flags = {o for a in parser._actions for o in a.option_strings}
     assert {"--sketch", "--against", "--tol", "-o", "--output"} <= flags
+
+
+def test_a_curve_that_lacks_the_fields_its_type_needs_is_listed_not_read(capsys, tmp_path):
+    data = json.loads(DUMP.read_text())
+    broken = [c for c in data["sketches"][0]["curves"] if c["type"] == "SketchCircle"][0]
+    del broken["radius"]
+    path = tmp_path / "broken.json"
+    path.write_text(json.dumps(data))
+    _, out, _ = sketches([path, "--sketch", "plate"], capsys)
+    assert any("SketchCircle" in l and "not read" in l for l in out.splitlines())
+
+
+def test_a_sketch_without_an_origin_has_no_plane_and_says_so(capsys, tmp_path):
+    data = json.loads(DUMP.read_text())
+    del data["sketches"][0]["origin"]
+    path = tmp_path / "no_origin.json"
+    path.write_text(json.dumps(data))
+    _, out, _ = sketches([path, "--sketch", "plate"], capsys)
+    assert "plane unknown (the sketch carries no usable origin and directions)" in out
+
+
+@needs_build123d
+def test_against_a_mesh_is_an_error_that_names_the_formats(capsys, tmp_path):
+    stl = tmp_path / "part.stl"
+    stl.write_text("solid x\nendsolid x\n")
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--against", stl], capsys)
+    assert exc.value.code == 1 and "STEP or build123d programs" in capsys.readouterr().err
+
+
+@needs_build123d
+def test_against_a_file_that_is_not_a_step_is_an_error_not_a_part_with_nothing_applied(capsys, tmp_path):
+    junk = tmp_path / "junk.step"
+    junk.write_text("this is not a STEP file\n")
+    with pytest.raises(SystemExit) as exc:
+        sketches([DUMP, "--against", junk], capsys)
+    assert exc.value.code == 1 and "no geometry could be read" in capsys.readouterr().err
+
+
+@needs_build123d
+def test_a_plane_that_does_not_cut_the_part_is_noted_and_its_dimensions_are_absent(capsys, plate_step, tmp_path):
+    data = json.loads(DUMP.read_text())
+    data["sketches"] = [dict(data["sketches"][0], name="Far away", origin=[0.0, 0.0, 10.0])]       # 100 mm up
+    far = tmp_path / "far.json"
+    far.write_text(json.dumps(data))
+    _, out, err = sketches([far, "--against", plate_step], capsys)
+    assert "plane z=100" in out and "the part has no loops there" in err
+    assert "[DRAWN, absent from the section]" in out and "APPLIED" not in out
+
+
+@needs_build123d
+def test_a_build123d_program_is_a_part_too(capsys, program, tmp_path):
+    source = program("plate.py", "from build123d import *\n\n"
+                                 "def build():\n"
+                                 "    part = Box(40, 20, 6)\n"
+                                 "    corner = part.edges().filter_by(Axis.Z).filter_by(lambda e: e.center().X > 19 and e.center().Y > 9)\n"
+                                 "    return fillet(corner, 4) - Pos(10, 5, 0) * Cylinder(2, 10)\n")
+    out_json = tmp_path / "program.json"
+    sketches([DUMP, "--against", source, "-o", out_json], capsys)
+    plate = dims_of(json.loads(out_json.read_text()), "Plate sketch")
+    assert "APPLIED" in plate[("circle", "radius", 2.0)]["labels"] and "APPLIED" in plate[("arc", "radius", 4.0)]["labels"]

@@ -227,12 +227,6 @@ def _classify(Q: np.ndarray, fit_tol: float, min_pts: int):
     return None, None
 
 
-def _dist(kind: str, fit: Dict[str, Any], p: np.ndarray) -> float:
-    if kind == "line":
-        return float(abs((p - fit["point"]) @ fit["normal"]))
-    return float(abs(math.dist(p, fit["center"]) - fit["radius"]))
-
-
 def _grow(first: int, last: int, ok) -> int:
     """The last vertex of the longest run starting at ``first`` for which ``ok(first, end)`` holds:
     doubling steps, then bisection, because a long arc is hundreds of vertices and a fit per vertex
@@ -338,21 +332,6 @@ def _refine_short(segs, models, classify, floor) -> bool:
     return moved
 
 
-def _merge_equal(segs, models, classify):
-    """Join neighbours that one line or one circle holds together, left to right in a single pass."""
-    out_s, out_m = [segs[0]], [models[0]]
-    for seg, model in zip(segs[1:], models[1:]):
-        if model[0] == out_m[-1][0]:
-            a, b = out_s[-1][0], seg[1]
-            kind, fit = classify(a, b)
-            if kind == model[0]:
-                out_s[-1], out_m[-1] = (a, b), (kind, fit)
-                continue
-        out_s.append(seg)
-        out_m.append(model)
-    segs[:], models[:] = out_s, out_m
-
-
 def _fit_chain(Q: np.ndarray, fit_tol: float, min_pts: int):
     """Segment an open chain with no corners in it: [(first, last, kind, fit)] with the vertex ``last`` of
     each segment shared as the ``first`` of the next."""
@@ -379,7 +358,6 @@ def _fit_chain(Q: np.ndarray, fit_tol: float, min_pts: int):
     segs = [(bounds[k], bounds[k + 1]) for k in range(len(bounds) - 1)]
     models = [classify(a, b) for a, b in segs]
     _refine(Q, segs, models, classify, (fit_tol / 500.0) ** 2)
-    _merge_equal(segs, models, classify)
     return [(a, b, kind, fit) for (a, b), (kind, fit) in zip(segs, models)]
 
 
@@ -415,6 +393,8 @@ def _segment_ring(P: np.ndarray, p: Dict[str, float]) -> List[Dict[str, Any]]:
     """Segments of a closed polyline. With a corner the ring is opened there; with none it is opened at
     the largest jump in signed curvature (where one arc most likely gives way to another) and, when it
     breaks into several segments, once more at the first boundary found, so no arc is split by the cut."""
+    if len(P) < 2:
+        return []
     turns = _turns(P, True, p["d_min"])
     corners = np.flatnonzero(np.abs(turns) > p["corner_rad"])
     if len(corners):
@@ -584,6 +564,9 @@ def recover_loop(loop: Dict[str, Any], spec: str, fit_tol: float = FIT_TOL, tang
                                        "end": list(it["p1"]), "length": it["length"],
                                        "why": it["why"]})
     flush()
+    if not segments:
+        rec["notes"].append("nothing could be read: the edges have no length")
+        return rec
 
     n = len(segments)
     if closed and n > 1:
