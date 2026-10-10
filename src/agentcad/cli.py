@@ -1053,13 +1053,17 @@ def cmd_fit(args):
         except (ValueError, mates.MateError) as e:
             print(f"Error: --map: {e}", file=sys.stderr)
             sys.exit(2)
-    res = fitmod.fit(Path(args.a), Path(args.b), transform=transform,
-                     a_defines=a_defs or None, b_defines=b_defs or None,
-                     offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
-                     sweep_axis=args.sweep, sweep_travel=args.travel,
-                     out_dir=Path(args.output_dir) if args.output_dir else None,
-                     sweep_steps=args.sweep_steps, sample_step=args.step,
-                     contact_mm=None if args.contact_mm < 0 else args.contact_mm, frame=frame)
+    try:
+        res = fitmod.fit(Path(args.a), Path(args.b), transform=transform,
+                         a_defines=a_defs or None, b_defines=b_defs or None,
+                         offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
+                         sweep_axis=args.sweep, sweep_travel=args.travel,
+                         out_dir=Path(args.output_dir) if args.output_dir else None,
+                         sweep_steps=args.sweep_steps, sample_step=args.step,
+                         contact_mm=None if args.contact_mm < 0 else args.contact_mm, frame=frame)
+    except (ValueError, FileNotFoundError) as e:     # e.g. an OpenSCAD part: fit reads exact shapes only
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(2)
     res["pose"].update(pose_info)
     if nominals and res.get("windows"):
         res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)

@@ -361,3 +361,14 @@ def test_section_views_mark_overlap_in_red_and_only_overlap(tmp_path):
     assert _red_pixels(clear["section_1"]) == 0 and _red_pixels(clear["section_2"]) == 0
     if "cutaway" in tight:
         assert _red_pixels(tight["cutaway"]) > 0 and _red_pixels(clear["cutaway"]) == 0
+
+
+def test_an_unknown_overlap_is_never_a_pass_and_a_mesh_part_is_refused(tmp_path, monkeypatch, capsys):
+    from agentcad import fit as fitmod
+    nan = float("nan")
+    assert fitmod.overall_verdict({"interference_mm3": nan, "verdicts": {"w": {"verdict": "pass"}}}) == "unmeasured"
+    assert fitmod.overall_verdict({"interference_mm3": nan, "verdicts": {"w": {"verdict": "fail"}}}) == "fail"
+    scad = tmp_path / "part.scad"
+    scad.write_text("cube(10);\n")
+    assert _fit_cli([scad, scad], monkeypatch) == 2
+    assert "STEP or build123d" in capsys.readouterr().err

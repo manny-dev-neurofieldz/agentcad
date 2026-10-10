@@ -501,15 +501,17 @@ def parameter_snapshot(source: Path, defines=None) -> Dict[str, Any]:
 
 def overall_verdict(res: Dict[str, Any], allow_mm3: float = 0.0) -> str:
     """One word for a fit: ``fail`` (overlap beyond ``allow_mm3`` or a window below nominal),
-    ``unmeasured`` (a declared window read nothing), ``pass`` (every declared nominal met) or
+    ``unmeasured`` (the overlap or a declared window could not be measured), ``pass`` (every
+    declared nominal met) or
     ``measured`` (numbers recorded, no nominal declared to judge them by)."""
     interference = res.get("interference_mm3")
-    if interference is not None and interference == interference and interference > allow_mm3:
+    unknown = interference is None or interference != interference      # a failed boolean is NaN
+    if not unknown and interference > allow_mm3:
         return "fail"
     verdicts = [v["verdict"] for v in (res.get("verdicts") or {}).values()]
     if "fail" in verdicts:
         return "fail"
-    if "unmeasured" in verdicts:
+    if unknown or "unmeasured" in verdicts:
         return "unmeasured"
     return "pass" if verdicts else "measured"
 
