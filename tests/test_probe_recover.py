@@ -364,32 +364,26 @@ def test_the_report_names_each_arc_with_its_numbers_and_never_hides_a_cap():
 import ast
 import re
 
-from agentcad import probe
+from agentcad import policy as pol, probe
 from agentcad.engines import get_engine, list_engines
 
 HAS_B123D = "build123d" in list_engines() and get_engine("build123d").available()
 needs_build123d = pytest.mark.skipif(not HAS_B123D, reason="build123d backend not available")
 
 
+def policy_recipe():
+    """The ``chain_face`` function printed in the policy, compiled: what the policy tells a reader to run is
+    what these tests run."""
+    code = re.search(r"^```python\n(.*?)^```", pol.get_policy("probe-recover").text, flags=re.S | re.M).group(1)
+    namespace = {}
+    exec(code, namespace)
+    return namespace["chain_face"]
+
+
 def chain_face(chain, plane=None):
-    """A Face from a chain literal, the way a program would use one: lines as lines, an arc as a three-point
-    arc through its end points and the middle of its sweep, a full circle as a circle."""
-    from build123d import Edge, Face, Location, Plane, Wire
-    plane = plane or Plane.XY
-    edges = []
-    for seg in chain:
-        if seg[0] == "line":
-            edges.append(Edge.make_line(seg[1], seg[2]))
-            continue
-        _, (cx, cy), r, p0, p1, direction = seg
-        if p0 == p1:
-            edges.append(Edge.make_circle(r).moved(Location((cx, cy, 0))))
-            continue
-        a0, a1 = math.atan2(p0[1] - cy, p0[0] - cx), math.atan2(p1[1] - cy, p1[0] - cx)
-        sweep = (a1 - a0) % (2 * math.pi) if direction == "ccw" else -((a0 - a1) % (2 * math.pi))
-        mid = a0 + sweep / 2
-        edges.append(Edge.make_three_point_arc(p0, (cx + r * math.cos(mid), cy + r * math.sin(mid)), p1))
-    return Face(Wire(edges)).moved(Location(plane))
+    """A Face from a chain literal, by the policy's recipe."""
+    recipe = policy_recipe()
+    return recipe(chain) if plane is None else recipe(chain, plane)
 
 
 def literal_of(text, name="LOOP"):
@@ -655,3 +649,30 @@ def test_the_tolerance_defaults_in_the_help_are_the_ones_the_code_uses():
     helps = {a.dest: a.help for a in section._actions}
     assert f"{curves.FIT_TOL:g}" in helps["fit_tol"] and f"{curves.TANGENT_TOL:g}" in helps["tangent_tol"]
     assert f"{curves.MIN_LEN:g}" in helps["min_len"]
+
+
+# --- the policy and the commands it governs ---------------------------------------------------------------------
+
+import argparse
+
+
+def command_parser(words):
+    parser = cli.build_parser()
+    for word in words:
+        (sub,) = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
+        parser = sub.choices[word]
+    return parser
+
+
+@pytest.mark.parametrize("words", pol.get_policy("probe-recover").commands, ids=lambda w: " ".join(w))
+def test_every_flag_of_a_command_the_policy_governs_appears_in_it(words):
+    text = pol.get_policy("probe-recover").text
+    parser = command_parser(words)
+    flags = [o for a in parser._actions if not isinstance(a, argparse._HelpAction) for o in a.option_strings]
+    assert flags, "the walk found the command's arguments"
+    assert [f for f in flags if f not in text] == []
+
+
+def test_the_policy_recipe_is_the_one_the_tests_run():
+    recipe = policy_recipe()
+    assert callable(recipe) and recipe.__name__ == "chain_face"

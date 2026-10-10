@@ -121,6 +121,8 @@ the check: the gallery is a test of the tool on every engine.
 
 ```bash
 agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
+agentcad probe section part.step --planes z=mid --arcs               # ... and the lines and arcs in each loop, every joint judged
+agentcad probe section part.step --planes y=3.2 --chain 2 > outline.py   # loop 2 as a literal a build123d program pastes
 agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
 agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
 ```
@@ -130,6 +132,24 @@ surface points) are the two exchange formats; every probe writes them and
 `compare` reads them. A cap an instrument applies is printed with its
 value. A cylindrical face reports its axis, never its centroid. Meshes are
 compared in the sampled compartment only, and the output says so.
+
+`--arcs` reads each loop as the designer drew it. A mesh-converted body gives hundreds of short `line`
+edges; they are fitted back into arcs and lines (a run grows while one line or one circle holds every
+vertex within `--fit-tol`, 0.005 mm by default; a vertex turning more than 30 degrees is a corner), and
+edges that are already lines or arcs pass through. Directions are in the section plane's own 2D frame,
+with every loop read counter-clockwise, so `cw` and `ccw` mean one thing. Each joint is judged from the
+fitted primitives: `not tangent` when the centre distance is more than `--tangent-tol` (0.01 mm) from
+|r1 - r2| (arcs turning the same way), r1 + r2 (opposite ways) or r (an arc and a line), `kinked` when
+that passes but the curves cross at over a degree (the centre distance is second order in that angle),
+else `tangent`. The record in `loops.json` gains `arcs` per loop, and each circular edge gains `via`, a point
+a quarter of the way along it, because the end points cannot say which way a semicircle runs.
+
+`--chain N` prints loop N of the listing as a Python list of `("line", p0, p1)` and
+`("arc", center, radius, p0, p1, direction)` tuples, each segment ending on the numbers the next begins
+with, and sends the listing to stderr so the output can be redirected into a program. Segments shorter
+than `--min-len` (0.02 mm) are removed, the joint moving to where their neighbours meet; an edge that is
+neither a line nor an arc is left as a commented gap, reported, and makes the exit status 1. It is never
+turned into a line. `agentcad policy read probe-recover` says how far to trust each number.
 
 ## Fit and mates
 
