@@ -89,3 +89,18 @@ def test_map_transform_turns_then_shifts():
     assert math.isclose(p[0], 10, abs_tol=1e-9) and math.isclose(p[1], 1, abs_tol=1e-9)
     with pytest.raises(mates.MateError, match="axis must be"):
         mates.map_transform("w")
+
+
+def test_find_walks_up_from_a_source_to_the_nearest_declaration(tmp_path):
+    (tmp_path / "part" / "source").mkdir(parents=True)
+    src = tmp_path / "part" / "source" / "p.py"
+    src.write_text("")
+    (tmp_path / "agentcad.toml").write_text('[mates.m]\nnominal_mm = 0.3\n')                # the assembly's
+    (tmp_path / "part" / "part.toml").write_text('[mates.m]\ncounterpart = "q"\n'
+                                                 '[mates.m.axis]\npoint = [0, 0, 0]\ndirection = [1, 0, 0]\n')
+    mate, path = mates.find("m", src)
+    assert path == tmp_path / "part" / "part.toml" and mate.has_datums     # the part's own side first
+    assert mates.find("m", tmp_path)[1] == tmp_path / "agentcad.toml"
+    assert mates.find("absent", src) is None
+    with pytest.raises(mates.MateError, match="declares no"):
+        mates.pose_for("absent", src, src)

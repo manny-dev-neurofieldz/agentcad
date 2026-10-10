@@ -191,3 +191,77 @@ def test_contacts_on_two_ears_are_two_regions():
     found = fitmod.contacts(base, ears, threshold=0.05)
     assert len(found) == 2
     assert sorted(round(r["centroid"][0]) for r in found) == [-10, 10]
+
+
+# --- a key posed into its slot from the datums each part declares ------------------
+
+SLOT = ("from build123d import *\n\ndef build(width=6.2):\n"
+        "    return Box(20, 20, 10) - Pos(0, 0, 2.5) * Box(width, 30, 5)\n")     # slot floor at z = 0
+KEY = "from build123d import *\n\ndef build():\n    return Box(10, 6, 4)\n"      # its own frame: width along y
+
+
+def _key_and_slot(tmp_path, nominal=0.1, key_datums=True):
+    (tmp_path / "slot" / "source").mkdir(parents=True)
+    (tmp_path / "key" / "source").mkdir(parents=True)
+    (tmp_path / "slot" / "source" / "slot.py").write_text(SLOT)
+    (tmp_path / "key" / "source" / "key.py").write_text(KEY)
+    (tmp_path / "slot" / "agentcad.toml").write_text(
+        '[mates.key_in_slot]\ncounterpart = "key"\n'
+        f'nominal_mm = {nominal}\nwindow = [-3.6, -4, 0.5, 3.6, 4, 3.5]\n'
+        '[mates.key_in_slot.axis]\npoint = [0, 0, 0]\ndirection = [0, 0, 1]\n'
+        '[mates.key_in_slot.key_line]\npoint = [0, 0, 0]\ndirection = [1, 0, 0]\n'
+        '[mates.key_in_slot.rim_plane]\npoint = [0, 0, 0]\nnormal = [0, 0, 1]\n')
+    (tmp_path / "key" / "part.toml").write_text(
+        '[mates.key_in_slot]\ncounterpart = "slot"\n' + (
+            '[mates.key_in_slot.axis]\npoint = [0, 0, 0]\ndirection = [0, 0, 1]\n'
+            '[mates.key_in_slot.key_line]\npoint = [0, 0, 0]\ndirection = [0, 1, 0]\n'
+            '[mates.key_in_slot.rim_plane]\npoint = [0, 0, -2]\nnormal = [0, 0, -1]\n' if key_datums else ""))
+    return tmp_path / "slot" / "source" / "slot.py", tmp_path / "key" / "source" / "key.py"
+
+
+def _fit_cli(argv, monkeypatch):
+    from agentcad import cli
+    monkeypatch.setattr("agentcad.fit._render_pair", lambda a, b, d: {})
+    try:
+        cli.main(["fit", *map(str, argv)])
+        return 0
+    except SystemExit as e:
+        return e.code or 0
+
+
+def test_a_key_is_posed_into_its_slot_from_datums_alone(tmp_path, monkeypatch, capsys):
+    import json
+    slot, key = _key_and_slot(tmp_path)
+    code = _fit_cli([slot, key, "--mate", "key_in_slot", "-o", tmp_path / "mate"], monkeypatch)
+    out = capsys.readouterr().out
+    assert code == 0, out
+    rec = json.loads((tmp_path / "mate" / "fit.json").read_text())
+    assert rec["interference_mm3"] == pytest.approx(0.0, abs=1e-6)
+    assert rec["windows"]["key_in_slot"]["min_mm"] == pytest.approx(0.1, abs=0.005)   # 6.2 slot, 6.0 key
+    assert rec["verdicts"]["key_in_slot"]["verdict"] == "pass"
+    assert rec["pose"]["mate"] == "key_in_slot" and rec["pose"]["b_declared_in"].endswith("part.toml")
+    assert any(abs(r["centroid"][2]) < 1e-6 for r in rec["contacts"])                 # seated on the floor
+    # --map with the same turn and offset is the same pose and the same measurement
+    code = _fit_cli([slot, key, "--map", "axis=z", "spin=-90", "offset=0,0,2", "--mates-from", tmp_path / "slot",
+                     "-o", tmp_path / "map"], monkeypatch)
+    mapped = json.loads((tmp_path / "map" / "fit.json").read_text())
+    assert code == 0
+    for row_d, row_m in zip(rec["pose"]["transform"], mapped["pose"]["transform"]):
+        assert row_d == pytest.approx(row_m, abs=1e-9)
+    assert mapped["windows"]["key_in_slot"]["min_mm"] == pytest.approx(rec["windows"]["key_in_slot"]["min_mm"], abs=1e-9)
+
+
+def test_a_clearance_below_nominal_fails_and_at_nominal_passes(tmp_path, monkeypatch, capsys):
+    slot, key = _key_and_slot(tmp_path, nominal=0.2)        # the slot gives 0.1 a side
+    assert _fit_cli([slot, key, "--mate", "key_in_slot"], monkeypatch) == 1
+    assert "BELOW NOMINAL" in capsys.readouterr().err
+    assert _fit_cli([slot, key, "--mate", "key_in_slot", "--a-define", "width=6.4"], monkeypatch) == 0
+
+
+def test_a_mate_without_datums_asks_for_map(tmp_path, monkeypatch, capsys):
+    slot, key = _key_and_slot(tmp_path, key_datums=False)
+    assert _fit_cli([slot, key, "--mate", "key_in_slot"], monkeypatch) == 2
+    err = capsys.readouterr().err
+    assert "has no axis" in err and "--map" in err
+    assert _fit_cli([slot, key, "--mate", "no_such_mate"], monkeypatch) == 2
+    assert "declares no [mates.no_such_mate]" in capsys.readouterr().err

@@ -123,6 +123,50 @@ def load(where: Path) -> Dict[str, Mate]:
     return {name: parse(name, entry) for name, entry in read_table(where).items()}
 
 
+def find(name: str, start: Path, max_up: int = 4) -> Optional[Tuple[Mate, Path]]:
+    """The nearest declaration of mate ``name`` at or above ``start`` (a source file, a toml file or
+    a folder): each folder's agentcad.toml, job.toml and part.toml in that order, walking up at
+    most ``max_up`` folders. A part declares its own side of a mate beside its source, so the
+    nearest declaration is that part's."""
+    start = Path(start)
+    if start.is_file() and start.suffix == ".toml":
+        table = read_table(start)
+        return (parse(name, table[name]), start) if name in table else None
+    folder = start if start.is_dir() else start.parent
+    for _ in range(max_up + 1):
+        for fname in _FILES:
+            path = folder / fname
+            if path.is_file():
+                table = read_table(path)
+                if name in table:
+                    return parse(name, table[name]), path
+        if folder.parent == folder:
+            break
+        folder = folder.parent
+    return None
+
+
+def pose_for(name: str, a_start: Path, b_start: Path) -> Dict[str, Any]:
+    """Pose body B on body A through mate ``name``: each side's declaration is found from its own
+    source (or the toml or folder given), and both must declare datums.
+
+    Returns {matrix, notes, a: Mate, b: Mate, a_path, b_path}; a missing declaration or missing
+    datums is a MateError that says what to declare, or to pose with ``--map`` instead."""
+    found = {}
+    for side, start in (("A", a_start), ("B", b_start)):
+        hit = find(name, start)
+        if hit is None:
+            raise MateError(f"mate {name}: part {side} declares no [mates.{name}] at or above {start} "
+                            f"(searched {', '.join(_FILES)}); declare its side there, or pose with --map")
+        if not hit[0].has_datums:
+            raise MateError(f"mate {name}: the declaration in {hit[1]} has no axis; datums pose a body "
+                            f"(axis, then key_line and rim_plane), or pose with --map")
+        found[side] = hit
+    matrix, notes = pose_from_datums(found["A"][0], found["B"][0])
+    return {"matrix": matrix, "notes": notes, "a": found["A"][0], "b": found["B"][0],
+            "a_path": found["A"][1], "b_path": found["B"][1]}
+
+
 # --- posing a body from declared datums ---------------------------------------------
 
 def _sub(a, b):

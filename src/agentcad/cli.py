@@ -926,8 +926,9 @@ def cmd_compare(args):
 
 
 def cmd_fit(args):
-    """Pose two parts and measure interference, clearance, windows and insertion."""
+    """Pose two parts and measure interference, clearance, windows, contacts and insertion."""
     from agentcad import fit as fitmod
+    from agentcad import mates
 
     windows = {}
     nominals = {}
@@ -955,11 +956,41 @@ def cmd_fit(args):
             nominals.setdefault(name, (m.get("nominal_mm"), m.get("tol_mm")))
     offset = [float(v) for v in args.offset.split(",")] if args.offset else (0, 0, 0)
     transform = None
-    if args.map:
+    pose_info = {}
+    if args.mate:
+        if args.map or args.offset or args.spin:
+            print("Error: --mate poses B from declared datums; drop --map, --offset and --spin", file=sys.stderr)
+            sys.exit(2)
+        posed = []
+        for name in args.mate:
+            try:
+                posed.append(mates.pose_for(name, Path(args.a_mates or args.a), Path(args.b_mates or args.b)))
+            except mates.MateError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                sys.exit(2)
+        first = posed[0]
+        transform = first["matrix"]
+        pose_info = {"mate": args.mate[0], "a_declared_in": str(first["a_path"]),
+                     "b_declared_in": str(first["b_path"]), "notes": first["notes"]}
+        for name, p in zip(args.mate, posed):
+            if p is not first:
+                diff = max(abs(p["matrix"][i][j] - transform[i][j]) for i in range(3) for j in range(4))
+                if diff > 1e-6:
+                    print(f"Warning: mate {name} poses B differently from {args.mate[0]} (largest entry "
+                          f"difference {diff:.3g}); the pose of {args.mate[0]} is used", file=sys.stderr)
+            side = p["a"] if p["a"].window else None
+            if side is not None:
+                windows.setdefault(name, side.window)
+            nominal = p["a"].nominal_mm if p["a"].nominal_mm is not None else p["b"].nominal_mm
+            tol = p["a"].tol_mm if p["a"].tol_mm is not None else p["b"].tol_mm
+            if side is not None and nominal is not None:
+                nominals.setdefault(name, (nominal, tol))
+        for note in first["notes"]:
+            print(f"  pose: {note}")
+    elif args.map:
         if args.offset or args.spin:
             print("Error: --map replaces --offset and --spin; give one or the other", file=sys.stderr)
             sys.exit(2)
-        from agentcad import mates
         fields = dict(item.partition("=")[::2] for item in args.map)
         unknown = set(fields) - {"axis", "spin", "offset"}
         if unknown:
@@ -978,6 +1009,9 @@ def cmd_fit(args):
                      out_dir=Path(args.output_dir) if args.output_dir else None,
                      sweep_steps=args.sweep_steps, sample_step=args.step,
                      contact_mm=None if args.contact_mm < 0 else args.contact_mm)
+    res["pose"].update(pose_info)
+    if nominals and res.get("windows"):
+        res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)
     print(f"interference {res['interference_mm3']:.4g} mm^3; clearance {res['clearance_mm']:.4g} mm")
     if "contacts" in res:
         regions = res["contacts"]
@@ -994,6 +1028,13 @@ def cmd_fit(args):
             print(f"  window {name}: min {w['min_mm']:.4g} mm (p05 {w['p05_mm']:.4g})")
         else:
             print(f"  window {name}: {w.get('note')}")
+    failed_windows = []
+    for name, v in (res.get("verdicts") or {}).items():
+        measured = f"{v['min_mm']:.3g} mm" if "min_mm" in v else "not measured"
+        print(f"  window {name}: {v['verdict'].upper()} (clearance {measured}; nominal {v['nominal_mm']:.3g} "
+              f"+/- {v['tol_mm']:.3g} mm)")
+        if v["verdict"] == "fail":
+            failed_windows.append(name)
     for row in res.get("insertion") or []:
         print(f"  insertion at {row['offset_mm']:.3g} mm out: interference {row['interference_mm3']:.4g} mm^3")
     for name, path in (res.get("renders") or {}).items():
@@ -1014,15 +1055,6 @@ def cmd_fit(args):
             print(f"recorded in {manifests[0]}")
         else:
             print(f"Warning: no print manifest under {args.record}/exports to record into", file=sys.stderr)
-    failed_windows = []
-    if nominals and res.get("windows"):
-        res["verdicts"] = fitmod.judge_windows(res["windows"], nominals)
-        for name, v in res["verdicts"].items():
-            measured = f"{v['min_mm']:.3g} mm" if "min_mm" in v else "not measured"
-            print(f"  window {name}: {v['verdict'].upper()} (clearance {measured}; nominal {v['nominal_mm']:.3g} "
-                  f"+/- {v['tol_mm']:.3g} mm)")
-            if v["verdict"] == "fail":
-                failed_windows.append(name)
     if failed_windows:
         print(f"fit: BELOW NOMINAL CLEARANCE in {', '.join(failed_windows)}", file=sys.stderr)
         sys.exit(1)
@@ -1250,13 +1282,20 @@ def _register_compare_fit(sub, groups):
 
     p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
     p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
-    p_fit.add_argument("b", help="Second part, posed by --offset/--spin")
+    p_fit.add_argument("b", help="Second part, posed by --mate, --map or --offset/--spin")
     p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
     p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
     p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
     p_fit.add_argument("--map", nargs="+", metavar="KEY=VALUE", default=None,
                        help="Pose B by axis=x|y|z spin=DEG offset=x,y,z: a turn about the axis, then the offset "
                             "(instead of --offset/--spin)")
+    p_fit.add_argument("--mate", action="append", metavar="NAME", default=None,
+                       help="Pose B from the datums both parts declare for this mate and measure its window "
+                            "(repeatable; the first poses, the rest are checked against it)")
+    p_fit.add_argument("--a-mates", default=None, metavar="PATH",
+                       help="Where part A declares its mates (toml or folder; default: searched upward from A)")
+    p_fit.add_argument("--b-mates", default=None, metavar="PATH",
+                       help="Where part B declares its mates (toml or folder; default: searched upward from B)")
     p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
