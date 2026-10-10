@@ -777,6 +777,84 @@ def cmd_gcode_check(args):
     return 1 if any(f.severity == "error" for f in findings) else 0
 
 
+def _supports_png(out, bands, placement, meshes, stl_root):
+    """Parts (translucent, placed on the bed) with contact cells: green on an outer surface, red in a cavity."""
+    import numpy as np
+    import pyvista as pv
+    from agentcad.gcode import supports
+
+    pl = pv.Plotter(off_screen=True, window_size=(1000, 800))
+    placed = set()
+    for b in bands:
+        p = placement.get(b.object or "")
+        cells = np.array(b.cells or [], float)
+        if not len(cells):
+            continue
+        colour = "seagreen"
+        if p and stl_root is not None and (stl_root / p["stl"]).exists():
+            mesh = meshes.setdefault(str(stl_root / p["stl"]), pv.read(str(stl_root / p["stl"])))
+            if b.object not in placed:
+                pl.add_mesh(mesh.translate(p["bed_offset"], inplace=False), color="lightsteelblue", opacity=0.35)
+                placed.add(b.object)
+            votes = supports.band_enclosure(b, placement, mesh) or {}
+            if votes and max(votes, key=votes.get) == "cavity":
+                colour = "red"
+        pl.add_points(cells, color=colour, point_size=6, render_points_as_spheres=True)
+    pl.add_axes()
+    pl.camera_position = "iso"
+    pl.screenshot(str(out))
+
+
+def cmd_gcode_supports(args):
+    """Where supports touch each object, as contact bands in the bed frame."""
+    from agentcad.gcode import bgcode, model, supports
+    from agentcad.gcode.check import embedded_config
+
+    path = Path(args.file)
+    cfg = embedded_config(path)
+    cd = args.contact_distance
+    if cd is None:
+        cd = float(cfg.get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
+    bands = [b for b in supports.find_contacts(model.parse(bgcode.gcode_text(path)), contact_distance=cd)
+             if b.area_mm2 >= args.min_area]
+    placement = supports.load_placement(Path(args.placement)) if args.placement else {}
+    if args.json:
+        print(json.dumps([dict(b.__dict__, object_frame=supports.in_object_frame(b, placement)) for b in bands],
+                         indent=2))
+        return
+    if not bands:
+        print(f"{path.name}: no support touches a part (contact distance {cd} mm)")
+        return
+    print(f"{path.name}: {len(bands)} contact band(s), about {sum(b.area_mm2 for b in bands):.0f} mm2 in all "
+          f"(contact distance {cd} mm; bed frame)")
+    meshes, in_cavity = {}, 0
+    for b in sorted(bands, key=lambda b: -b.area_mm2):
+        print(f"  {b.sentence()}")
+        if args.placement:
+            o = supports.in_object_frame(b, placement)
+            print("      in its STL frame: " + (f"x {o['x'][0]:.1f}..{o['x'][1]:.1f}, y {o['y'][0]:.1f}..{o['y'][1]:.1f}, "
+                                                 f"z {o['z'][0]:.1f}..{o['z'][1]:.1f}" if o else "placement unknown"))
+            stl = Path(args.stl_root or Path(args.placement).parent) / o["stl"] if o and o.get("stl") else None
+            if stl is not None and stl.exists():
+                import pyvista as pv
+                votes = supports.band_enclosure(b, placement, meshes.setdefault(str(stl), pv.read(str(stl))))
+                where = max(votes, key=votes.get) if votes else None
+                if where == "cavity":
+                    in_cavity += 1
+                    print(f"      ERROR: walled in on every side (a bore or pocket): supports here are hard to remove "
+                          f"and foul the fit; block them (a support blocker volume) or re-orient. Votes {votes}")
+                elif where:
+                    print(f"      on an outer surface. Votes {votes}")
+            elif o:
+                print(f"      (STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root)")
+    if args.png:
+        _supports_png(Path(args.png), bands, placement, meshes, Path(args.stl_root or Path(args.placement).parent)
+                      if args.placement else None)
+        print(f"render: {args.png}")
+    if in_cavity:
+        return 1
+
+
 def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
@@ -1049,6 +1127,16 @@ def main():
     pg.add_argument("--intent", default=None, help="Any TOML file with a [slice] table (a job.toml, for one)")
     pg.add_argument("--json", action="store_true", help="Findings as JSON, each with its sentence")
     pg.set_defaults(func=cmd_gcode_check)
+    pg = sub_gcode.add_parser("supports", help="Where supports touch each object: contact bands (bed frame)")
+    pg.add_argument("file")
+    pg.add_argument("--contact-distance", type=float, default=None,
+                    help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
+    pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
+    pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1): bands in each STL's frame")
+    pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
+    pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
+    pg.add_argument("--json", action="store_true", help="Bands as JSON")
+    pg.set_defaults(func=cmd_gcode_supports)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file")
     pg.add_argument("-o", "--output", required=True, help="Directory to write into")

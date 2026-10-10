@@ -191,6 +191,22 @@ does not carry, is a warning. With no `[slice]` table the command prints the fil
 there is nothing to check against. Print-host credentials in a slicer configuration are never printed. The
 table also travels in the session's print manifest (`slice_intent`).
 
+`gcode supports` says where supports touch the part, found from the toolpaths themselves: support extrusion
+under the part's own extrusion within a Z window of the slicer's contact distance plus two layer heights (the
+feature labels alone miss organic supports, which end in tips with no interface layer). Contacts are grouped
+into bands, each with its object, height range, area and bed position:
+
+```bash
+agentcad gcode supports plate.bgcode                                   # bands in the bed frame
+agentcad gcode supports plate.bgcode --placement plate.placement.json  # also in each STL's frame, and
+                                                                       # outside / inside a cavity
+```
+
+A placement sidecar (schema `agentcad.placement/1`) records, per slicer label, the STL and its offset on the
+bed. With it, each band is located in its object's own frame and checked against the mesh: on an outer surface,
+or walled in on every side (a bore or pocket), which is an error (exit status 1): such supports are hard to
+remove and foul the fit.
+
 Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
 its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
 compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code encodings (none, MeatPack,
