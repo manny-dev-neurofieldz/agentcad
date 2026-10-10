@@ -326,6 +326,10 @@ over the registry, so `pytest` exercises the new engine the same way the CLI
 does with no test changes; `export` must return `self._unsupported_format(fmt)`
 for formats outside `EXPORT_FORMATS`.
 
+## Adding a Command
+
+A command module in `src/agentcad/commands/` adds commands without editing `cli.py`. The module defines `register(subparsers, groups)`: `subparsers` is the top-level subparsers action, and `groups` maps a command group's name (`probe`, `gcode`, `gallery`, `session`, and any group a module adds) to that group's subparsers action, so a module can also add a subcommand under an existing group. Every argument carries help text; `tests/test_cli_tree.py` walks the whole tree (`agentcad.cli.build_parser()`) and fails on a command without a handler or an argument without help. A module that fails to import is reported on stderr and skipped, and the other commands keep working.
+
 ## Testing
 
 ```bash

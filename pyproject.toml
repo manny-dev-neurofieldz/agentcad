@@ -31,6 +31,17 @@ agentcad = "agentcad.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Non-Python files the package reads at run time. Without this a regular
+# (non-editable) install ships no viewer templates.
+agentcad = [
+    "templates/*.html",
+    "templates/vendor/*.js",
+    "policies/*.md",
+    "skills/*/*.md",
+    "agents/*.md",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
