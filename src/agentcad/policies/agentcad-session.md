@@ -95,6 +95,8 @@ Its warnings each name a defect a render does not show:
 - a measurement that failed, named by its key;
 - the source changed but nothing measurable did: the edit did not land.
 
+Each warning is also a finding: the rule that judged it, the limit and the layer that set it (an engine default, or the project's setting), and the usual fix. The session record keeps measurements and judgments apart; whenever a session loads, its judgments are recomputed from the stored measurements against the current settings, so changing `expected_solids` re-judges every iteration without rendering again. The viewer shows each iteration's findings above its tabs, or says that the tray had no warnings.
+
 ### 2.2 The Render Gate
 
 Look at every render before acting on the iteration or sending an image to anyone: open the image, describe what it shows, and compare that with what was intended. A metric that passed is not a render that was looked at.

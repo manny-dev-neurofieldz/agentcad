@@ -20,7 +20,9 @@ engine did not report prints as "n/a"; nothing is guessed.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from agentcad.findings import Finding
 
 _CENSUS_ORDER = ("plane", "cylinder", "cone", "sphere", "torus", "bspline", "other")
 _COUNT_ORDER = ("solids", "faces", "edges", "vertices")
@@ -30,15 +32,27 @@ _TWIST_AREA_FRAC = 0.02   # a twisted face smaller than this share of the part i
 
 @dataclass
 class Report:
-    """Deltas and warnings for one iteration; ``lines`` is the printable form."""
+    """Deltas and warnings for one iteration; ``lines`` is the printable form.
+
+    ``findings`` are the warnings as structured findings (rule, the layer that set the limit,
+    the fix); ``warnings`` keeps their sentences for readers of the plain list."""
     lines: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     deltas: Dict[str, Any] = field(default_factory=dict)
     changed: Optional[bool] = None  # None when there is no previous record to compare
+    findings: List[Finding] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {"lines": list(self.lines), "warnings": list(self.warnings),
                 "deltas": dict(self.deltas), "changed": self.changed}
+
+    def warn(self, rule: str, key: str, found: Any, intended: str, message: str, *, why: str = "",
+             fix: str = "", layer: str = "default", feature: str = "", location: str = "") -> None:
+        """Record one tray warning both ways: the sentence and the finding."""
+        self.warnings.append(message)
+        self.findings.append(Finding(key, "warning", None if found is None else str(found), intended, why,
+                                     source="the tray", rule=rule, layer=layer, feature=feature,
+                                     location=location, fix=fix, message=message))
 
 
 def _fmt(value: Any, unit: str = "") -> str:
@@ -66,13 +80,16 @@ def _delta_scalar(prev: Optional[float], cur: Optional[float]) -> Tuple[str, Opt
 def feature_effect(prev: Optional[Dict[str, Any]], cur: Dict[str, Any], *,
                    source_changed: Optional[bool] = None,
                    expected_solids: Optional[int] = None,
-                   short_edge_mm: float = 0.25) -> Report:
+                   short_edge_mm: float = 0.25,
+                   limits_from: Optional[Mapping[str, str]] = None) -> Report:
     """Compare the current iteration's metadata with the previous one's.
 
     ``source_changed`` says whether the source text differs from the previous
     iteration's (None when unknown); ``expected_solids`` overrides the value
-    echoed in the metadata.
+    echoed in the metadata. ``limits_from`` names the layer that set each limit
+    (``expected_solids``, ``short_edge_mm``); a limit it does not name is a default.
     """
+    layer_of = dict(limits_from or {})
     rep = Report()
     prev = prev or {}
     have_prev = bool(prev)
@@ -153,12 +170,19 @@ def feature_effect(prev: Optional[Dict[str, Any]], cur: Dict[str, Any], *,
     solids = counts.get("solids")
     expect = expected_solids if expected_solids is not None else cur.get("expected_solids")
     if solids is not None and expect is not None and int(solids) != int(expect):
-        rep.warnings.append(f"solids {solids} != expected {expect}: the part is in pieces (or joined to another)")
+        rep.warn("solid_count", "solids", solids, str(expect),
+                 f"solids {solids} != expected {expect}: the part is in pieces (or joined to another)",
+                 why="a part that renders whole can be several bodies", layer=layer_of.get("expected_solids", "default"),
+                 fix="join the bodies (or separate them), or set expected_solids for a multi-body part")
     if cur.get("short_edges"):
-        rep.warnings.append(f"{cur['short_edges']} edge(s) shorter than {short_edge_mm:g} mm "
-                            f"(shortest {_fmt(cur.get('min_edge_mm'))}): skins, slivers or a skim ridge")
+        rep.warn("short_edge", "short_edges", cur["short_edges"], f"none under {short_edge_mm:g} mm",
+                 f"{cur['short_edges']} edge(s) shorter than {short_edge_mm:g} mm "
+                 f"(shortest {_fmt(cur.get('min_edge_mm'))}): skins, slivers or a skim ridge",
+                 why="slivers break fillets and slicers", layer=layer_of.get("short_edge_mm", "default"),
+                 fix="find the step that left them (a section or a fillet probe) and remove what made it")
     if cur.get("is_valid") is False:
-        rep.warnings.append("kernel reports the shape invalid")
+        rep.warn("valid_shape", "is_valid", False, "True", "kernel reports the shape invalid",
+                 fix="rebuild the last feature on its own and check it before the next")
     if cur.get("twisted_faces"):
         # warn about faces that are a body of the part, not thread slivers
         detail = [d for d in (cur.get("twisted_faces_detail") or [])
@@ -166,17 +190,44 @@ def feature_effect(prev: Optional[Dict[str, Any]], cur: Dict[str, Any], *,
         if detail:
             where = "; ".join(f"{d.get('type')} at {_fmt(d.get('center'))} turns {d.get('max_turn_deg')} deg "
                               f"({100 * (d.get('area_frac') or 0):.0f}% of the area)" for d in detail[:3])
-            rep.warnings.append(f"{len(detail)} twisted free-form face(s): {where}")
+            rep.warn("twisted_face", "twisted_faces", len(detail), "none",
+                     f"{len(detail)} twisted free-form face(s): {where}",
+                     fix="align the loft's sections so they do not rotate against each other")
     for key in sorted(cur):
         if key.endswith("_error"):
-            rep.warnings.append(f"{key[:-6]} not measured: {cur[key]}")
+            rep.warn("measured", key[:-6], None, "a measurement", f"{key[:-6]} not measured: {cur[key]}")
 
     if have_prev:
         rep.changed = changed_any
         if source_changed and not changed_any:
-            rep.warnings.append("source changed but nothing measurable did: volume, bbox, counts and census "
-                                "are identical to the previous iteration (a feature that did not build?)")
+            rep.warn("no_change", "source", "changed", "a measurable change",
+                     "source changed but nothing measurable did: volume, bbox, counts and census "
+                     "are identical to the previous iteration (a feature that did not build?)",
+                     fix="check the feature built: a volume, face census or solid count delta")
     return rep
+
+
+def rejudge(records: Sequence[Mapping[str, Any]], *, expected_solids: Optional[int] = None,
+            short_edge_mm: float = 0.25, limits_from: Optional[Mapping[str, str]] = None) -> List[Optional[Report]]:
+    """The reports of a run of iteration records (each with ``metadata`` and ``source_hash``),
+    judged against the given rules: what a stored session says under today's settings. A record
+    without metadata (written before measurements were kept) gets None."""
+    reports: List[Optional[Report]] = []
+    prev = None
+    for rec in records:
+        meta = rec.get("metadata") or {}
+        if not meta:
+            reports.append(None)
+            prev = None
+            continue
+        changed = None
+        if prev is not None and prev.get("source_hash") and rec.get("source_hash"):
+            changed = prev["source_hash"] != rec["source_hash"]
+        reports.append(feature_effect(prev.get("metadata") if prev else None, meta, source_changed=changed,
+                                      expected_solids=expected_solids, short_edge_mm=short_edge_mm,
+                                      limits_from=limits_from))
+        prev = rec
+    return reports
 
 
 def render_lines(rep: Report, indent: str = "  ") -> List[str]:

@@ -146,6 +146,10 @@ class CADEngine(ABC):
                 )
         return merged
 
+    def setting_layer(self, key: str) -> str:
+        """Where a setting's value comes from: the project's engine table, or the default."""
+        return f"project setting {key}" if key in self._settings else "default"
+
     def setting(self, key: str, default: Any = None) -> Any:
         """Read a merged setting with a default (universal settings carry their own)."""
         if key in self._settings:

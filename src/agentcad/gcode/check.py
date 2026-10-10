@@ -14,11 +14,11 @@ block a plain G-code export carries. Each finding is a sentence: the key, both v
 declared, why it matters, and the usual fix.
 """
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 from agentcad.config import tomllib
+from agentcad.findings import FIX_DIFFERS, FIX_MISSING, Finding   # Finding: callers import it from here too
 from agentcad.gcode import bgcode
 
 #: Settings worth printing when a project declares no intent.
@@ -30,27 +30,6 @@ KEY_SETTINGS = (
 
 #: Never echoed: credentials and machine paths a slicer may store in its configuration.
 PRIVATE_KEYS = ("printhost_apikey", "printhost_password", "printhost_user", "printhost_cafile", "post_process")
-
-
-@dataclass
-class Finding:
-    key: str
-    severity: str            # "error" | "warning" | "ok"
-    found: Optional[str]
-    intended: str
-    why: str
-    source: str
-
-    def sentence(self) -> str:
-        why = f" Why: {self.why}." if self.why else ""
-        if self.severity == "ok":
-            return f"{self.key} = {self.found}, as {self.source} asks."
-        if self.found is None:
-            return (f"{self.key} is not in the file's configuration; {self.source} asks for {self.intended}.{why} "
-                    f"Fix: check the slicer version writes this setting, or drop it from the intent.")
-        return (f"{self.key} is {self.found} in the file; {self.source} asks for {self.intended}.{why} "
-                f"Fix: re-load the project file in the slicer and re-slice; a preset selected afterwards can "
-                f"override a project's settings.")
 
 
 def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
@@ -118,11 +97,14 @@ def check(config: Dict[str, str], intent: Dict[str, Any], source: str) -> List[F
             intended = "between " + " and ".join(str(x) for x in (lo, hi) if x is not None) if lo is not None and hi is not None \
                 else (f"at least {lo}" if lo is not None else f"at most {hi}")
         if found is None:
-            findings.append(Finding(key, "warning", None, intended, why, source))
+            severity, fix = "warning", FIX_MISSING
         elif want is not None:
-            findings.append(Finding(key, "ok" if _same(found, want) else "error", found, intended, why, source))
+            severity = "ok" if _same(found, want) else "error"
+            fix = "" if severity == "ok" else FIX_DIFFERS
         else:
             v = _num(found)
             inside = v is not None and (lo is None or v >= float(lo)) and (hi is None or v <= float(hi))
-            findings.append(Finding(key, "ok" if inside else "warning", found, intended, why, source))
+            severity, fix = ("ok", "") if inside else ("warning", FIX_DIFFERS)
+        findings.append(Finding(key, severity, found, intended, why, source,
+                                rule="slice_setting", layer=source, fix=fix))
     return findings

@@ -814,7 +814,7 @@ def cmd_gcode_check(args):
         return 0
     findings = check.check(cfg, intent, label)
     if args.json:
-        print(json.dumps([f.__dict__ | {"sentence": f.sentence()} for f in findings], indent=2))
+        print(json.dumps([f.to_dict() for f in findings], indent=2))
     else:
         for f in findings:
             mark = {"error": "ERROR", "warning": "warning", "ok": "ok"}[f.severity]
