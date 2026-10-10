@@ -11,7 +11,17 @@ from typing import Dict, Tuple
 
 import pytest
 
+import agentcad
 from agentcad.engines import get_engine, list_engines
+
+# The suite tests the code beside it. An editable install made from another checkout (a git
+# worktree's tests importing the main clone's package) would pass or fail for the wrong tree, and
+# say nothing; refuse to run instead, naming both trees.
+_HERE = Path(__file__).resolve().parents[1] / "src"
+_IMPORTED = Path(agentcad.__file__).resolve()
+if (_HERE / "agentcad").is_dir() and _HERE not in _IMPORTED.parents:
+    pytest.exit(f"these tests belong to {_HERE.parent} but import agentcad from {_IMPORTED.parent}; "
+                f"set PYTHONPATH={_HERE} (or reinstall from this checkout) and run again", returncode=4)
 
 # One minimal parametric source per engine. Each takes a `size` parameter so
 # the contract test can prove that `-D size=...` reaches the model.
