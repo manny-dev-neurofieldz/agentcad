@@ -58,6 +58,8 @@ class PrintManifest:
     #: Fit checks recorded against this manifest: [{a, b, interference_mm3,
     #: clearance_mm, windows}] from `agentcad fit`.
     fit: List[Dict[str, Any]] = field(default_factory=list)
+    #: The project's [slice] intent, carried so a sliced file can be checked against the manifest it came from.
+    slice_intent: Dict[str, Any] = field(default_factory=dict)
 
     def part_count(self) -> int:
         return sum(int(p.get("quantity", 1)) for p in self.parts) if self.parts else 1

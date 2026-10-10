@@ -170,6 +170,27 @@ file's metadata), `features_known`, `unknown_features`, `objects` (id to name), 
 per-feature amounts, `support_share`), `by_feature`, `support` (`share`, first and last layer and Z) and
 `brim_area_mm2`.
 
+`gcode check` compares the slicer settings the file carries with what the project intended, declared as a
+`[slice]` table in `agentcad.toml` (or any TOML file, such as a print job's `job.toml`), keyed by the
+slicer's own setting names:
+
+```toml
+[slice]
+layer_height = 0.2
+temperature = { min = 270, max = 285, why = "layer bond in ASA-CF" }
+support_material_buildplate_only = { value = 1, why = "supports must not grow inside the bores" }
+```
+
+```bash
+agentcad gcode check part.bgcode --project my_part/      # or --intent job.toml; --json for the findings
+```
+
+Each finding is a sentence: the setting, the value in the file, the value asked for, why it matters, and
+the usual fix. A differing value is an error (exit status 1); a value outside a range, or a setting the file
+does not carry, is a warning. With no `[slice]` table the command prints the file's key settings and says
+there is nothing to check against. Print-host credentials in a slicer configuration are never printed. The
+table also travels in the session's print manifest (`slice_intent`).
+
 Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
 its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
 compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code encodings (none, MeatPack,
