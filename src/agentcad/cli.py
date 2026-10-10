@@ -591,29 +591,58 @@ def _windows_arg(items):
 
 
 def cmd_probe_section(args):
-    """Section loops of a shape on named planes, as loops.json."""
+    """Section loops of a shape on named planes, as loops.json; --arcs reads the lines and arcs in them, --chain N one loop as a literal."""
+    import re
     from agentcad import probe
 
     shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
     planes = args.planes or ["z=mid"]
+    chain_n = getattr(args, "chain", None)
+    recover = getattr(args, "arcs", False) or chain_n is not None
+    out = sys.stderr if chain_n is not None else sys.stdout        # with --chain, stdout carries only the literal
+    if recover:
+        from agentcad import curves
+        tols = {k: v for k, v in (("fit_tol", args.fit_tol), ("tangent_tol", args.tangent_tol)) if v is not None}
+        min_len = args.min_len if args.min_len is not None else curves.MIN_LEN
+    status = 0
     data = {"source": str(args.source), "planes": []}
     for spec in planes:
         plane, coord = probe.parse_plane(spec, shape)
         loops = probe.section_loops(shape, plane, max_loops=args.max_loops)
         for L in loops:
             L["fit"] = probe.fit_polyline_loop(L)
+            if recover:
+                L["arcs"] = curves.recover_loop(L, spec, **tols)
         total = loops[0]["total_on_plane"] if loops else 0
-        print(f"{spec} (at {coord:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""))
+        print(f"{spec} (at {coord:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""), file=out)
         for i, L in enumerate(loops[: args.show]):
             kinds = {}
             for e in L["edges"]:
                 kinds[e["type"]] = kinds.get(e["type"], 0) + 1
             desc = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
             fit = f"; fits a circle r {L['fit']['radius']:.4g} (rms {L['fit']['rms']:.2g})" if L.get("fit") else ""
-            print(f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}")
+            print(f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}", file=out)
+            if args.arcs:
+                for line in curves.render_arcs(L["arcs"], show=args.show):
+                    print(f"    {line}", file=out)
+        if chain_n is not None:
+            if not 1 <= chain_n <= len(loops):
+                print(f"Error: {spec} has {len(loops)} loop(s); there is no loop {chain_n}", file=sys.stderr)
+                sys.exit(2)
+            name = "LOOP" if len(planes) == 1 else "LOOP_" + re.sub(r"[^A-Za-z0-9]+", "_", spec).strip("_").upper()
+            result = curves.chain_literal(loops[chain_n - 1]["arcs"], name=name, min_len=min_len,
+                                          header=f"loop {chain_n} of {spec} (at {coord:.4g})")
+            sys.stdout.write(result["text"])
+            for line in curves.chain_notes(result):
+                print(line, file=sys.stderr)
+            loops[chain_n - 1]["chain"] = {"name": name, "literal": result["text"], "complete": result["complete"],
+                                           "slivers": result["slivers"], "min_len": result["min_len"]}
+            if not result["complete"]:
+                status = 1                                       # an edge was reported, not drawn: the chain has a gap
         data["planes"].append({"plane": spec, "coordinate": coord, "n_loops": total, "loops": loops})
     if args.output:
-        print(f"loops.json: {probe.write_json(data, Path(args.output))}")
+        print(f"loops.json: {probe.write_json(data, Path(args.output))}", file=out)
+    return status or None
 
 
 def cmd_probe_inventory(args):
@@ -1120,6 +1149,21 @@ def _register_probe(sub, groups):
         pp.add_argument("-o", "--output", default=None, help="Write the JSON record here")
         pp.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
         pp.set_defaults(func=func)
+
+    ps = sub_probe.choices["section"]
+    ps.add_argument("--arcs", action="store_true",
+                    help="Read each loop as lines and arcs: runs of short edges become arcs (center, radius, sweep, cw/ccw, rms) "
+                         "and every joint is judged tangent or not; written to the -o record too")
+    ps.add_argument("--chain", type=int, default=None, metavar="N",
+                    help="Print loop N (as numbered in the listing) as a Python literal of lines and arcs to paste into a build123d "
+                         "program; stdout carries only the literal, the summary goes to stderr; exit 1 if an edge could not be drawn")
+    ps.add_argument("--min-len", type=float, default=None, metavar="MM",
+                    help="With --chain: segments shorter than this are merged into a neighbour and listed (default 0.02)")
+    ps.add_argument("--fit-tol", type=float, default=None, metavar="MM",
+                    help="With --arcs or --chain: how far a vertex may lie from the line or arc it is assigned to (default 0.005)")
+    ps.add_argument("--tangent-tol", type=float, default=None, metavar="MM",
+                    help="With --arcs or --chain: how far the centre distance may be from the tangent one before a joint is "
+                         "not tangent (default 0.01)")
 
     pf = sub_probe.add_parser("fillet", help="Why a fillet fails: the selected chain on the LIVE part at the call, steps under 0.2 mm, sizes each edge takes")
     pf.add_argument("source", help="build123d program")
