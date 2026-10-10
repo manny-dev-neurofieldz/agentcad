@@ -492,6 +492,10 @@ The set covers every command and the practice around them:
 
 Policies follow a fixed format (a header, a navigation guide of numbered questions, one boundary line, numbered sections), so another tool that reads the same format can mount them unchanged. `tests/test_policy.py` checks the reader against reference outputs committed under `tests/data/policy_golden/`, holds every command to exactly one governing policy and every flag to a mention in that policy's text (a command or flag added without its policy text fails the suite), and lints each policy (plain ASCII, no absolute paths, fences at column 0, the navigation guide numbered like the content). `docs/policy_ledger.md` records where the guidance came from.
 
+## Skills and the Reviewer
+
+The package also ships workflow skills in `src/agentcad/skills/`: `design-session`, `render-gate`, `reverse-engineer`, `fit-check`, `print-prep` and `review`. It also ships a `design-reviewer` agent in `src/agentcad/agents/`. Each skill is a short workflow, the questions to ask at each step, and the policies that answer them. The answers come from `agentcad policy` when the skill is used, so a skill does not go stale when a policy changes. `tests/test_skills.py` fails if a skill or the agent names a policy or a command that this version does not have, and `tests/test_packaging.py` fails if one is missing from the wheel.
+
 ## Adding a Command
 
 A command module in `src/agentcad/commands/` adds commands without editing `cli.py`. The module defines `register(subparsers, groups)`: `subparsers` is the top-level subparsers action, and `groups` maps a command group's name (`probe`, `gcode`, `gallery`, `session`, and any group a module adds) to that group's subparsers action, so a module can also add a subcommand under an existing group. Every argument carries help text; `tests/test_cli_tree.py` walks the whole tree (`agentcad.cli.build_parser()`) and fails on a command without a handler or an argument without help. A module that fails to import is reported on stderr and skipped, and the other commands keep working.
