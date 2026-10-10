@@ -156,3 +156,33 @@ def test_support_bands_are_placed_through_a_placement_2_turn(job, tmp_path):
         {"stl": "a.stl", "instances": [{"label": "a", "bed_offset": [5, 6, 0]}]}]}))
     old = supports.load_placement(tmp_path / "old.json")["a"]
     assert supports.to_part(old, [6, 8, 1]) == pytest.approx([1, 2, 1])
+
+
+def test_stage_writes_a_posed_part_centred_on_the_bed(tmp_path, monkeypatch, capsys):
+    from agentcad import cli
+    from agentcad.targets.generic import read_plate
+    from tests.test_qc import FakeBoxEngine
+    monkeypatch.setattr(cli, "_engine_for", lambda name, cfg: FakeBoxEngine())
+    proj = tmp_path / "designs" / "bar"
+    proj.mkdir(parents=True)
+    (proj / "agentcad.toml").write_text(
+        f'[project]\nname = "bar"\nengine = "fake"\n[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\n'
+        'default_views = ["iso"]\n[print]\nmaterial = "PETG"\n[qc]\nprinter = "mk4"\npose = { up = [1, 0, 0] }\n')
+    (proj / "bar.fake").write_text("volume = 10\nsize = 20, 10, 40\n")
+    for argv in (["session", "start", str(proj)], ["session", "iterate", str(proj), str(proj / "bar.fake")],
+                 ["session", "finalize", str(proj)]):
+        cli.main(argv)
+    capsys.readouterr()
+    cli.main(["stage", str(proj), "--target", "generic", "--copies", "2", "-o", str(tmp_path / "staged")])
+    out = capsys.readouterr().out
+    plate = tmp_path / "staged" / "bar.3mf"
+    assert plate.exists() and "generic" in out
+    items = read_plate(plate)
+    assert len(items) == 2
+    T = items[0]["transform"]
+    # posed on its side (x up): the 40 mm length lies along the bed, the part's lowest point at z = 0
+    corners = [[sum(T[i][j] * v for j, v in enumerate((x, y, z, 1.0))) for i in range(3)]
+               for x in (0, 20) for y in (0, 10) for z in (0, 40)]
+    assert min(c[2] for c in corners) == pytest.approx(0.0, abs=1e-6)
+    assert max(c[2] for c in corners) == pytest.approx(20.0, abs=1e-6)
+    assert (min(c[1] for c in corners) + max(c[1] for c in corners)) / 2 == pytest.approx(105.0, abs=1e-6)
