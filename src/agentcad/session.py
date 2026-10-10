@@ -476,7 +476,7 @@ class DesignSession:
         if qs is not None:
             latest = self.iterations[-1]
             stl = self.project.exports_dir / f"{self.name}_v{latest.number}.stl"
-            self.qc_report = qcmod.run(self.config, qcmod.mesh_vertices(stl), qs)
+            self.qc_report = qcmod.run(self.config, stl, qs)
             if self.project.variants:
                 newest = self.project.variants[0]
                 newest.findings = (newest.findings or []) + self.qc_report["findings"]
