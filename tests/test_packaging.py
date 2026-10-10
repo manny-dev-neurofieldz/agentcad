@@ -51,3 +51,16 @@ def test_the_wheel_carries_the_viewer_templates(wheel_files, name):
 
 def test_the_wheel_carries_the_command_modules_package(wheel_files):
     assert "agentcad/commands/__init__.py" in wheel_files
+
+
+def test_the_wheel_carries_every_subpackage_policy_skill_and_agent(wheel_files, pytestconfig):
+    """Everything the package reads at run time, found in the source tree rather than listed by hand,
+    so a new policy, skill, agent or subpackage that the packaging misses fails here."""
+    pkg = pytestconfig.rootpath / "src" / "agentcad"
+    wanted = [f"agentcad/{p.relative_to(pkg).as_posix()}" for p in sorted(pkg.rglob("*"))
+              if p.is_file() and "__pycache__" not in p.parts
+              and (p.name == "__init__.py" or p.parent.name in ("policies", "agents") and p.suffix == ".md"
+                   or p.name == "SKILL.md")]
+    assert any("/skills/" in w for w in wanted) and any("/agents/" in w for w in wanted)
+    missing = [w for w in wanted if w not in wheel_files]
+    assert not missing, "missing from the wheel: " + ", ".join(missing)
