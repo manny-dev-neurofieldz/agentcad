@@ -898,8 +898,10 @@ def cmd_gcode_summary(args):
 
 
 def cmd_gcode_check(args):
-    """Compare the settings a sliced file carries with the [slice] intent of a project, a job or a TOML file."""
+    """Compare the settings a sliced file carries with the [print] and [slice] intent of a project, a job or a TOML
+    file, as the slicer's target maps and layers them."""
     from agentcad.gcode import check
+    from agentcad.targets import TargetError
 
     cfg = check.embedded_config(Path(args.file))
     source_path = None
@@ -908,10 +910,20 @@ def cmd_gcode_check(args):
         source_path = source_path / "agentcad.toml" if source_path.is_dir() else source_path
     elif args.intent:
         source_path = Path(args.intent)
-    intent = check.load_intent(source_path) if source_path else {}
+    notes, conflicts = [], []
+    try:
+        intent, notes, conflicts = check.intent_for(source_path) if source_path else ({}, [], [])
+    except TargetError as e:
+        print(f"Error: {source_path}: {e}", file=sys.stderr)
+        return 2
     label = f"{source_path.name} [slice]" if source_path else ""
+    if not args.json:
+        for c in conflicts:
+            print(f"  conflict: {c}")
+        for n in notes:
+            print(f"  not checked: [print] {n}")
     if not intent:
-        print(f"{Path(args.file).name}: no [slice] intent declared" + (f" in {source_path}" if source_path else "")
+        print(f"{Path(args.file).name}: no print or slice intent declared" + (f" in {source_path}" if source_path else "")
               + "; the file's key settings, without a verdict:")
         for k in check.KEY_SETTINGS:
             if k in cfg:
@@ -1445,7 +1457,8 @@ def _register_gcode(sub, groups):
     pg = sub_gcode.add_parser("check", help="Compare a sliced file's settings with the [slice] intent; exit 1 on an error")
     pg.add_argument("file", help="Sliced file (.bgcode or plain G-code), or a PrusaSlicer project 3MF whose settings to check")
     pg.add_argument("--project", default=None, help="Project folder or agentcad.toml carrying the [slice] table")
-    pg.add_argument("--intent", default=None, help="Any TOML file with a [slice] table (a job.toml, for one)")
+    pg.add_argument("--intent", default=None,
+                    help="Any TOML file with [print] or [slice] tables (a job.toml, for one), read as --project reads one")
     pg.add_argument("--json", action="store_true", help="Findings as JSON, each with its sentence")
     pg.set_defaults(func=cmd_gcode_check)
     pg = sub_gcode.add_parser("supports", help="Where supports touch each object: contact bands (bed frame)")
