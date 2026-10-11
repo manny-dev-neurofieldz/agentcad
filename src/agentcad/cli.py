@@ -1025,7 +1025,10 @@ def _supports_png(out, bands, placement, meshes, stl_root):
             continue
         colour = "seagreen"
         if p and stl_root is not None and (stl_root / p["stl"]).exists():
-            mesh = meshes.setdefault(str(stl_root / p["stl"]), pv.read(str(stl_root / p["stl"])))
+            key = str(stl_root / p["stl"])
+            if key not in meshes:                   # judged bands left their STLs here: read each once
+                meshes[key] = pv.read(key)
+            mesh = meshes[key]
             if b.object not in placed:
                 pl.add_mesh(mesh.transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)

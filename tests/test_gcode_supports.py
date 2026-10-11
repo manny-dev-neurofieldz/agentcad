@@ -160,3 +160,26 @@ def test_json_says_outside_or_not_checked_and_then_exits_0(tmp_path):
     r = _supports(f, "--json")                         # no placement: no region check, and it says so by null
     assert r.returncode == 0, r.stdout + r.stderr
     assert {(b["region"], b["region_votes"]) for b in json.loads(r.stdout)} == {(None, None)}
+
+
+def test_the_picture_reads_no_stl_the_judging_already_read(tmp_path, monkeypatch):
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    from agentcad import cli
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    bands = sp.find_contacts(gm.parse(TEXT), contact_distance=0.25)
+    stl = str(tmp_path / "ledge.stl")
+    cache = {stl: pv.read(stl)}                        # as the judging leaves it
+
+    class Plotter:                                     # no window and no picture: only the reading is under test
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+    reads = []
+    monkeypatch.setattr(pv, "read", lambda path: reads.append(path))
+    monkeypatch.setattr(pv, "Plotter", Plotter)
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), cache, tmp_path)
+    assert bands and reads == [], reads
