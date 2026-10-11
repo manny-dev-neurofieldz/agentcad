@@ -404,11 +404,16 @@ which sources (each with its SHA-256).
 agentcad records check LIBRARY/             # every record under a folder: types, dates, verdicts, references
 agentcad records check parts/x/part.toml    # one record, its own fields only
 agentcad records check LIBRARY/ --json      # the whole reading (schema agentcad.records/1)
+agentcad duties LIBRARY/                    # the work the records say is owed, with its evidence
+agentcad duties LIBRARY/ --as-of 2026-03-11 --json
 ```
 
 The check exits 1 on an error (a missing or malformed structured field, a verdict that contradicts the print
 date) and reports warnings (a part the library does not know, a fit recorded on one side only) without
-failing. It never edits a record. `agentcad policy read records` has the contract.
+failing. It never edits a record. `agentcad duties` lists the work those fields say is owed: a printed job
+with no verdict (or a pending one), a job past its planned day that has not printed, and a fit whose
+sources have changed since it was recorded (or that recorded none). Each duty has a stable key, so a tool
+that files duties elsewhere can match one it filed before. `agentcad policy read records` has the contract.
 
 ## Program-side helpers (build123d)
 
