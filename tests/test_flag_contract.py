@@ -620,6 +620,8 @@ def test_a_flag_changes_the_result_refuses_or_says_why_not(fixtures, scratch, co
         assert effect, where
         assert got.code == (base.code if cell.exit is None else cell.exit), where
         if cell.shows:
+            assert cell.shows not in base.out + base.err, (f"{where}\n(the run without the flag shows "
+                                                           f"{cell.shows!r} too, so it cannot tell the effect)")
             assert cell.shows in got.out + got.err, f"{where}\n(it should show {cell.shows!r})"
     elif want == REFUSES:
         assert got.code not in (0, None) and _names(got.err, options), where
@@ -696,6 +698,22 @@ def test_every_declared_dependency_names_flags_its_command_has():
         for flag, any_of in parser.get_default("_requires") or ():
             wrong += [f"{' '.join(path)} {f}" for f in (flag, *any_of) if f not in options]
     assert not wrong, f"dependencies naming flags the command does not have: {wrong}"
+    assert any(_command_parser(("fit",)).get_default("_requires") or ())
+
+
+def test_a_dependent_flag_is_not_given_by_its_default():
+    """main() names a dependent flag as ignored when it is given without what it needs. A default that counts
+    as given would be named on every run, given or not, and a cell for it would pass on that line alone; so
+    each one defaults to None and the command resolves its documented default (0 is a value given)."""
+    looks_given = []
+    for path in _leaves(cli.build_parser()):
+        parser = _command_parser(path)
+        defaults = argparse.Namespace(**{a.dest: a.default for a in parser._actions})
+        for flag, _ in parser.get_default("_requires") or ():
+            if cli._given(defaults, flag):
+                value = getattr(defaults, flag.lstrip("-").replace("-", "_"))
+                looks_given.append(f"{' '.join(path)} {flag} (default {value!r})")
+    assert not looks_given, f"dependent flags whose default counts as given: {looks_given}"
     assert any(_command_parser(("fit",)).get_default("_requires") or ())
 
 

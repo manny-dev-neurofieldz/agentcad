@@ -1025,7 +1025,10 @@ def _supports_png(out, bands, placement, meshes, stl_root):
             continue
         colour = "seagreen"
         if p and stl_root is not None and (stl_root / p["stl"]).exists():
-            mesh = meshes.setdefault(str(stl_root / p["stl"]), pv.read(str(stl_root / p["stl"])))
+            key = str(stl_root / p["stl"])
+            if key not in meshes:                   # judged bands left their STLs here: read each once
+                meshes[key] = pv.read(key)
+            mesh = meshes[key]
             if b.object not in placed:
                 pl.add_mesh(mesh.transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)
@@ -1051,45 +1054,66 @@ def cmd_gcode_supports(args):
     bands = [b for b in supports.find_contacts(model.parse(bgcode.gcode_text(path)), contact_distance=cd)
              if b.area_mm2 >= args.min_area]
     placement = supports.load_placement(Path(args.placement)) if args.placement else {}
+    stl_root = Path(args.stl_root or Path(args.placement).parent) if args.placement else None
+    meshes = {}
+    # Every band is placed and judged before either output is written, so --json and the text agree on the
+    # region of each contact and on the exit status.
+    regions = {id(b): _band_region(b, placement, stl_root, meshes) for b in bands}
+    in_cavity = sum(1 for r in regions.values() if r[2] == "cavity")
     if args.json:
-        print(json.dumps([dict(b.__dict__, object_frame=supports.in_object_frame(b, placement)) for b in bands],
+        print(json.dumps([dict(b.__dict__, object_frame=regions[id(b)][0], region=regions[id(b)][2],
+                               region_votes=regions[id(b)][3], region_note=regions[id(b)][4]) for b in bands],
                          indent=2))
         if args.png:
-            _supports_png(Path(args.png), bands, placement, {}, Path(args.stl_root or Path(args.placement).parent)
-                          if args.placement else None)
+            _supports_png(Path(args.png), bands, placement, meshes, stl_root)
             print(f"render: {args.png}", file=sys.stderr)
-        return
+        return 1 if in_cavity else None
     if not bands:
         print(f"{path.name}: no support touches a part (contact distance {cd} mm)")
         return
     print(f"{path.name}: {len(bands)} contact band(s), about {sum(b.area_mm2 for b in bands):.0f} mm2 in all "
           f"(contact distance {cd} mm; bed frame)")
-    meshes, in_cavity = {}, 0
     for b in sorted(bands, key=lambda b: -b.area_mm2):
         print(f"  {b.sentence()}")
         if args.placement:
-            o = supports.in_object_frame(b, placement)
+            o, stl, where, votes, why = regions[id(b)]
             print("      in its STL frame: " + (f"x {o['x'][0]:.1f}..{o['x'][1]:.1f}, y {o['y'][0]:.1f}..{o['y'][1]:.1f}, "
                                                  f"z {o['z'][0]:.1f}..{o['z'][1]:.1f}" if o else "placement unknown"))
-            stl = Path(args.stl_root or Path(args.placement).parent) / o["stl"] if o and o.get("stl") else None
-            if stl is not None and stl.exists():
-                import pyvista as pv
-                votes = supports.band_enclosure(b, placement, meshes.setdefault(str(stl), pv.read(str(stl))))
-                where = max(votes, key=votes.get) if votes else None
-                if where == "cavity":
-                    in_cavity += 1
-                    print(f"      ERROR: walled in on every side (a bore or pocket): supports here are hard to remove "
-                          f"and foul the fit; block them (a support blocker volume) or re-orient. Votes {votes}")
-                elif where:
-                    print(f"      on an outer surface. Votes {votes}")
-            elif o:
-                print(f"      (STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root)")
+            if where == "cavity":
+                print(f"      ERROR: walled in on every side (a bore or pocket): supports here are hard to remove "
+                      f"and foul the fit; block them (a support blocker volume) or re-orient. Votes {votes}")
+            elif where:
+                print(f"      on an outer surface. Votes {votes}")
+            elif o and why:
+                print(f"      ({why})")
     if args.png:
-        _supports_png(Path(args.png), bands, placement, meshes, Path(args.stl_root or Path(args.placement).parent)
-                      if args.placement else None)
+        _supports_png(Path(args.png), bands, placement, meshes, stl_root)
         print(f"render: {args.png}")
     if in_cavity:
         return 1
+
+
+def _band_region(band, placement, stl_root, meshes):
+    """(object frame, STL path, region, votes, why) of one contact band. The region is "cavity" or "outside" by
+    rays across the placed STL, or None when it cannot be checked, and then ``why`` says what stopped it: no
+    placement for its object, no STL under ``stl_root``, or no pyvista to read the STL with. Without a placement
+    file nothing was asked, and ``why`` is None. ``meshes`` caches the STLs read, by path."""
+    from agentcad.gcode import supports
+
+    o = supports.in_object_frame(band, placement)
+    stl = stl_root / o["stl"] if o and o.get("stl") and stl_root is not None else None
+    if stl is None or not stl.exists():
+        why = None if stl_root is None else "placement unknown" if not o else \
+            f"STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root"
+        return o, stl, None, None, why
+    if str(stl) not in meshes:
+        try:
+            import pyvista as pv
+        except ImportError:
+            return o, stl, None, None, "pyvista is not installed: no region check (the build123d extra installs it)"
+        meshes[str(stl)] = pv.read(str(stl))
+    votes = supports.band_enclosure(band, placement, meshes[str(stl)])
+    return o, stl, (max(votes, key=votes.get) if votes else None), votes, None
 
 
 def cmd_gcode_view(args):
