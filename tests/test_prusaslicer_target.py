@@ -570,7 +570,33 @@ def test_stage_centres_on_the_bed_the_target_checks_and_says_whose_it_is(tmp_pat
     assert _placed_centre(tmp_path / "staged" / "bar.3mf") == pytest.approx([90.0, 90.0])   # not the QC bed's (100, 90)
     assert "staged bar for prusaslicer on SYNTHPRINTER (its bed from smaller.ini): 1 part(s), 1 instance(s)" in out
     assert ("note: QC judged the parts against Synthetic printer (200 x 180 x 150 mm); they are placed on "
-            "SYNTHPRINTER (180 x 180 x 150 mm)") in out
+            "SYNTHPRINTER (180 x 180 x 150 mm), whose width differs\n") in out
+
+
+def test_stage_notes_which_dimension_of_the_build_volume_differs(tmp_path, monkeypatch, capsys):
+    proj = staged_project(tmp_path, monkeypatch, capsys)        # the QC printer: synthetic, 200 x 180 x 150
+    lower = tf.write_ini(tmp_path / "lower.ini", tf.synthetic_config(max_print_height="120"))
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", lower, "-o", tmp_path / "a")
+    assert rc == 0, err                                          # the same bed: only its height differs
+    assert ("note: QC judged the parts against Synthetic printer (200 x 180 x 150 mm); they are placed on "
+            "SYNTHPRINTER (200 x 180 x 120 mm), whose height differs\n") in out
+    other = tf.write_ini(tmp_path / "other.ini",
+                         tf.synthetic_config(bed_shape="0x0,190x0,190x170,0x170", max_print_height="120"))
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", other, "-o", tmp_path / "b")
+    assert rc == 0, err
+    assert "SYNTHPRINTER (190 x 170 x 120 mm), whose width, depth and height differ\n" in out
+
+
+def test_stage_asks_for_finalized_parts_before_the_targets_configuration(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_engine_for", lambda name, cfg: FakeBoxEngine())
+    fresh = tmp_path / "designs" / "fresh"
+    fresh.mkdir(parents=True)
+    (fresh / "agentcad.toml").write_text(
+        f'[project]\nname = "fresh"\nengine = "fake"\n[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\n')
+    cli.main(["session", "start", str(fresh)])
+    capsys.readouterr()
+    rc, out, err = run_cli(capsys, "stage", fresh, "--target", PRUSA)          # and no base configuration either
+    assert rc == 2 and err == "Error: fresh has no export of its latest iteration: finalize it first\n", err
 
 
 def test_stage_centres_on_a_bed_whose_origin_is_not_a_corner(tmp_path, monkeypatch, capsys):

@@ -135,7 +135,7 @@ Not built: support blockers and enforcers. A job has no way to state the region 
 
 Before any file is written, every instance of every part is posed with its full placement and checked against the bed of the configuration that will slice it: `bed_shape` (its outline) and `max_print_height`. A part below the bed, higher than the printer prints, or reaching outside the outline is refused with the part, how far it reaches and the printer's name, and nothing is written. A rectangular bed is tested by its extent, any other outline by the corners of the part's footprint. A part exactly at an edge is on the bed.
 
-`agentcad stage` centres the parts on the bed of this configuration, the bed the check reads, wherever `bed_shape` puts its origin (some put (0, 0) mid-bed). When the project's QC printer (`agentcad-qc`) has another build volume, stage says so in a note: QC judged the parts against that other printer. A plate of many copies can run past the bed: the refusal names the first copies that do and counts the rest.
+`agentcad stage` centres the parts on the bed of this configuration, the bed the check reads, wherever `bed_shape` puts its origin (some put (0, 0) mid-bed). When the project's QC printer (`agentcad-qc`) has another build volume, stage says so in a note that names the dimension that differs (width, depth or height): QC judged the parts against that other printer. A plate of many copies can run past the bed: the refusal names the first copies that do and counts the rest.
 
 ## 5 Reading
 
