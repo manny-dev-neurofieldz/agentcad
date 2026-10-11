@@ -1,0 +1,9 @@
+[job]
+date = "2026-03-01"
+planned = "2026-03-10"
+printer = "MK4"
+material = "PETG"
+
+[[item]]
+part = "bracket"
+quantity = 2

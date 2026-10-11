@@ -1,0 +1,11 @@
+[job]
+date = "2026-03-02"
+printer = "Form 3"
+material = "Flexible resin"
+
+[[item]]
+part = "gasket"
+
+[outcome]
+result = "Not printed: the gasket moved to a moulded part."
+verdict = "cancelled"

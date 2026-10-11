@@ -1,0 +1,21 @@
+{
+  "written": "2026-10-10",
+  "as_of": "2026-10-10",
+  "note": "Written before any code derives work from records: what these records say is owed as of as_of. A derivation must find exactly these duties and none of the not_owed items.",
+  "duties": [
+    {"kind": "record_verdict", "job": "2026-02-01_mk4_pla_clip", "printed": "2026-02-01",
+     "why": "printed, and its verdict is pending"},
+    {"kind": "record_verdict", "job": "2026-03-05_mk4_pla_clip_pair", "printed": "2026-03-06",
+     "why": "printed, and it has no verdict"},
+    {"kind": "print_by_plan", "job": "2026-03-01_mk4_petg_bracket_v2", "planned": "2026-03-10",
+     "why": "its planned day has passed and it has not printed"},
+    {"kind": "refit", "parts": ["bracket", "clip"], "recorded": "2026-01-04T10:00:00",
+     "changed": ["parts/clip/source/clip.scad"],
+     "why": "a source the fit measured has changed since it was recorded (recorded on both parts: one duty)"}
+  ],
+  "not_owed": [
+    {"job": "2026-01-05_mk4_pla_bracket", "why": "printed and judged a success"},
+    {"job": "2026-03-02_form3_resin_gasket", "why": "cancelled: it will not print"},
+    {"fit": ["latch", "clip"], "why": "every source it measured is unchanged"}
+  ]
+}

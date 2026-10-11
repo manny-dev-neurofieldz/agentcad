@@ -121,6 +121,7 @@ Fit reads build123d programs and STEP files as exact shapes; any other part is r
 ## 7 Integration with Other Policies
 
 - `agentcad-session`: finalize runs the declared mates; the print manifest carries the fit table.
+- `agentcad-records`: what a fit record must hold wherever it is kept (a manifest, or a part record's `[fit.<mate>]` table), and the check that reads it.
 - `agentcad-policies`: how this policy is found and read.
 
 ## 8 Anti-Patterns

@@ -1,0 +1,8 @@
+# Parts the library knows, including one that has no folder yet.
+[[part]]
+slug = "bracket"
+name = "Slotted bracket"
+
+[[part]]
+slug = "gasket"
+name = "Resin gasket (no part folder yet)"
