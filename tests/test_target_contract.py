@@ -80,6 +80,9 @@ def exercise(name, job, tmp_path):
     if "printer_config" in target.capabilities:
         printer = target.printer(case.config)
         assert isinstance(printer, printers.Printer) and all(v > 0 for v in printer.build_volume)
+    placed_on = target.job_printer(dict(case.options))
+    assert placed_on is None or (isinstance(placed_on, printers.Printer) and "printer_config" in target.capabilities), \
+        "a job is placed on a printer the target describes, or the target names none"
     if "slice" in target.capabilities:
         assert Path(target.slice(case.project, tmp_path / "sliced")).is_file()
 

@@ -301,9 +301,10 @@ def user_base_config() -> Optional[Path]:
     return chosen if chosen.is_absolute() else path.parent / chosen
 
 
-def base_config_path(job: Job) -> Path:
-    """The base configuration of a job: the option the command line gave, else the user's default."""
-    given = job.options.get("base_config")
+def base_config_path(options: Dict[str, Any]) -> Path:
+    """The base configuration of a job, from its options: the one the command line gave, else the user's
+    default."""
+    given = options.get("base_config")
     if given:
         return Path(given)
     default = user_base_config()
@@ -329,7 +330,7 @@ class PrusaSlicerTarget(OutputTarget):
         twice = sorted(n for n, k in names.items() if k > 1)
         if twice:
             raise TargetError(f"two parts are named {', '.join(twice)}: a project names its objects apart")
-        base_path = base_config_path(job)
+        base_path = base_config_path(job.options)
         base = pconfig.load(base_path)
         pconfig.check_complete(base, base_path.name)
         resolved = resolve(job, base)
@@ -364,8 +365,12 @@ class PrusaSlicerTarget(OutputTarget):
     def printer(self, config_path: Path):
         config = pconfig.load(config_path)
         try:
-            return printers.from_slicer_config(config, name=Path(config_path).stem)
+            return printers.from_slicer_config(config, name=Path(config_path).stem, source=Path(config_path).name)
         except KeyError as e:
             raise TargetError(f"{Path(config_path).name} has no {e.args[0]}, which a printer is described by") from None
         except ValueError as e:
             raise TargetError(f"{Path(config_path).name}: bed_shape or max_print_height is not understood: {e}") from None
+
+    def job_printer(self, options: Dict[str, Any]):
+        """The printer of the job's base configuration: the bed its check reads."""
+        return self.printer(base_config_path(options))

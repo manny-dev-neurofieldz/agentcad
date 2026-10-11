@@ -391,8 +391,13 @@ def test_the_target_reads_all_three_kinds_of_output_and_describes_the_printer(tm
     for source in (tf.write_gcode(tmp_path / "s.gcode", config), tf.write_bgcode(tmp_path / "s.bgcode", config), project):
         assert target.read_settings(source)["layer_height"] == "0.31", source.name
     printer = target.printer(base)
-    assert printer == printers.from_slicer_config(pconfig.load(base), name="base"), "the registry's reading of a bed"
+    assert printer == printers.from_slicer_config(pconfig.load(base), name="base", source="base.ini"), \
+        "the registry's reading of a bed"
     assert (printer.build_volume, printer.nozzle_mm, printer.process) == ((200.0, 180.0, 150.0), 0.5, "fdm")
+    assert (printer.bed_origin, printer.bed_centre(), printer.source) == ((0.0, 0.0), (100.0, 90.0), "base.ini")
+    assert target.job_printer({"base_config": base}) == printer, "a job is placed on its base configuration's bed"
+    centred = target.printer(tf.write_ini(tmp_path / "c.ini", tf.synthetic_config(bed_shape="-100x-90,100x-90,100x90,-100x90")))
+    assert (centred.build_volume[:2], centred.bed_origin, centred.bed_centre()) == ((200.0, 180.0), (-100.0, -90.0), (0.0, 0.0))
     assert target.printer(project).build_volume == (200.0, 180.0, 150.0)
     with pytest.raises(TargetError, match="no bed_shape"):
         target.printer(tf.write_ini(tmp_path / "nobed.ini", tf.synthetic_config(bed_shape=None)))
@@ -446,7 +451,8 @@ def test_stage_writes_a_project_and_reports_conflicts_and_what_it_did_not_map(tm
                           '[slice.prusaslicer]\nlayer_height = 0.2\nfill_pattern = "honeycomb"\n')
     rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged")
     assert rc == 0 and err == ""
-    assert "staged bar for prusaslicer on Synthetic printer: 1 part(s), 1 instance(s)" in out
+    assert "staged bar for prusaslicer on SYNTHPRINTER (its bed from base.ini): 1 part(s), 1 instance(s)" in out
+    assert "note: QC judged" not in out                          # the QC printer and the base configuration agree
     assert "conflict: layer_height: [print] maps to '0.15', the native table says 0.2 (native kept)" in out
     assert "not mapped: material:" in out and "not mapped: print_orientation:" in out
     assert "note: base configuration: base.ini" in out and "note: material: [print] says PETG" in out
@@ -546,3 +552,65 @@ def test_stage_uses_the_users_default_base_configuration(tmp_path, monkeypatch, 
     rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "-o", tmp_path / "staged")
     assert rc == 0 and "note: base configuration: base.ini" in out and err == ""
     assert targets.get_target(PRUSA).read_settings(tmp_path / "staged" / "bar.3mf")["layer_height"] == "0.15"
+
+
+def _placed_centre(project, size=(20.0, 10.0, 40.0)):
+    """The bed x and y of the centre of a one-part plate's posed box (the part as staged_project exports it)."""
+    (item,) = read_plate(project)
+    corners = [[sum(item["transform"][i][j] * v for j, v in enumerate((x, y, z, 1.0))) for i in range(3)]
+               for x in (0, size[0]) for y in (0, size[1]) for z in (0, size[2])]
+    return [(min(c[i] for c in corners) + max(c[i] for c in corners)) / 2 for i in (0, 1)]
+
+
+def test_stage_centres_on_the_bed_the_target_checks_and_says_whose_it_is(tmp_path, monkeypatch, capsys):
+    proj = staged_project(tmp_path, monkeypatch, capsys)        # the QC printer: synthetic, 200 x 180 x 150
+    smaller = tf.write_ini(tmp_path / "smaller.ini", tf.synthetic_config(bed_shape="0x0,180x0,180x180,0x180"))
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", smaller, "-o", tmp_path / "staged")
+    assert rc == 0, err
+    assert _placed_centre(tmp_path / "staged" / "bar.3mf") == pytest.approx([90.0, 90.0])   # not the QC bed's (100, 90)
+    assert "staged bar for prusaslicer on SYNTHPRINTER (its bed from smaller.ini): 1 part(s), 1 instance(s)" in out
+    assert ("note: QC judged the parts against Synthetic printer (200 x 180 x 150 mm); they are placed on "
+            "SYNTHPRINTER (180 x 180 x 150 mm), whose width differs\n") in out
+
+
+def test_stage_notes_which_dimension_of_the_build_volume_differs(tmp_path, monkeypatch, capsys):
+    proj = staged_project(tmp_path, monkeypatch, capsys)        # the QC printer: synthetic, 200 x 180 x 150
+    lower = tf.write_ini(tmp_path / "lower.ini", tf.synthetic_config(max_print_height="120"))
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", lower, "-o", tmp_path / "a")
+    assert rc == 0, err                                          # the same bed: only its height differs
+    assert ("note: QC judged the parts against Synthetic printer (200 x 180 x 150 mm); they are placed on "
+            "SYNTHPRINTER (200 x 180 x 120 mm), whose height differs\n") in out
+    other = tf.write_ini(tmp_path / "other.ini",
+                         tf.synthetic_config(bed_shape="0x0,190x0,190x170,0x170", max_print_height="120"))
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", other, "-o", tmp_path / "b")
+    assert rc == 0, err
+    assert "SYNTHPRINTER (190 x 170 x 120 mm), whose width, depth and height differ\n" in out
+
+
+def test_stage_asks_for_finalized_parts_before_the_targets_configuration(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_engine_for", lambda name, cfg: FakeBoxEngine())
+    fresh = tmp_path / "designs" / "fresh"
+    fresh.mkdir(parents=True)
+    (fresh / "agentcad.toml").write_text(
+        f'[project]\nname = "fresh"\nengine = "fake"\n[output]\nbase_dir = "{tmp_path}"\nsub_dir = "designs"\n')
+    cli.main(["session", "start", str(fresh)])
+    capsys.readouterr()
+    rc, out, err = run_cli(capsys, "stage", fresh, "--target", PRUSA)          # and no base configuration either
+    assert rc == 2 and err == "Error: fresh has no export of its latest iteration: finalize it first\n", err
+
+
+def test_stage_centres_on_a_bed_whose_origin_is_not_a_corner(tmp_path, monkeypatch, capsys):
+    proj = staged_project(tmp_path, monkeypatch, capsys)
+    centred = tf.write_ini(tmp_path / "centred.ini", tf.synthetic_config(bed_shape="-100x-90,100x-90,100x90,-100x90"))
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", centred, "-o", tmp_path / "staged")
+    assert rc == 0, err                                          # it was refused as off the bed
+    assert _placed_centre(tmp_path / "staged" / "bar.3mf") == pytest.approx([0.0, 0.0])
+    assert "note: QC judged" not in out                          # the same bed, only placed elsewhere
+
+
+def test_stage_on_a_target_without_a_printer_of_its_own_centres_on_the_qc_printer(tmp_path, monkeypatch, capsys):
+    proj = staged_project(tmp_path, monkeypatch, capsys)
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", "generic", "-o", tmp_path / "staged")
+    assert rc == 0, err
+    assert "staged bar for generic on Synthetic printer (the QC printer's bed): 1 part(s), 1 instance(s)" in out
+    assert _placed_centre(tmp_path / "staged" / "bar.3mf") == pytest.approx([100.0, 90.0])

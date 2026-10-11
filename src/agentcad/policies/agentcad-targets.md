@@ -48,7 +48,7 @@ An output target turns finished parts (their meshes, their placement on the plat
 - `slice`: slice headless;
 - `read_output`: read the target's outputs and the settings they carry;
 - `map_intent`: map neutral print intent to the target's native settings;
-- `printer_config`: describe a printer from the target's printer configuration.
+- `printer_config`: describe a printer from the target's printer configuration, and the printer a job is placed on: the bed `agentcad stage` centres the parts on, so it is the bed the target checks. A target that uses no configuration names none, and stage centres on the QC printer.
 
 A capability a target does not declare raises an error that names the target and the capabilities it has; it is never a silent no-op, so a command can ask the registry what a target can do instead of trying and guessing.
 

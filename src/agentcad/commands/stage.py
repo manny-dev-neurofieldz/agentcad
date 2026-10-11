@@ -26,6 +26,18 @@ def _refuse(message):
     return 2
 
 
+def _size(printer):
+    return " x ".join(f"{v:g}" for v in printer.build_volume) + " mm"
+
+
+def _differs(printer, other):
+    """Which of the build volume's dimensions differ between two printers, as the note prints them."""
+    names = [n for n, a, b in zip(("width", "depth", "height"), printer.build_volume, other.build_volume)
+             if f"{a:g}" != f"{b:g}"]
+    said = ", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else "".join(names)
+    return f"whose {said} {'differ' if len(names) > 1 else 'differs'}"
+
+
 def cmd_stage(args):
     from agentcad import qc as qcmod
     from agentcad import targets
@@ -52,10 +64,10 @@ def cmd_stage(args):
         except targets.TargetError as e:
             return _refuse(e)
     qs = qcmod.settings(cfg) or qcmod.QCSettings()
-    printer = qcmod.printer_for(cfg, qs)
-    centre = (printer.build_volume[0] / 2.0, printer.build_volume[1] / 2.0)
+    qc_printer = qcmod.printer_for(cfg, qs)
+    options = {"base_config": Path(args.base_config)} if args.base_config else {}
     folders = cfg.part_projects() or [(Path(cfg.project_dir), cfg)]
-    parts, y_next = [], None
+    finalized = []                                  # the parts first: "finalize it first" before any target setting
     for folder, part_cfg in folders:
         try:
             session = DesignSession.load_state(Path(folder).name, engine=_engine_for(None, part_cfg), config=part_cfg)
@@ -65,6 +77,16 @@ def cmd_stage(args):
         stl = session.project.exports_dir / f"{session.name}_v{it.number}.stl" if it else None
         if stl is None or not stl.is_file():
             return _refuse(f"{session.name} has no export of its latest iteration: finalize it first")
+        finalized.append((session.name, stl, part_cfg))
+    try:
+        printer = target.job_printer(options)       # the bed the target will check, when it has one of its own
+    except targets.TargetError as e:
+        return _refuse(e)
+    bed_from = f"its bed from {printer.source}" if printer else "the QC printer's bed"
+    printer = printer or qc_printer
+    centre = printer.bed_centre()
+    parts, y_next = [], None
+    for part_name, stl, part_cfg in finalized:
         part_qc = qcmod.settings(part_cfg) or qs
         V, _ = read_stl(stl)
         T, extent = bed_transform(V, part_qc.pose if part_qc.pose is not None else qs.pose, centre)
@@ -72,22 +94,24 @@ def cmd_stage(args):
             T[1][3] += y_next
         y_next = (y_next or 0.0) + float(extent[1]) + GAP_MM
         copies = args.copies if args.copies else int(part_cfg.quantity or 1)
-        parts.append(targets.JobPart(session.name, stl, copies=copies, transform=T))
+        parts.append(targets.JobPart(part_name, stl, copies=copies, transform=T))
     native = targets.native_tables(cfg, target.name)
     _, conflicts = targets.layer_native(mapped, native)
-    options = {"base_config": Path(args.base_config)} if args.base_config else {}
     job = targets.Job(name, parts, intent=intent, native=native, options=options)
     out_dir = Path(args.output) if args.output else Path(cfg.project_dir) / "exports" / f"stage_{target.name}"
     try:
         written = target.write_job(job, out_dir)
     except targets.TargetError as e:
         return _refuse(e)
-    print(f"staged {name} for {target.name} on {printer.label}: {len(parts)} part(s), "
+    print(f"staged {name} for {target.name} on {printer.label} ({bed_from}): {len(parts)} part(s), "
           f"{sum(p.copies for p in parts)} instance(s)")
     for path in written:
         print(f"  {path}")
     for note in getattr(written, "notes", ()):
         print(f"  note: {note}")
+    if printer is not qc_printer and _size(printer) != _size(qc_printer):
+        print(f"  note: QC judged the parts against {qc_printer.label} ({_size(qc_printer)}); they are placed on "
+              f"{printer.label} ({_size(printer)}), {_differs(printer, qc_printer)}")
     for c in conflicts:
         print(f"  conflict: {c}")
     for u in unmapped:

@@ -32,6 +32,11 @@ class Printer:
     build_volume: Tuple[float, float, float]
     nozzle_mm: Optional[float] = None
     source: str = "built in"
+    bed_origin: Tuple[float, float] = (0.0, 0.0)    # the bed's lowest x and y: a slicer may put (0, 0) mid-bed
+
+    def bed_centre(self) -> Tuple[float, float]:
+        """The middle of the bed, in the frame parts are placed in."""
+        return (self.bed_origin[0] + self.build_volume[0] / 2.0, self.bed_origin[1] + self.build_volume[1] / 2.0)
 
     def defaults_layer(self) -> str:
         """How a finding names the layer these defaults come from."""
@@ -52,7 +57,8 @@ class Printer:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"name": self.name, "label": self.label, "process": self.process,
-                "build_volume": list(self.build_volume), "nozzle_mm": self.nozzle_mm, "source": self.source,
+                "build_volume": list(self.build_volume), "bed_origin": list(self.bed_origin),
+                "nozzle_mm": self.nozzle_mm, "source": self.source,
                 "defaults": self.defaults()}
 
 
@@ -124,12 +130,14 @@ def by_label(label: str, cfg=None) -> Optional[Printer]:
     return None
 
 
-def from_slicer_config(config: Mapping[str, str], name: str = "sliced") -> Printer:
-    """The printer a slicer configuration describes: bed from ``bed_shape``, height from
-    ``max_print_height``, nozzle from ``nozzle_diameter`` (FDM; a sliced file carries all three)."""
+def from_slicer_config(config: Mapping[str, str], name: str = "sliced",
+                       source: str = "slicer configuration") -> Printer:
+    """The printer a slicer configuration describes: bed from ``bed_shape`` (its extent, and its lowest corner
+    as the origin), height from ``max_print_height``, nozzle from ``nozzle_diameter`` (FDM; a sliced file
+    carries all three)."""
     pts = [tuple(float(v) for v in p.split("x")) for p in str(config["bed_shape"]).split(",") if "x" in p]
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
     nozzle = config.get("nozzle_diameter")
     return Printer(name, str(config.get("printer_model") or config.get("printer_settings_id") or name), "fdm",
                    (max(xs) - min(xs), max(ys) - min(ys), float(config["max_print_height"])),
-                   float(str(nozzle).split(",")[0]) if nozzle else None, "slicer configuration")
+                   float(str(nozzle).split(",")[0]) if nozzle else None, source, (min(xs), min(ys)))
