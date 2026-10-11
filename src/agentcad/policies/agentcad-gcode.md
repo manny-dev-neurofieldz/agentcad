@@ -79,9 +79,9 @@ The summary checks itself: its filament total is computed the way the slicer rep
 
 ## 4 Settings Against Intent
 
-`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with a `[slice]` table of intended values, keyed by the slicer's own setting names. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason. `--json` prints each finding with its key, severity, found and intended values, reason, source and sentence, and also the rule (`slice_setting`), the layer that set the limit (the intent's source) and the usual fix.
+`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with the intended values, keyed by the slicer's own setting names. The intent is read as the slicer's target sees it (`agentcad-print-intent`): the neutral `[print]` table as the target maps it (each mapped setting's reason names the `[print]` key it came from), then the bare `[slice]` table when the target is the file's default, then `[slice.<target>]`. A native value that differs from a mapped one wins, and the command prints the `conflict:`; each `[print]` key the target has no setting for is printed as `not checked:` with the reason; a `[print]` value the target cannot use is refused with exit status 2. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason. `--json` prints each finding with its key, severity, found and intended values, reason, source and sentence, and also the rule (`slice_setting`), the layer that set the limit (the intent's source) and the usual fix.
 
-With no `[slice]` table the command prints the file's key settings and says there is nothing to check against. That is not a pass. Print-host credentials in an embedded configuration are never printed.
+With no print or slice intent the command prints the file's key settings and says there is nothing to check against. That is not a pass. Print-host credentials in an embedded configuration are never printed.
 
 ## 5 Where Supports Touch
 
@@ -122,7 +122,7 @@ Settings that hold credentials or local paths (the print-host family and the pos
 
 ## 9 Anti-Patterns
 
-- **A clean check without intent**: no `[slice]` table means no verdict, not a passing one.
+- **A clean check without intent**: no `[print]` or `[slice]` intent means no verdict, not a passing one.
 - **Bed coordinates as part coordinates**: without placement, a band's x and y say where on the plate it is, not where on the part.
 - **Trusting a summary that disagrees with the file's stated total**: the disagreement is the first finding.
 - **Reading past a failed checksum**: `--no-verify` is for inspecting damage, not for silencing it.

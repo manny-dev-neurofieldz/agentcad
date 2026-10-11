@@ -1,0 +1,15 @@
+{
+  "project_name": "latch",
+  "part_name": "latch",
+  "fit": [
+    {
+      "recorded": "2026-03-04T09:30:00-05:00",
+      "mate": "hook",
+      "a": "source/latch.py",
+      "b": "../../parts/clip/source/clip.scad",
+      "verdict": "pass",
+      "a_snapshot": {"source": "source/latch.py", "sha256": "d97274e81d4ec6fb4c99e06b7555323eea72f40479028941c3b707076ab0896f", "params": {"hook": 2.0}},
+      "b_snapshot": {"source": "../../parts/clip/source/clip.scad", "sha256": "433baf2c9b0ce1dee8f03c87770149a10bd258102a04d99b4623b8aaaea65ea8"}
+    }
+  ]
+}

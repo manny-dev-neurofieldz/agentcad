@@ -1,0 +1,14 @@
+[job]
+date = "2026-01-05"
+printer = "MK4"
+material = "PLA"
+
+[[item]]
+part = "bracket"
+stl = "bracket.stl"
+quantity = 1
+
+[outcome]
+result = "Printed clean; the clip seats."
+date_printed = "2026-01-05"
+verdict = "success"

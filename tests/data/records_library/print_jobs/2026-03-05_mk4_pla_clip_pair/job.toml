@@ -1,0 +1,12 @@
+[job]
+date = "2026-03-05"
+printer = "MK4"
+material = "PLA"
+
+[[item]]
+part = "clip"
+quantity = 2
+
+[outcome]
+result = "Printed overnight."
+date_printed = "2026-03-06"
