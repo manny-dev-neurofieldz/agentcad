@@ -26,6 +26,10 @@ def _refuse(message):
     return 2
 
 
+def _size(printer):
+    return " x ".join(f"{v:g}" for v in printer.build_volume) + " mm"
+
+
 def cmd_stage(args):
     from agentcad import qc as qcmod
     from agentcad import targets
@@ -52,8 +56,15 @@ def cmd_stage(args):
         except targets.TargetError as e:
             return _refuse(e)
     qs = qcmod.settings(cfg) or qcmod.QCSettings()
-    printer = qcmod.printer_for(cfg, qs)
-    centre = (printer.build_volume[0] / 2.0, printer.build_volume[1] / 2.0)
+    qc_printer = qcmod.printer_for(cfg, qs)
+    options = {"base_config": Path(args.base_config)} if args.base_config else {}
+    try:
+        printer = target.job_printer(options)       # the bed the target will check, when it has one of its own
+    except targets.TargetError as e:
+        return _refuse(e)
+    bed_from = f"its bed from {printer.source}" if printer else "the QC printer's bed"
+    printer = printer or qc_printer
+    centre = printer.bed_centre()
     folders = cfg.part_projects() or [(Path(cfg.project_dir), cfg)]
     parts, y_next = [], None
     for folder, part_cfg in folders:
@@ -75,19 +86,21 @@ def cmd_stage(args):
         parts.append(targets.JobPart(session.name, stl, copies=copies, transform=T))
     native = targets.native_tables(cfg, target.name)
     _, conflicts = targets.layer_native(mapped, native)
-    options = {"base_config": Path(args.base_config)} if args.base_config else {}
     job = targets.Job(name, parts, intent=intent, native=native, options=options)
     out_dir = Path(args.output) if args.output else Path(cfg.project_dir) / "exports" / f"stage_{target.name}"
     try:
         written = target.write_job(job, out_dir)
     except targets.TargetError as e:
         return _refuse(e)
-    print(f"staged {name} for {target.name} on {printer.label}: {len(parts)} part(s), "
+    print(f"staged {name} for {target.name} on {printer.label} ({bed_from}): {len(parts)} part(s), "
           f"{sum(p.copies for p in parts)} instance(s)")
     for path in written:
         print(f"  {path}")
     for note in getattr(written, "notes", ()):
         print(f"  note: {note}")
+    if printer is not qc_printer and _size(printer) != _size(qc_printer):
+        print(f"  note: QC judged the parts against {qc_printer.label} ({_size(qc_printer)}); they are placed on "
+              f"{printer.label} ({_size(printer)})")
     for c in conflicts:
         print(f"  conflict: {c}")
     for u in unmapped:

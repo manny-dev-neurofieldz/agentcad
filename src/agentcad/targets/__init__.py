@@ -10,7 +10,8 @@ register under a short lower-case name, as engines do. Each declares the capabil
 * ``read_output``: read the target's outputs and the settings they carry (``read_settings(path)``);
 * ``map_intent``: map neutral print intent to native settings (``map_intent(intent)``, returning the
   settings and one note per stated key that has no setting, with the reason);
-* ``printer_config``: describe a printer from the target's printer configuration (``printer(path)``).
+* ``printer_config``: describe a printer from the target's printer configuration (``printer(path)``), and
+  the printer a job is placed on (``job_printer(options)``; None when the target uses no configuration).
 
 A capability a target does not declare raises :class:`NotSupported` naming the target, never a
 silent no-op, so adding the next target changes no command: the commands ask the registry what
@@ -109,6 +110,13 @@ class OutputTarget(ABC):
 
     def printer(self, config_path: Path):
         raise self._unsupported("printer_config")
+
+    def job_printer(self, options: Dict[str, Any]):
+        """The printer a job with these options is placed on, as the target's own configuration describes it, or
+        None when the target has none. ``agentcad stage`` centres the parts on this printer's bed, else on the QC
+        printer's, so the bed the parts are centred on is the bed the target checks. A target that answers
+        declares ``printer_config``."""
+        return None
 
 
 _REGISTRY: Dict[str, Type[OutputTarget]] = {}
