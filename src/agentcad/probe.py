@@ -51,6 +51,8 @@ def load_shape(source: Path, defines: Optional[Dict[str, str]] = None):
     b3d = _b3d()
     source = Path(source)
     if source.suffix.lower() in (".step", ".stp"):
+        if defines:
+            print(f"agentcad: -D ignored: {source.name} is a STEP file, which has no parameters", file=sys.stderr)
         return b3d.import_step(str(source))
     if source.suffix.lower() == ".py":
         warnings: List[str] = []
@@ -425,6 +427,8 @@ def compare(original: Path, candidate: Path, planes: Sequence[str] = (), windows
             no = lo[0]["total_on_plane"] if lo else 0
             nc = lc[0]["total_on_plane"] if lc else 0
             entry: Dict[str, Any] = {"plane": spec, "loops_original": no, "loops_candidate": nc, "equal": no == nc}
+            if max_loops is not None:                       # the gate counts every loop; the cap shapes what is drawn
+                entry["kept_original"], entry["kept_candidate"] = len(lo), len(lc)
             if no != nc:
                 gate_ok = False
             if windows:

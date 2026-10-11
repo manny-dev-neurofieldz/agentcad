@@ -18,6 +18,23 @@ from agentcad.camera import MULTI_VIEW_DEFAULT, STANDARD_PRESETS
 SIGNED_NUMBER_LIST = re.compile(r"^-\d*\.?\d+(?:[eE][-+]?\d+)?[-+\d.eE,:]*$")
 
 
+def _requires(parser, flag, *any_of):
+    """Declare that ``flag`` takes effect only beside one of ``any_of``. Given without them, :func:`main`
+    names it on stderr as ignored, so a flag never does nothing in silence."""
+    parser.set_defaults(_requires=[*(parser.get_default("_requires") or []), (flag, any_of)])
+
+
+def _given(args, flag):
+    value = getattr(args, flag.lstrip("-").replace("-", "_"), None)
+    return value is not None and value is not False and value != []        # 0 is a value given
+
+
+def _say_ignored(args):
+    for flag, any_of in getattr(args, "_requires", None) or ():
+        if _given(args, flag) and not any(_given(args, f) for f in any_of):
+            print(f"agentcad: {flag} ignored: it takes effect with {' or '.join(any_of)}", file=sys.stderr)
+
+
 def _parse_defines(define_list):
     """Parse ['-D', 'key=value', ...] into a dict."""
     defines = {}
@@ -765,6 +782,10 @@ def cmd_probe_section(args):
 
     if Path(args.source).suffix.lower() == ".stl":
         return _probe_section_mesh(args, Path(args.source))
+    for flag, value in (("--axis", args.axis), ("--axis-center", args.axis_center)):
+        if value is not None:
+            print(f"agentcad: {flag} ignored: it places an STL's radial and axial extents; {args.source} is read "
+                  f"exactly", file=sys.stderr)
     shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
     planes = args.planes or ["z=mid"]
     want_arcs, chain_n, tols, min_len = _recovery(args)
@@ -824,7 +845,8 @@ def cmd_probe_inventory(args):
         else:
             print(f"  {c['type']}: no axis ({c.get('axis_error')})")
     for p in inv.get("planes") or []:
-        print(f"{p['plane']}: {p['n_loops']} loop(s)")
+        kept = len(p.get("loops") or [])
+        print(f"{p['plane']}: {p['n_loops']} loop(s)" + (f", {kept} kept" if kept != p["n_loops"] else ""))
     if args.output:
         print(f"inventory.json: {probe.write_json(inv, Path(args.output))}")
 
@@ -833,10 +855,14 @@ def cmd_probe_draft(args):
     """Will the part leave its mold: draft per face against a pull direction, with an optional gate."""
     from agentcad import probe
 
-    shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    try:
+        shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
+    except ValueError as e:            # an STL, for one: draft is judged on exact faces
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
     pull = [float(v) for v in args.pull.split(",")] if args.pull else [0.0, 0.0, 1.0]
     res = probe.draft_analysis(shape, pull=pull, samples=args.samples)
-    print("\n".join(probe.render_draft(res, args.min_draft, show=args.show)))
+    print("\n".join(probe.render_draft(res, args.min_draft, show=12 if args.show is None else args.show)))
     if args.output:
         print(f"draft.json: {probe.write_json(res, Path(args.output))}")
     if args.min_draft is not None and probe.draft_failures(res, args.min_draft):
@@ -847,6 +873,10 @@ def cmd_probe_fillet(args):
     """Why a fillet fails: the selected chain on the live part at the step it is applied."""
     from agentcad import probe
 
+    if Path(args.source).suffix.lower() != ".py":
+        print(f"Error: probe fillet re-runs a build123d program up to its fillet or chamfer call; {args.source} is not "
+              f"a program", file=sys.stderr)
+        sys.exit(2)
     radii = [float(v) for v in args.radii.split(",")] if args.radii else (1.0, 0.6, 0.4, 0.25)
     res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
                              defines=_parse_defines(args.define) if args.define else None)
@@ -873,6 +903,8 @@ def cmd_gcode_info(args):
     """The file header, the block table and the metadata of a .bgcode."""
     from agentcad.gcode import bgcode
 
+    if args.no_verify:
+        print("warning: CRC checks skipped (--no-verify)", file=sys.stderr)
     g = bgcode.read(Path(args.file), verify=not args.no_verify)
     print(f"bgcode version {g.version}, checksums {'CRC32' if g.checksum_type == 1 else 'none'}, {len(g.blocks)} blocks")
     counts = {}
@@ -951,17 +983,19 @@ def cmd_gcode_check(args):
         print(f"Error: {source_path}: {e}", file=sys.stderr)
         return 2
     label = f"{source_path.name} [slice]" if source_path else ""
-    if not args.json:
-        for c in conflicts:
-            print(f"  conflict: {c}")
-        for n in notes:
-            print(f"  not checked: [print] {n}")
+    said = sys.stderr if args.json else sys.stdout          # with --json, stdout carries only the findings
+    for c in conflicts:
+        print(f"  conflict: {c}", file=said)
+    for n in notes:
+        print(f"  not checked: [print] {n}", file=said)
     if not intent:
+        if args.json:
+            print("[]")
         print(f"{Path(args.file).name}: no print or slice intent declared" + (f" in {source_path}" if source_path else "")
-              + "; the file's key settings, without a verdict:")
+              + "; the file's key settings, without a verdict:", file=said)
         for k in check.KEY_SETTINGS:
             if k in cfg:
-                print(f"  {k} = {cfg[k]}")
+                print(f"  {k} = {cfg[k]}", file=said)
         return 0
     findings = check.check(cfg, intent, label)
     if args.json:
@@ -1020,6 +1054,10 @@ def cmd_gcode_supports(args):
     if args.json:
         print(json.dumps([dict(b.__dict__, object_frame=supports.in_object_frame(b, placement)) for b in bands],
                          indent=2))
+        if args.png:
+            _supports_png(Path(args.png), bands, placement, {}, Path(args.stl_root or Path(args.placement).parent)
+                          if args.placement else None)
+            print(f"render: {args.png}", file=sys.stderr)
         return
     if not bands:
         print(f"{path.name}: no support touches a part (contact distance {cd} mm)")
@@ -1110,13 +1148,26 @@ def cmd_compare(args):
     """Loop-count gate per plane, sampled deviation both ways, overlay PNGs."""
     from agentcad import probe
 
+    defines = _parse_defines(args.define) if args.define else None
+    if defines and Path(args.candidate).suffix.lower() != ".py":
+        what = "a mesh" if Path(args.candidate).suffix.lower() == ".stl" else "a STEP file"
+        print(f"agentcad: -D ignored: it sets the parameters of a program candidate; {args.candidate} is {what}",
+              file=sys.stderr)
+        defines = None
+    if args.planes and any(Path(p).suffix.lower() == ".stl" for p in (args.original, args.candidate)):
+        for flag, value in (("--window", args.window), ("--max-loops", args.max_loops)):
+            if value:
+                print(f"agentcad: {flag} ignored: a mesh has no exact loops on --planes to read it on", file=sys.stderr)
     res = probe.compare(Path(args.original), Path(args.candidate), planes=args.planes or [],
                         windows=_windows_arg(args.window) or None,
                         out_dir=Path(args.output_dir) if args.output_dir else None,
-                        defines=_parse_defines(args.define) if args.define else None, max_loops=args.max_loops)
+                        defines=defines, max_loops=args.max_loops)
     for p in res.get("planes", []):
         mark = "ok" if p["equal"] else "DIFFERENT"
-        print(f"{p['plane']}: loops {p['loops_original']} vs {p['loops_candidate']} {mark}")
+        kept = (f" ({p['kept_original']} and {p['kept_candidate']} kept)"
+                if (p.get("kept_original"), p.get("kept_candidate")) != (p['loops_original'], p['loops_candidate'])
+                and "kept_original" in p else "")
+        print(f"{p['plane']}: loops {p['loops_original']} vs {p['loops_candidate']} {mark}{kept}")
         for name, w in (p.get("windows") or {}).items():
             if "p95" in w:
                 print(f"  window {name}: p95 {w['p95']:.4g}, max {w['max']:.4g}")
@@ -1161,6 +1212,10 @@ def cmd_fit(args):
         windows[name] = vals
     a_defs = _parse_defines(args.a_define) if args.a_define else {}
     b_defs = _parse_defines(args.b_define) if args.b_define else {}
+    for flag, part, defs in (("--a-define", args.a, a_defs), ("--b-define", args.b, b_defs)):
+        if defs and Path(part).suffix.lower() != ".py":
+            print(f"agentcad: {flag} ignored: {part} is not a program, so it has no parameters", file=sys.stderr)
+            defs.clear()
     if args.mates_from:
         sides = {str(a_defs.get("part", "")), str(b_defs.get("part", ""))} - {""}
         for name, m in fitmod.load_mates(Path(args.mates_from)).items():
@@ -1230,10 +1285,10 @@ def cmd_fit(args):
     try:
         res = fitmod.fit(Path(args.a), Path(args.b), transform=transform,
                          a_defines=a_defs or None, b_defines=b_defs or None,
-                         offset=offset, spin_deg=args.spin, spin_axis=args.spin_axis, windows=windows or None,
-                         sweep_axis=args.sweep, sweep_travel=args.travel,
+                         offset=offset, spin_deg=args.spin or 0.0, spin_axis=args.spin_axis or "z", windows=windows or None,
+                         sweep_axis=args.sweep, sweep_travel=10.0 if args.travel is None else args.travel,
                          out_dir=Path(args.output_dir) if args.output_dir else None,
-                         sweep_steps=args.sweep_steps, sample_step=args.step,
+                         sweep_steps=10 if args.sweep_steps is None else args.sweep_steps, sample_step=args.step,
                          contact_mm=None if args.contact_mm < 0 else args.contact_mm, frame=frame)
     except (ValueError, FileNotFoundError) as e:     # e.g. an OpenSCAD part: fit reads exact shapes only
         print(f"Error: {e}", file=sys.stderr)
@@ -1449,6 +1504,10 @@ def _register_probe(sub, groups):
     ps.add_argument("--tangent-tol", type=float, default=None, metavar="MM",
                     help="With --arcs or --chain: how far the centre distance may be from the tangent one before a joint is "
                          "not tangent (default 0.01)")
+    _requires(ps, "--fit-tol", "--arcs", "--chain")
+    _requires(ps, "--tangent-tol", "--arcs", "--chain")
+    _requires(ps, "--min-len", "--chain")
+    _requires(sub_probe.choices["inventory"], "--max-loops", "--planes")
 
     pf = sub_probe.add_parser("fillet", help="Why a fillet fails: the selected chain on the LIVE part at the call, steps under 0.2 mm, sizes each edge takes")
     pf.add_argument("source", help="build123d program")
@@ -1465,7 +1524,8 @@ def _register_probe(sub, groups):
     pd.add_argument("--pull", default=None, help="Pull direction x,y,z (default 0,0,1)")
     pd.add_argument("--min-draft", type=float, default=None, help="Fail (exit 1) when a side face has less draft than this, in degrees")
     pd.add_argument("--samples", type=int, default=7, help="Grid samples per face side (default 7)")
-    pd.add_argument("--show", type=int, default=12, help="Failing faces to list (default 12)")
+    pd.add_argument("--show", type=int, default=None, help="With --min-draft: failing faces to list (default 12)")
+    _requires(pd, "--show", "--min-draft")
     pd.add_argument("-o", "--output", default=None, help="Write draft.json here")
     pd.add_argument("-D", "--define", action="append", metavar="VAR=VAL", help=DEFINE_HELP)
     pd.set_defaults(func=cmd_probe_draft)
@@ -1490,9 +1550,11 @@ def _register_gcode(sub, groups):
     pg.set_defaults(func=cmd_gcode_summary)
     pg = sub_gcode.add_parser("check", help="Compare a sliced file's settings with the [slice] intent; exit 1 on an error")
     pg.add_argument("file", help="Sliced file (.bgcode or plain G-code), or a PrusaSlicer project 3MF whose settings to check")
-    pg.add_argument("--project", default=None, help="Project folder or agentcad.toml carrying the [slice] table")
-    pg.add_argument("--intent", default=None,
-                    help="Any TOML file with [print] or [slice] tables (a job.toml, for one), read as --project reads one")
+    source = pg.add_mutually_exclusive_group()
+    source.add_argument("--project", default=None, help="Project folder or agentcad.toml carrying the [slice] table")
+    source.add_argument("--intent", default=None,
+                        help="Any TOML file with [print] or [slice] tables (a job.toml, for one), read as --project reads one "
+                             "(one or the other)")
     pg.add_argument("--json", action="store_true", help="Findings as JSON, each with its sentence")
     pg.set_defaults(func=cmd_gcode_check)
     pg = sub_gcode.add_parser("supports", help="Where supports touch each object: contact bands (bed frame)")
@@ -1504,15 +1566,19 @@ def _register_gcode(sub, groups):
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
     pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
+    _requires(pg, "--stl-root", "--placement")
     pg.set_defaults(func=cmd_gcode_supports)
     pg = sub_gcode.add_parser("view", help="A standalone page of the toolpaths: feature colours, toggles, layer range")
     pg.add_argument("file", help=SLICED_FILE_HELP)
-    pg.add_argument("-o", "--output", default=None, help="Page path (default: <file>.toolpaths.html)")
+    page = pg.add_mutually_exclusive_group()
+    page.add_argument("-o", "--output", default=None, help="Page path (default: <file>.toolpaths.html)")
     pg.add_argument("--budget-mb", type=float, default=8.0, help="Embedded toolpath budget; over it, every Nth layer")
     pg.add_argument("--placement", default=None, help="Placement sidecar: mark support contact cells (red in a cavity)")
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to")
-    pg.add_argument("--artifact", metavar="DIR", default=None,
-                    help="Write DIR/index.html as a page fragment (no document shell) plus files.json, for an artifact host")
+    page.add_argument("--artifact", metavar="DIR", default=None,
+                      help="Write DIR/index.html as a page fragment (no document shell) plus files.json, for an artifact host "
+                           "(instead of -o)")
+    _requires(pg, "--stl-root", "--placement")
     pg.set_defaults(func=cmd_gcode_view)
     pg = sub_gcode.add_parser("thumbnails", help="Write the thumbnails a .bgcode carries")
     pg.add_argument("file", help=SLICED_FILE_HELP)
@@ -1532,7 +1598,9 @@ def _register_compare_fit(sub, groups):
     p_cmp.add_argument("--max-loops", type=int, default=None,
                        help="Keep at most N loops per plane (printed when applied; default none)")
     p_cmp.add_argument("-D", "--define", action="append", metavar="VAR=VAL",
-                       help="Override a model parameter of a program input (repeatable)")
+                       help="Override a model parameter of the candidate, when it is a program (repeatable)")
+    _requires(p_cmp, "--window", "--planes")
+    _requires(p_cmp, "--max-loops", "--planes")
     p_cmp.set_defaults(func=cmd_compare)
 
     p_fit = sub.add_parser("fit", help="Pose two parts and measure interference, clearance, mate windows, insertion")
@@ -1540,8 +1608,8 @@ def _register_compare_fit(sub, groups):
     p_fit.add_argument("a", help="First part (STEP or build123d source); the fixed one")
     p_fit.add_argument("b", help="Second part, posed by --mate, --map or --offset/--spin")
     p_fit.add_argument("--offset", default=None, metavar="X,Y,Z", help="Translation of B in mm (default 0,0,0)")
-    p_fit.add_argument("--spin", type=float, default=0.0, help="Rotation of B in degrees about --spin-axis")
-    p_fit.add_argument("--spin-axis", default="z", choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
+    p_fit.add_argument("--spin", type=float, default=None, help="Rotation of B in degrees about --spin-axis (default 0)")
+    p_fit.add_argument("--spin-axis", default=None, choices=["x", "y", "z"], help="Axis of the --spin rotation (default z)")
     p_fit.add_argument("--map", nargs="+", metavar="KEY=VALUE", default=None,
                        help="Pose B by axis=x|y|z spin=DEG offset=x,y,z: a turn about the axis, then the offset "
                             "(instead of --offset/--spin)")
@@ -1555,8 +1623,8 @@ def _register_compare_fit(sub, groups):
     p_fit.add_argument("--window", action="append", metavar="NAME=x0,y0,z0,x1,y1,z1", help="Mate window (repeatable)")
     p_fit.add_argument("--mates-from", default=None, metavar="PROJECT", help="Read [mates] windows from a project's agentcad.toml")
     p_fit.add_argument("--sweep", default=None, choices=["x", "y", "z"], help="Insertion sweep axis")
-    p_fit.add_argument("--travel", type=float, default=10.0, help="Insertion sweep travel in mm")
-    p_fit.add_argument("--sweep-steps", type=int, default=10, help="Positions along the insertion sweep (default 10)")
+    p_fit.add_argument("--travel", type=float, default=None, help="With --sweep: insertion sweep travel in mm (default 10)")
+    p_fit.add_argument("--sweep-steps", type=int, default=None, help="With --sweep: positions along the insertion sweep (default 10)")
     p_fit.add_argument("--step", type=float, default=None,
                        help="Surface sampling spacing in mm for window clearances and contacts "
                             "(default: part A's diagonal / 100)")
@@ -1570,6 +1638,11 @@ def _register_compare_fit(sub, groups):
                             "PROJECT; with no PROJECT, in both parts' own projects")
     p_fit.add_argument("--a-define", action="append", metavar="VAR=VAL", help="Override a parameter of part A (repeatable)")
     p_fit.add_argument("--b-define", action="append", metavar="VAR=VAL", help="Override a parameter of part B (repeatable)")
+    _requires(p_fit, "--spin-axis", "--spin")
+    _requires(p_fit, "--travel", "--sweep")
+    _requires(p_fit, "--sweep-steps", "--sweep")
+    _requires(p_fit, "--a-mates", "--mate")
+    _requires(p_fit, "--b-mates", "--mate")
     p_fit.set_defaults(func=cmd_fit)
 
 
@@ -1707,6 +1780,15 @@ def main(argv=None):
         sys.exit(0)
     if args.command == "session" and not getattr(args, "session_command", None):
         parser.parse_args(["session", "--help"])
-    rc = args.func(args)
+    _say_ignored(args)
+    from agentcad.gcode.bgcode import BadMagic, BGCodeError, ChecksumMismatch
+    try:
+        rc = args.func(args)
+    except BGCodeError as e:           # a sliced file that is not what it says it is: a message, not a traceback
+        hint = (" (not a binary G-code file: gcode info and gcode thumbnails read only .bgcode)" if isinstance(e, BadMagic)
+                else " (gcode decode and gcode info read past a checksum with --no-verify)"
+                if isinstance(e, ChecksumMismatch) else "")
+        print(f"Error: {getattr(args, 'file', '')}: {e}{hint}", file=sys.stderr)
+        sys.exit(1)
     if isinstance(rc, int) and rc:     # a command may return an exit status (gcode check: 1 on an error)
         sys.exit(rc)

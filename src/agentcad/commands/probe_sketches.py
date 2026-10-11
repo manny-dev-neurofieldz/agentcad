@@ -18,7 +18,7 @@ def cmd_probe_sketches(args):
     try:
         record = sketches.describe(sketches.load_dump(Path(args.dump)), args.sketch)
         if args.against:
-            sketches.apply_part(record, Path(args.against), args.tol)
+            sketches.apply_part(record, Path(args.against), DEFAULT_TOL if args.tol is None else args.tol)
     except sketches.DumpError as e:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -38,7 +38,9 @@ def register(subparsers, groups):
     p.add_argument("--against", default=None, metavar="PART",
                    help="STEP file or build123d program: label a dimension APPLIED when its section on the sketch plane carries it "
                         "(needs the build123d backend)")
-    p.add_argument("--tol", type=float, default=DEFAULT_TOL, metavar="MM",
+    p.add_argument("--tol", type=float, default=None, metavar="MM",
                    help="With --against: how close a section's radius or length must be to a drawn one (default 0.01)")
+    from agentcad.cli import _requires
+    _requires(p, "--tol", "--against")
     p.add_argument("-o", "--output", default=None, help="Write the record (all dimensions and labels) here as JSON")
     p.set_defaults(func=cmd_probe_sketches)

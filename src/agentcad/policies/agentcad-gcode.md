@@ -65,7 +65,7 @@ The sliced file is the last artifact before plastic and the only one that record
 
 Every gcode command accepts a Prusa binary G-code file (`.bgcode`) or a plain G-code file; a plain file passes through decoding unchanged, so the same command works on either. `agentcad gcode check` also accepts a PrusaSlicer project (a 3MF, told by its first bytes): it checks the configuration the project carries, as it checks a sliced file's. A 3MF written by another tool carries none, and the command says so. The other commands read toolpaths, which a project does not hold.
 
-A binary file is a sequence of blocks (file metadata, printer metadata, thumbnails, print metadata, slicer metadata, G-code), each with a checksum. The checksums are verified on every read; `--no-verify` skips them and says so on stderr. Use it only to inspect a file already known to be damaged.
+A binary file is a sequence of blocks (file metadata, printer metadata, thumbnails, print metadata, slicer metadata, G-code), each with a checksum. The checksums are verified on every read; `--no-verify` skips them and says so on stderr. Use it only to inspect a file already known to be damaged. A file that is not what the command reads (a checksum that fails, a plain file given to `info` or `thumbnails`, which read only the binary format) is an error that names the file and the reason, with exit status 1.
 
 ## 2 Decoding and Inspecting
 
@@ -79,7 +79,7 @@ The summary checks itself: its filament total is computed the way the slicer rep
 
 ## 4 Settings Against Intent
 
-`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`) compares the slicer settings embedded in the file with the intended values, keyed by the slicer's own setting names. The intent is read as the slicer's target sees it (`agentcad-print-intent`): the neutral `[print]` table as the target maps it (each mapped setting's reason names the `[print]` key it came from), then the bare `[slice]` table when the target is the file's default, then `[slice.<target>]`. A native value that differs from a mapped one wins, and the command prints the `conflict:`; each `[print]` key the target has no setting for is printed as `not checked:` with the reason; a `[print]` value the target cannot use is refused with exit status 2. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason. `--json` prints each finding with its key, severity, found and intended values, reason, source and sentence, and also the rule (`slice_setting`), the layer that set the limit (the intent's source) and the usual fix.
+`agentcad gcode check FILE --project DIR` (or `--intent FILE.toml`; one or the other, and given both the command refuses) compares the slicer settings embedded in the file with the intended values, keyed by the slicer's own setting names. The intent is read as the slicer's target sees it (`agentcad-print-intent`): the neutral `[print]` table as the target maps it (each mapped setting's reason names the `[print]` key it came from), then the bare `[slice]` table when the target is the file's default, then `[slice.<target>]`. A native value that differs from a mapped one wins, and the command prints the `conflict:`; each `[print]` key the target has no setting for is printed as `not checked:` with the reason; a `[print]` value the target cannot use is refused with exit status 2. A violated value is an error and the command exits 1; findings are sentences that name the key, both values and the declared reason. `--json` prints each finding with its key, severity, found and intended values, reason, source and sentence, and also the rule (`slice_setting`), the layer that set the limit (the intent's source) and the usual fix. With `--json`, stdout carries only the findings (`[]` when no intent is declared), and the `conflict:` and `not checked:` lines and the no-intent listing go to stderr.
 
 With no print or slice intent the command prints the file's key settings and says there is nothing to check against. That is not a pass. Print-host credentials in an embedded configuration are never printed.
 
@@ -87,7 +87,7 @@ With no print or slice intent the command prints the file's key settings and say
 
 `agentcad gcode supports FILE` finds the contact bands: the regions where support material lies within the contact distance (the file's own `support_material_contact_distance` unless `--contact-distance` is given) of a part, with each band's object, height range, area and bed position. Bands smaller than `--min-area` are hidden.
 
-Bands are reported in the bed frame. With a placement sidecar (`--placement`, schema `agentcad.placement/1` or `/2`; its STL paths are relative to the sidecar's folder unless `--stl-root` names another), each band is also placed in its part's own frame, and a band inside a cavity of the part is reported as such and makes the command exit 1. `--png` renders the parts with their contact cells.
+Bands are reported in the bed frame. With a placement sidecar (`--placement`, schema `agentcad.placement/1` or `/2`; its STL paths are relative to the sidecar's folder unless `--stl-root` names another; `--stl-root` takes effect with `--placement`, and alone it is named on stderr as ignored), each band is also placed in its part's own frame, and a band inside a cavity of the part is reported as such and makes the command exit 1. `--png` renders the parts with their contact cells, with `--json` too (the render's line then goes to stderr, so stdout stays JSON).
 
 ### 5.1 Testing a Band Without Placement
 
@@ -95,7 +95,7 @@ A band's height needs no placement: add the contact distance to the band's top h
 
 ## 6 The Toolpath Page
 
-`agentcad gcode view FILE` writes a standalone page of the toolpaths (to `<file>.toolpaths.html`, or the path `-o`/`--output` names): per-feature colours with toggles and a layer range. Toolpaths are embedded up to `--budget-mb`; above it every Nth layer is kept and the page says so. With `--placement` (and `--stl-root`, as for supports) the support contact cells are marked. `--artifact DIR` writes a page fragment for an artifact host.
+`agentcad gcode view FILE` writes a standalone page of the toolpaths (to `<file>.toolpaths.html`, or the path `-o`/`--output` names): per-feature colours with toggles and a layer range. Toolpaths are embedded up to `--budget-mb`; above it every Nth layer is kept and the page says so. With `--placement` (and `--stl-root`, as for supports) the support contact cells are marked. `--artifact DIR` writes a page fragment for an artifact host instead of the page; `-o` and `--artifact` are one or the other.
 
 ## 7 Comparing Two Slices
 
