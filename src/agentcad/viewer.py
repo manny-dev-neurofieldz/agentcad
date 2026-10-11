@@ -222,6 +222,19 @@ def _load_session_notes(state_file: Path) -> Dict[int, List[str]]:
     return notes_by_version
 
 
+def _load_session_banner(state_file: Path) -> Optional[str]:
+    """The banner the last finalize left when the QC gate held it back, from the session state's project
+    metadata; None when the last finalize was not held (or there is no state)."""
+    if not state_file.exists():
+        return None
+    try:
+        meta = json.loads(state_file.read_text()).get("project_metadata") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    banner = meta.get("qc_banner")
+    return banner if isinstance(banner, str) and banner else None
+
+
 def _load_session_findings(state_file: Path, engine) -> Dict[int, List[Dict]]:
     """Each iteration's findings, judged now from the measurements a session state file stored,
     against the engine's current rules (what the session would say if it were loaded)."""
@@ -312,6 +325,7 @@ def regenerate_from_project_dir(
     project.metadata["regenerated"] = datetime.now().isoformat()
     project.metadata["engine"] = engine.name
     project.metadata["regenerated_from"] = str(project_dir)
+    project.banner = _load_session_banner(project_dir / "_work" / "session.json")     # a held QC gate stays shown
 
     # Add variants in REVERSE order (latest first), matching session.finalize()
     sorted_versions = sorted(all_versions, reverse=True)

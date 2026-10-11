@@ -478,6 +478,8 @@ class DesignSession:
         # manifest back on an error, and the viewer is still written, with a banner
         self.qc_report, self.qc_failed = None, False
         self.project.banner = None
+        for key in ("held_by_qc", "qc_banner"):           # a finalize the gate does not hold clears an earlier hold
+            self.project.metadata.pop(key, None)
         from agentcad import qc as qcmod
         qs = qcmod.settings(self.config)
         if qs is not None:
@@ -499,6 +501,7 @@ class DesignSession:
             # held, not finalized: the viewer shows why; iterate on without reopening
             self._finalized = False
             self.project.metadata["held_by_qc"] = datetime.now().isoformat()
+            self.project.metadata["qc_banner"] = self.project.banner      # kept, so a viewer rebuilt from disk shows it
             self.project.metadata["iterations"] = self.iteration_count
             return self.project.generate_viewer()
 
