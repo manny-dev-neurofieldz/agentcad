@@ -81,8 +81,9 @@ def cmd_qc(args):
         else:
             layer = float(getattr(getattr(cfg, "print", None), "layer_height", 0.2) or 0.2)
             try:
+                runs = getattr(args, "max_runs", None)
                 report["sensitivity"] = qcmod.sensitivity(report, src, it.defines or session.defines or None,
-                                                          max_runs=args.max_runs, layer=layer)
+                                                          max_runs=16 if runs is None else runs, layer=layer)
             except (ValueError, RuntimeError) as e:
                 print(f"agentcad qc: no fixes measured: {e}", file=sys.stderr)
     if args.json:
@@ -109,6 +110,8 @@ def cmd_printers(args):
 
 
 def register(subparsers, groups):
+    from agentcad.cli import _requires        # here, not at import: the CLI imports this module
+
     pq = subparsers.add_parser("qc", help="Judge a project's latest iteration against its printer's design rules")
     pq.add_argument("project", help="Project name (folder under designs_dir) or path")
     pq.add_argument("--printer", default=None, help="Judge against this printer instead of the project's")
@@ -116,8 +119,9 @@ def register(subparsers, groups):
     pq.add_argument("--fixes", action="store_true",
                     help="For each error a feature claims, turn the knobs the feature names and say what each does "
                          "(build123d projects only)")
-    pq.add_argument("--max-runs", type=int, default=16, metavar="N",
+    pq.add_argument("--max-runs", type=int, default=None, metavar="N",
                     help="Rebuilds --fixes may make, the base included (default 16)")
+    _requires(pq, "--max-runs", "--fixes")      # None until given, so the default never counts as given
     pq.set_defaults(func=cmd_qc)
 
     pp = subparsers.add_parser("printers", help="The printers QC knows: process, build volume, nozzle, defaults")
