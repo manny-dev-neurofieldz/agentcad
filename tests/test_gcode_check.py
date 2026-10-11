@@ -1,4 +1,5 @@
 """Settings check: a sliced file's configuration against the project's declared [slice] intent."""
+import json
 import subprocess
 import sys
 
@@ -130,6 +131,23 @@ def test_a_bare_slice_table_belongs_to_the_default_target_only(tmp_path):
     (tmp_path / "b.toml").write_text('[print]\ntarget = "generic"\n[slice]\nbrim_width = 5\n'
                                      '[slice.prusaslicer]\nskirts = 0\n')
     assert check.intent_for(tmp_path / "b.toml")[0] == {"skirts": 0}
+
+
+def test_with_json_stdout_carries_only_the_findings_and_the_rest_goes_to_stderr(tmp_path):
+    g = tmp_path / "part.gcode"
+    g.write_text(SLICED)
+    (tmp_path / "job.toml").write_text(JOB.replace("brim_width =", "layer_height = 0.2\nbrim_width ="))
+    run = [sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())"]
+    r = subprocess.run(run + ["gcode", "check", str(g), "--intent", str(tmp_path / "job.toml"), "--json"],
+                       capture_output=True, text=True)
+    findings = json.loads(r.stdout)
+    assert findings and all("sentence" in f for f in findings)
+    assert "conflict: layer_height" in r.stderr and "not checked: [print] material" in r.stderr
+    (tmp_path / "none.toml").write_text('[job]\ndate = "2026-10-10"\n')
+    r = subprocess.run(run + ["gcode", "check", str(g), "--intent", str(tmp_path / "none.toml"), "--json"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and json.loads(r.stdout) == []
+    assert "no print or slice intent declared" in r.stderr
 
 
 def test_cli_reports_conflicts_and_unmapped_keys_and_refuses_an_unusable_print_value(tmp_path):
