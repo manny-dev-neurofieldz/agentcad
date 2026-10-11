@@ -671,6 +671,37 @@ def _loop_line(i, L):
     return f"  loop {i + 1}: length {L['length']:.4g}, {desc}{fit}"
 
 
+def _recovery(args):
+    """The arc recovery a section command asked for: (want_arcs, chain_n, tols, min_len); tols and min_len
+    are None when neither --arcs nor --chain is given."""
+    chain_n = getattr(args, "chain", None)
+    want_arcs = getattr(args, "arcs", False)
+    if not (want_arcs or chain_n is not None):
+        return want_arcs, chain_n, None, None
+    from agentcad import curves
+    tols = {k: v for k, v in (("fit_tol", args.fit_tol), ("tangent_tol", args.tangent_tol)) if v is not None}
+    return want_arcs, chain_n, tols, (args.min_len if args.min_len is not None else curves.MIN_LEN)
+
+
+def _write_chain(loops, spec, coord, n_planes, chain_n, min_len):
+    """Loop ``chain_n`` of a plane as a literal on stdout (the summary on stderr): 1 when an edge could not be
+    drawn, else 0. Exits 2 when the plane has no such loop."""
+    import re
+    from agentcad import curves
+    if not 1 <= chain_n <= len(loops):
+        print(f"Error: {spec} has {len(loops)} loop(s); there is no loop {chain_n}", file=sys.stderr)
+        sys.exit(2)
+    name = "LOOP" if n_planes == 1 else "LOOP_" + re.sub(r"[^A-Za-z0-9]+", "_", spec).strip("_").upper()
+    result = curves.chain_literal(loops[chain_n - 1]["arcs"], name=name, min_len=min_len,
+                                  header=f"loop {chain_n} of {spec} (at {coord:.4g})")
+    sys.stdout.write(result["text"])
+    for line in curves.chain_notes(result):
+        print(line, file=sys.stderr)
+    loops[chain_n - 1]["chain"] = {"name": name, "literal": result["text"], "complete": result["complete"],
+                                   "slivers": result["slivers"], "min_len": result["min_len"]}
+    return 0 if result["complete"] else 1                  # an edge was reported, not drawn: the chain has a gap
+
+
 def _probe_section_mesh(args, source):
     """Section loops of an STL: polylines from triangle-plane intersection, with radial and axial extents."""
     from agentcad import meshprobe, probe
@@ -687,45 +718,60 @@ def _probe_section_mesh(args, source):
             print(f"Error: --axis-center {args.axis_center!r}: expected two numbers A,B (the coordinates across the axis, "
                   f"in x, y, z order)", file=sys.stderr)
             sys.exit(2)
+    want_arcs, chain_n, tols, min_len = _recovery(args)
+    out = sys.stderr if chain_n is not None else sys.stdout        # with --chain, stdout carries only the literal
     mesh = meshprobe.load_mesh(source)
     data = {"source": str(source), "kind": "mesh",
             "note": "loops are polylines from triangle-plane intersection: the tessellation's section, not exact edges",
             "planes": []}
-    print(f"{source}: mesh, {mesh.n_triangles} triangles; {data['note']}")
-    for spec in args.planes or ["z=mid"]:
+    print(f"{source}: mesh, {mesh.n_triangles} triangles; {data['note']}", file=out)
+    planes = args.planes or ["z=mid"]
+    status = 0
+    for spec in planes:
         rec = probe.mesh_section_plane(mesh, spec, axis=args.axis, center=center, max_loops=args.max_loops)
         total, loops = rec["n_loops"], rec["loops"]
-        print(f"{spec} (at {rec['coordinate']:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""))
+        if tols is not None:
+            from agentcad import curves
+            for L in loops:
+                L["arcs"] = curves.recover_loop(L, spec, **tols)
+        print(f"{spec} (at {rec['coordinate']:.4g}): {total} loop(s)" + (f", {len(loops)} kept" if len(loops) != total else ""),
+              file=out)
         ex = rec["extents"]
         if ex:
             print(f"  extents about axis {ex['axis']} through ({ex['center'][0]:.4g}, {ex['center'][1]:.4g}): "
-                  f"radial {ex['radial'][0]:.4g} .. {ex['radial'][1]:.4g}, axial {ex['axial'][0]:.4g} .. {ex['axial'][1]:.4g}")
+                  f"radial {ex['radial'][0]:.4g} .. {ex['radial'][1]:.4g}, axial {ex['axial'][0]:.4g} .. {ex['axial'][1]:.4g}",
+                  file=out)
         for i, L in enumerate(loops[: args.show]):
             x = L["extents"]
             print(_loop_line(i, L) + ("" if L["closed"] else "; open chain")
-                  + f"; radial {x['radial'][0]:.4g} .. {x['radial'][1]:.4g}, axial {x['axial'][0]:.4g} .. {x['axial'][1]:.4g}")
+                  + f"; radial {x['radial'][0]:.4g} .. {x['radial'][1]:.4g}, axial {x['axial'][0]:.4g} .. {x['axial'][1]:.4g}",
+                  file=out)
+            if want_arcs:
+                from agentcad import curves
+                for line in curves.render_arcs(L["arcs"], show=args.show):
+                    print(f"    {line}", file=out)
+        if chain_n is not None:
+            status = _write_chain(loops, spec, rec["coordinate"], len(planes), chain_n, min_len) or status
         data["planes"].append(rec)
     if args.output:
-        print(f"loops.json: {probe.write_json(data, Path(args.output))}")
+        print(f"loops.json: {probe.write_json(data, Path(args.output))}", file=out)
+    return status or None
 
 
 def cmd_probe_section(args):
-    """Section loops of a shape on named planes, as loops.json; --arcs reads the lines and arcs in them, --chain N one loop as a literal."""
-    import re
+    """Section loops of a shape on named planes, as loops.json; --arcs reads the lines and arcs in them, --chain N one loop as a literal.
+    An STL's loops (polylines of its tessellation) are read the same way."""
     from agentcad import probe
 
     if Path(args.source).suffix.lower() == ".stl":
         return _probe_section_mesh(args, Path(args.source))
     shape = probe.load_shape(Path(args.source), defines=_parse_defines(args.define) if args.define else None)
     planes = args.planes or ["z=mid"]
-    chain_n = getattr(args, "chain", None)
-    want_arcs = getattr(args, "arcs", False)
-    recover = want_arcs or chain_n is not None
+    want_arcs, chain_n, tols, min_len = _recovery(args)
+    recover = tols is not None
     out = sys.stderr if chain_n is not None else sys.stdout        # with --chain, stdout carries only the literal
     if recover:
         from agentcad import curves
-        tols = {k: v for k, v in (("fit_tol", args.fit_tol), ("tangent_tol", args.tangent_tol)) if v is not None}
-        min_len = args.min_len if args.min_len is not None else curves.MIN_LEN
     status = 0
     data = {"source": str(args.source), "planes": []}
     for spec in planes:
@@ -743,19 +789,7 @@ def cmd_probe_section(args):
                 for line in curves.render_arcs(L["arcs"], show=args.show):
                     print(f"    {line}", file=out)
         if chain_n is not None:
-            if not 1 <= chain_n <= len(loops):
-                print(f"Error: {spec} has {len(loops)} loop(s); there is no loop {chain_n}", file=sys.stderr)
-                sys.exit(2)
-            name = "LOOP" if len(planes) == 1 else "LOOP_" + re.sub(r"[^A-Za-z0-9]+", "_", spec).strip("_").upper()
-            result = curves.chain_literal(loops[chain_n - 1]["arcs"], name=name, min_len=min_len,
-                                          header=f"loop {chain_n} of {spec} (at {coord:.4g})")
-            sys.stdout.write(result["text"])
-            for line in curves.chain_notes(result):
-                print(line, file=sys.stderr)
-            loops[chain_n - 1]["chain"] = {"name": name, "literal": result["text"], "complete": result["complete"],
-                                           "slivers": result["slivers"], "min_len": result["min_len"]}
-            if not result["complete"]:
-                status = 1                                       # an edge was reported, not drawn: the chain has a gap
+            status = _write_chain(loops, spec, coord, len(planes), chain_n, min_len) or status
         data["planes"].append({"plane": spec, "coordinate": coord, "n_loops": total, "loops": loops})
     if args.output:
         print(f"loops.json: {probe.write_json(data, Path(args.output))}", file=out)

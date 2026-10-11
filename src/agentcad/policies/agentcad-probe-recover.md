@@ -85,7 +85,7 @@ Recover curves when the source of a part is gone or was never code: a STEP file 
 Every number says where it came from. An exact edge keeps the numbers it has (`source` is `edge`, `rms` is 0). A fitted arc carries `rms` and `max` (the distances of its vertices from the fitted circle) and `n`, the count of vertices. An arc fitted to ten vertices with an `rms` close to the tolerance is a hypothesis, not a measurement; read those fields before building on a radius.
 
 
-An STL source is sectioned from its triangles, and `--axis` and `--axis-center` then choose the axis its radial and axial extents are measured about; `agentcad-probe-inspect` (section 4) governs that reading.
+An STL source is sectioned from its triangles, and `--axis` and `--axis-center` then choose the axis its radial and axial extents are measured about; `agentcad-probe-inspect` (section 4) governs that reading. Its loops are polylines of the tessellation, and `--arcs` and `--chain` read them as sections 3 and 4 describe, exactly as they read a sampled body's loops.
 
 ## 2 Reading Section Loops
 

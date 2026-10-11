@@ -1100,3 +1100,47 @@ def test_a_build123d_program_is_a_part_too(capsys, program, tmp_path):
     sketches([DUMP, "--against", source, "-o", out_json], capsys)
     plate = dims_of(json.loads(out_json.read_text()), "Plate sketch")
     assert "APPLIED" in plate[("circle", "radius", 2.0)]["labels"] and "APPLIED" in plate[("arc", "radius", 4.0)]["labels"]
+
+
+# --- the same recovery on a mesh's section loops -----------------------------------------------------
+
+def _slot_prism_stl(path, height=4.0):
+    """A binary STL of the stadium prism: the slot outline (2 degree facets) extruded from z 0 to ``height``."""
+    import struct
+    ring = np.asarray(slot_vertices(), dtype=float)
+    n, centre = len(ring), ring.mean(axis=0)
+    tri = []
+    for i in range(n):                                      # walls, then a fan over each (convex) cap
+        a, b = ring[i], ring[(i + 1) % n]
+        tri += [[(*a, 0), (*b, 0), (*b, height)], [(*a, 0), (*b, height), (*a, height)]]
+        tri += [[(*centre, 0), (*b, 0), (*a, 0)], [(*centre, height), (*a, height), (*b, height)]]
+    tri = np.asarray(tri, dtype=np.float32)
+    with open(path, "wb") as fh:
+        fh.write(b"\0" * 80 + struct.pack("<I", len(tri)))
+        for t in tri:
+            fh.write(struct.pack("<12fH", 0, 0, 0, *t.ravel(), 0))
+    return path
+
+
+def test_an_stl_section_is_read_as_lines_and_arcs_like_an_exact_one(tmp_path, capsys):
+    stl = _slot_prism_stl(tmp_path / "slot.stl")
+    out_json = tmp_path / "loops.json"
+    cli.main(["probe", "section", str(stl), "--planes", "z=2", "--arcs", "-o", str(out_json)])
+    out = capsys.readouterr().out
+    assert "recovered: 2 arc(s), 2 line(s)" in out
+    loop = json.loads(out_json.read_text())["planes"][0]["loops"][0]
+    arcs = [s for s in loop["arcs"]["segments"] if s["kind"] == "arc"]
+    assert len(arcs) == 2
+    for centre in ((5.0, 0.0), (-5.0, 0.0)):
+        a = match(arcs, "end", centre, 3.0)
+        assert abs(a["radius"] - 3.0) < 1e-3 and abs(abs(a["sweep_deg"]) - 180.0) < 0.5
+
+
+def test_an_stl_loop_chains_into_a_literal_on_stdout(tmp_path, capsys):
+    stl = _slot_prism_stl(tmp_path / "slot.stl")
+    status = cli.main(["probe", "section", str(stl), "--planes", "z=2", "--chain", "1"]) or 0
+    captured = capsys.readouterr()
+    assert status == 0
+    tree = ast.parse(captured.out)                          # stdout carries only the literal
+    assert any(isinstance(node, ast.Assign) for node in tree.body)
+    assert "mesh" in captured.err and "z=2" in captured.err
