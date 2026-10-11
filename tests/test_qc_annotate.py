@@ -352,6 +352,9 @@ def test_fixes_tell_a_wall_made_thick_from_a_wall_cut_away(tmp_path, capsys):
     except SystemExit:
         pass
     report = json.loads(capsys.readouterr().out)
+    walls = [c for c in report["claimed"] if c["kind"] == "wall"]
+    assert walls and all(c["normal"] is not None and sum(v * v for v in c["normal"]) == pytest.approx(1.0)
+                         for c in walls), walls       # each wall claim carries the line across it, or "gone" is unsaid
     (rec,) = report["sensitivity"]
     assert rec["feature"] == "end wall" and rec["base"]["value"] == pytest.approx(0.4, abs=0.01)
     (k,) = rec["knobs"]
@@ -361,6 +364,17 @@ def test_fixes_tell_a_wall_made_thick_from_a_wall_cut_away(tmp_path, capsys):
     assert "reach +2 leaves no material across the place: the material there is gone (a failure, not a fix)" in fix, fix
     assert "reach -2 leaves no wall under" in fix and "near it: cleared (2.400 mm across the place)" in fix, fix
     assert "cleared, or the material there is gone" not in fix, fix
+
+
+def test_a_fix_that_leaves_thin_material_across_the_place_says_look():
+    """The line across the place finds material that no wall region near it reported, still under the limit:
+    neither cleared nor gone, so the fix says to look (rare on a real build, so pinned on a record)."""
+    rec = {"rule": "min_wall", "kind": "wall", "threshold": 0.8, "base": {"value": 0.4},
+           "knobs": [{"name": "reach", "delta": 2, "verdict": "live", "plus": {"clear": True, "across_mm": 0.3},
+                      "minus": {"value": 0.5, "change": 0.1}}]}
+    assert qc._fix_sentence(rec, "thicken") == (
+        "thicken; measured at 0.400 mm: reach +2 leaves no wall under 1.6 mm near it, and 0.300 mm across the "
+        "place, under the limit: look, reach -2 gives 0.500 mm (+0.100)")
 
 
 @needs_b3d

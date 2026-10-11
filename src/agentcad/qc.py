@@ -663,8 +663,10 @@ def _thin(kind: str, measured: float, region: Dict[str, Any], lim, qs: QCSetting
     """A thin wall or floor judged at its place: an error under the minimum feature (only when a
     feature claims it), a warning under the minimum wall. ``rules`` are the wall rules the mesh can be
     read for (all of them, unless it is too coarse for one) and ``uncertainty`` how far the width may
-    be off. Returns (finding, part-frame point) or None."""
+    be off. Returns (finding, part-frame point, part-frame normal) or None: the normal is the line the
+    measure read across a wall at that point (a floor has none: its line is the vertical)."""
     point = _to_part_frame(region["at"], pose)
+    normal = _to_part_frame(region["normal"], pose) if region.get("normal") is not None else None
     feat = ann.claim(point, tol)
     fmin = ann.limit(feat, "min_feature_mm", lim) if "min_feature" in rules else None
     fwall = ann.limit(feat, "min_wall_mm", lim) if "min_wall" in rules else None
@@ -694,7 +696,7 @@ def _thin(kind: str, measured: float, region: Dict[str, Any], lim, qs: QCSetting
         message=f"a {kind}{name} {measured:.3f} mm thick at {where} (part frame) is {what} ({value:g} mm); "
                 f"{detail}{coarse}",
         **_claimed(kind, feat))
-    return finding, point
+    return finding, point, normal
 
 
 def check_walls(walls: Dict[str, Any], lim, qs: QCSettings, ann: Optional[Annotated] = None, pose=None, tol: float = 0.05,
@@ -749,7 +751,7 @@ def check_overhang(regions: List[Dict[str, Any]], lim, qs: QCSettings, ann: Opti
             "supported", rule="max_overhang", layer=layer, location=f"{where} in the part's frame",
             uncertainty=0.0, fix="re-pose the part, add a chamfer under the ledge, or plan supports there",
             message=(f"{r['area_mm2']:.0f} mm2 of faces{name} turned down up to {r['worst_deg']:.0f} deg from vertical "
-                     f"around {where} (part frame), past the {value:g} deg limit"), **_claimed("overhang", feat)), point))
+                     f"around {where} (part frame), past the {value:g} deg limit"), **_claimed("overhang", feat)), point, None))
     return out
 
 
@@ -777,7 +779,7 @@ def check_bridges(bridges: List[Dict[str, Any]], lim, qs: QCSettings, ann: Annot
             location=f"{where} in the part's frame", uncertainty=b["uncertainty_mm"],
             fix="shorten the span, add a support pillar, or plan supports in the print intent",
             message=(f"a bridge{name} spans {b['span_mm']:.1f} mm (width across its ends) at {where} (part frame), "
-                     f"longer than {value:g} mm; supports are not planned"), **_claimed("bridge", feat)), point))
+                     f"longer than {value:g} mm; supports are not planned"), **_claimed("bridge", feat)), point, None))
     return out, records
 
 
@@ -806,14 +808,15 @@ def _loosened(ann: Annotated, lim) -> Tuple[List[Dict[str, Any]], List[Finding]]
     return listed, found
 
 
-def _apply_suppressions(pairs, ann: Annotated, tol: float) -> Tuple[List[Tuple[Finding, Any]], List[Dict[str, Any]]]:
+def _apply_suppressions(pairs, ann: Annotated, tol: float) -> Tuple[List[Tuple[Any, ...]], List[Dict[str, Any]]]:
     kept, suppressed = [], []
-    for finding, point in pairs:
+    for entry in pairs:                           # (finding, point, ...): the rest stays with its finding
+        finding, point = entry[0], entry[1]
         hit = next((s for s in ann.suppressions if s["rule"] == finding.rule and (
             s.get("box") is None or (point is not None and all(
                 s["box"][i] - tol <= point[i] <= s["box"][i + 3] + tol for i in range(3))))), None)
         if hit is None:
-            kept.append((finding, point))
+            kept.append(entry)
         else:
             suppressed.append({"rule": finding.rule, "why": hit["why"], "source": hit["source"],
                                "finding": finding.sentence()})
@@ -860,8 +863,7 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
         import numpy as np
         from agentcad import meshprobe
         mesh = meshprobe.Mesh(mesh.path, mesh.tri + np.asarray(offset, dtype=float))
-    pairs: List[Tuple[Finding, Any]] = []
-    normals: Dict[Tuple[float, ...], List[float]] = {}     # a wall region's place -> the line across it, part frame
+    pairs: List[Tuple[Finding, Any, Any]] = []     # (finding, part-frame point, the line across it or None)
     not_measured: Dict[str, str] = {}
     sampled: Dict[str, Any] = {}
     loosened, loose_findings = _loosened(ann, lim)
@@ -875,7 +877,7 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
             not_measured["build_volume"] = "turned off in [qc] severity"
         else:
             pairs.append((check_build_volume(mesh.tri.reshape(-1, 3), printer, pose,
-                                             qs.severity.get("build_volume", RULES["build_volume"])), None))
+                                             qs.severity.get("build_volume", RULES["build_volume"])), None, None))
         in_force = limits_in_force(lim, ann)
         rules, noise, unreadable = WALL_RULES, 0.0, {}
         if res is not None:             # a coarse mesh is read for the rules it can show, with its resolution as the doubt
@@ -888,9 +890,6 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
             sampled["walls"] = {k: walls[k] for k in ("pitch_mm", "spacing_mm", "sections")}
             sampled["walls"]["layer_slivers"] = sum(r["kind"] == "layer_sliver" for r in walls["regions"])
             pairs += check_walls(walls, lim, qs, ann, pose, tol, rules, noise)
-            frame = pose if pose is not None else qs.pose                 # the pose check_walls places by
-            normals.update({tuple(_to_part_frame(r["at"], frame)): _to_part_frame(r["normal"], frame)
-                            for r in walls["regions"] if r.get("kind") == "wall" and "normal" in r})
             floors = measure_floors(part, max(wall_limits))
             sampled["floors"] = {"spacing_mm": floors["spacing_mm"], "lines": floors["lines"],
                                  "thin_areas": len(floors["regions"])}
@@ -913,13 +912,13 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
         kept, suppressed = _apply_suppressions(pairs, ann, tol)
     if mesh is None:
         kept, suppressed = [], []
-    found = [f for f, _ in kept]
+    found = [f for f, *_ in kept]
     by_name = {f["name"]: f for f in ann.features}
     claimed = [{"finding": i, "feature": f.feature, "rule": f.rule, "kind": f.key, "at": point,
-                "normal": normals.get(tuple(point)) if point is not None else None,
+                "normal": normal,
                 "threshold": Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim)[0],
                 "knobs": list(by_name[f.feature].get("knobs", []))}
-               for i, (f, point) in enumerate(kept)
+               for i, (f, point, normal) in enumerate(kept)
                if f.feature in by_name and f.rule in LIMIT_OF and point is not None
                and Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim) is not None]
     measured_limits = set(LIMIT_OF.values()) if mesh is not None else set()
