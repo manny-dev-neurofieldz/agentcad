@@ -43,6 +43,7 @@ from agentcad.engines import get_engine, list_engines
 from tests import gcode_fixtures as gf
 
 B3D = "build123d" in list_engines() and get_engine("build123d").available()
+ENGINE_UP = {name: name in list_engines() and get_engine(name).available() for name in ("build123d", "openscad", "voxelcad")}
 
 CHANGES, REFUSES, SAYS = "changes", "refuses", "says"
 
@@ -76,6 +77,7 @@ class Command:
     base: Tuple[str, ...] = ()                      # words every run carries after the inputs
     refused: Tuple[Tuple[str, Tuple[str, ...], str], ...] = ()   # (kind, inputs, a word the refusal names)
     geometry: bool = False                          # needs the build123d backend
+    engine_kinds: bool = False                      # each kind is an engine's project; skipped where it is not up
 
     @property
     def name(self):
@@ -219,6 +221,54 @@ def _write_box_stl(path: Path, lo, hi):
             fh.write(struct.pack("<12fH", 0, 0, 0, *[c for i in f for c in v[i]], 0))
 
 
+QC_TUBE = (
+    "try:\n"
+    "    from agentcad.annotate import feature\n"
+    "except ImportError:\n"
+    "    def feature(*args, **kwargs):\n"
+    "        pass\n"
+    "from build123d import Align, Cylinder\n"
+    "\n"
+    "def build(wall=0.4, r=5.0, h=10.0, unused=1.0):\n"
+    "    low = (Align.CENTER, Align.CENTER, Align.MIN)\n"
+    "    part = Cylinder(r, h, align=low) - Cylinder(r - wall, h + 2, align=low)\n"
+    "    feature(\"tube wall\", box=(-r - 1, -r - 1, -1, r + 1, r + 1, h + 1), kind=\"wall\",\n"
+    "            knobs=(\"wall=0.1\", \"unused=0.5\", \"h=2\"))\n"
+    "    return part\n"
+)
+"""A tube whose 0.4 mm wall is under the MK4's limit, claimed by a feature that names three knobs: one moves the
+wall, two do not."""
+
+QC_PROJECTS = {   # kind (an engine) -> project name, source file, its text, extra config
+    "build123d": ("tube", "tube.py", lambda: QC_TUBE, ""),
+    "openscad": ("plate", "plate.scad", lambda: (Path(__file__).parent / "data" / "qc_pin_hole.scad").read_text(), ""),
+    "voxelcad": ("lattice", "lattice.py", lambda: (Path(__file__).parent / "data" / "qc_gyroid.py").read_text(),
+                 "[engine.voxelcad]\nvoxel_size = 0.1\nmc_stride = 2\n"),
+}
+
+
+def _write_qc_projects(root: Path):
+    """One project per engine, under qc/, each with a session that has iterated once. base_dir is relative to the
+    config file, so a copy of the folder is a project of its own."""
+    for kind, (name, filename, text, extra) in QC_PROJECTS.items():
+        if not ENGINE_UP[kind]:
+            continue
+        proj, source = root / "qc" / name, root / "qc" / "src" / filename
+        proj.mkdir(parents=True)
+        source.parent.mkdir(exist_ok=True)
+        source.write_text(text())
+        (proj / "agentcad.toml").write_text(
+            f'[project]\nname = "{name}"\nengine = "{kind}"\n{extra}'
+            '[output]\nbase_dir = ".."\nsub_dir = "."\nimage_size = 64\ndefault_views = ["iso"]\n'
+            '[qc]\nprinter = "mk4"\n')
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            for words in (["session", "start", str(proj)], ["session", "iterate", str(proj), str(source)]):
+                try:
+                    cli.main(words)
+                except SystemExit as e:
+                    assert e.code in (0, None), f"agentcad {' '.join(words)} failed while writing the fixtures"
+
+
 def _write_records(root: Path):
     shutil.copytree(Path(__file__).parent / "data" / "records_library", root / "lib")
 
@@ -230,6 +280,7 @@ def fixtures(tmp_path_factory) -> Path:
         _write_geometry(root)
     _write_sliced(root)
     _write_records(root)
+    _write_qc_projects(root)
     return root
 
 
@@ -280,6 +331,10 @@ def run(fixtures: Path, scratch: Path, words) -> Run:
     _RUNS[0] += 1
     d = scratch / f"run{_RUNS[0]:05d}"
     shutil.copytree(fixtures, d)
+    for record in d.rglob("*.json"):                   # a session names its files by absolute path: a copy that
+        text = record.read_text()                       # names its original would send the run there
+        if str(fixtures) in text:
+            record.write_text(text.replace(str(fixtures), str(d)))
     before = _snapshot(d)
     argv = [str(w).replace("{D}", str(d)) for w in words]
     out, err = io.StringIO(), io.StringIO()
@@ -517,6 +572,17 @@ COMMANDS = (
              needs=("--json",)),
         Cell("--min-area", ("--min-area", "100000"), CHANGES),
     )),
+    Command(("qc",), {"build123d": ("{D}/qc/tube",), "openscad": ("{D}/qc/plate",), "voxelcad": ("{D}/qc/lattice",)},
+            engine_kinds=True, cells=(
+        Cell("--json", ("--json",), CHANGES),
+        Cell("--printer", ("--printer", "form3"), CHANGES, exit=0),     # resin limits pass all three
+        Cell("--fixes", ("--fixes",), {"build123d": CHANGES, "openscad": SAYS, "voxelcad": SAYS}),
+        Cell("--max-runs", ("--max-runs", "2"), SAYS),
+        Cell("--max-runs", ("--max-runs", "2"), {"build123d": CHANGES,
+                                                 "openscad": Same("--fixes is refused on this engine: nothing to bound"),
+                                                 "voxelcad": Same("--fixes is refused on this engine: nothing to bound")},
+             needs=("--fixes",)),
+    )),
     Command(("records", "check"), {"library": ("{D}/lib",), "part": ("{D}/lib/parts/bracket/part.toml",),
                                    "job": ("{D}/lib/print_jobs/2026-02-01_mk4_pla_clip/job.toml",),
                                    "manifest": ("{D}/lib/projects/latch/exports/latch.print.json",)}, cells=(
@@ -559,7 +625,6 @@ EXEMPT = {
     ("printer", "status"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("render",): "OWED: its kinds are engines (OpenSCAD, VoxelCAD, build123d); every flag per engine, next",
     ("export",): "OWED: its kinds are engines; every flag per engine, next",
-    ("qc",): "OWED: its kinds are engines; --fixes already refuses engines other than build123d",
     ("session", "start"): "OWED: its kinds are engines; every flag per engine, next",
     ("session", "iterate"): "OWED: its kinds are engines; every flag per engine, next",
     ("session", "finalize"): "OWED: its kinds are engines; every flag per engine, next",
@@ -574,7 +639,9 @@ def _cases():
                 needs = f" with {' '.join(cell.needs)}" if cell.needs else ""
                 yield pytest.param(command, cell, kind,
                                    id=f"{command.name} {' '.join(cell.argv)}{needs} [{kind}]".replace("{D}/", ""),
-                                   marks=[pytest.mark.skipif(command.geometry and not B3D, reason="build123d not available")])
+                                   marks=[pytest.mark.skipif(command.geometry and not B3D, reason="build123d not available"),
+                                          pytest.mark.skipif(command.engine_kinds and not ENGINE_UP[kind],
+                                                             reason=f"{kind} not available")])
 
 
 _BASELINES: Dict[tuple, Run] = {}
@@ -722,6 +789,19 @@ def test_the_runner_sees_a_flag_that_does_nothing(fixtures, scratch):
     words = ["gcode", "summary", "{D}/a.gcode"]
     assert run(fixtures, scratch, words).result() == run(fixtures, scratch, words).result()
     assert run(fixtures, scratch, words).result() != run(fixtures, scratch, [*words, "--json"]).result()
+
+
+@pytest.mark.skipif(not any(ENGINE_UP.values()), reason="no engine available")
+def test_a_run_leaves_the_fixtures_as_they_were(fixtures, scratch):
+    """Every run works in a copy. A session names its files by absolute path, so without the copy's records
+    pointing at the copy, qc wrote its rebuilt STL beside the original source: every cell still passed, and
+    the shared fixtures changed under the runs that followed."""
+    before = _snapshot(fixtures)
+    for kind, (name, *_) in QC_PROJECTS.items():
+        if ENGINE_UP[kind]:
+            assert run(fixtures, scratch, ["qc", f"{{D}}/qc/{name}"]).crash is None
+    after = _snapshot(fixtures)
+    assert after == before, f"written into the fixtures: {sorted(set(after.items()) - set(before.items()))}"
 
 
 def test_an_echoed_value_is_not_an_effect_and_a_named_line_is_not_a_change():
