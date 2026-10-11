@@ -56,7 +56,7 @@ A capability a target does not declare raises an error that names the target and
 
 `agentcad targets` lists every registered target with its version (when the tool reports one), whether it is available here, and its capabilities; `--json` prints the same as data.
 
-Registered today: `generic`, a plain plate any slicer opens (section 3), and `prusaslicer`, a PrusaSlicer project from a base configuration the user supplies (`agentcad-prusaslicer`). Neither slices; a target that does declares `slice`.
+Registered today: `generic`, a plain plate any slicer opens (section 3), and `prusaslicer`, a PrusaSlicer project from a base configuration the user supplies (`agentcad-prusaslicer`). `prusaslicer` also slices, when PrusaSlicer's command line is installed (`available()` says whether it is); `generic` does not.
 
 ## 3 The Generic Target
 

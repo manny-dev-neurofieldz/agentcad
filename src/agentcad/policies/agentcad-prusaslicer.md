@@ -44,6 +44,7 @@ PrusaSlicer slices from a complete configuration, and a part staged for it shoul
 
 **5 Reading**
 - What does the target read, and which command checks a project?
+- How does the target slice a project, and how is the output named?
 
 **6 Integration with Other Policies**
 - Which policies govern the pieces around this target?
@@ -140,6 +141,8 @@ Before any file is written, every instance of every part is posed with its full 
 ## 5 Reading
 
 The target reads the settings a sliced `.bgcode`, a plain `.gcode` or a project 3MF carries, as one set of key and value pairs. `agentcad gcode check` accepts a project 3MF as it accepts a sliced file and compares the configuration in it with the `[slice]` intent (`agentcad-gcode`); a 3MF written by another tool has no such configuration, and the command says so. A printer is described from any file that carries a configuration: its bed from `bed_shape`, its height from `max_print_height`, its nozzle from `nozzle_diameter`, as `agentcad-printers` reads a sliced file.
+
+The target slices a project headless with PrusaSlicer's command line: `prusa-slicer` on PATH, or the program the `AGENTCAD_PRUSASLICER` environment variable names (a name that does not exist is not looked past). It runs `--export-gcode` on the project 3MF itself, so the sliced file carries exactly the settings and placements the project does, and names the output `.bgcode` or `.gcode` by its first bytes, never by an extension: the configuration's `binary_gcode` decides which PrusaSlicer writes. A slicer that exits non-zero, writes nothing or runs past ten minutes is refused in a sentence, and no sliced file is left behind. Without a slicer the target is not available (`agentcad targets` says so), and every other capability still works.
 
 ## 6 Integration with Other Policies
 
