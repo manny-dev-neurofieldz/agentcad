@@ -25,6 +25,20 @@ CONFIG_FILENAME = "agentcad.toml"
 _DEFAULT_DROPBOX = "/shared_workspace/Dropbox_NEUro_DataScienceTeam_MannyMacEff"
 
 
+
+def split_slice(table: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Dict[str, Any]]]:
+    """A ``[slice]`` table split into its own settings (the default target's native table) and the
+    tables under it that are a target's own, ``[slice.<target>]``: a table whose keys are not a
+    setting's (``value``, ``min``, ``max``, ``why``) is a target's."""
+    settings: Dict[str, Any] = {}
+    per_target: Dict[str, Dict[str, Any]] = {}
+    for key, value in dict(table or {}).items():
+        if isinstance(value, dict) and value and not set(value) <= {"value", "min", "max", "why"}:
+            per_target[key] = dict(value)
+        else:
+            settings[key] = value
+    return settings, per_target
+
 @dataclass
 class OpenSCADConfig:
     """OpenSCAD engine defaults."""
@@ -214,12 +228,7 @@ class ProjectConfig:
 
         # Slice intent: the [slice] table's settings (the default target's native table); a table under
         # it whose keys are not a setting's (value, min, max, why) is a target's own: [slice.<target>]
-        config.slice_intent, config.slice_targets = {}, {}
-        for key, value in dict(data.get("slice", {})).items():
-            if isinstance(value, dict) and value and not set(value) <= {"value", "min", "max", "why"}:
-                config.slice_targets[key] = dict(value)
-            else:
-                config.slice_intent[key] = value
+        config.slice_intent, config.slice_targets = split_slice(data.get("slice", {}))
 
         # QC: the [qc] table when declared, and any [printers.<name>] tables
         if isinstance(data.get("qc"), dict):

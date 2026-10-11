@@ -45,7 +45,7 @@ The project's `[print]` table states the intent in neutral terms: `material`, `l
 
 A target's own settings are written in `[slice.<target>]`, keyed by that tool's own names. A bare `[slice]` table holds the settings of the project's default target: the `[print] target`, else `prusaslicer`; `agentcad gcode check` reads it as before. A table under `[slice]` is a target's only when its keys are not a setting's own (`value`, `min`, `max`, `why`), so `temperature = { min = 270, max = 285 }` stays a setting.
 
-A target's settings are the intent as the target maps it, then its native tables. Where a native value differs from the mapped one, the native value wins, and the disagreement is reported naming the key and both values: two statements of one setting are a coupling nobody enforces, and the report is where it shows.
+A target's settings are the intent as the target maps it, then its native tables. Where a native value differs from the mapped one, the native value wins, and the disagreement is reported naming the key and both values: two statements of one setting are a coupling nobody enforces, and the report is where it shows. `agentcad gcode check` reads intent the same way, so a sliced file is judged against the settings `agentcad stage` would have written (`agentcad-gcode`).
 
 ## 3 Staging
 

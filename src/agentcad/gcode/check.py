@@ -1,11 +1,15 @@
 """Settings check: what a sliced file was sliced with, against what the project intended.
 
-Intent is a ``[slice]`` table (in a project's ``agentcad.toml``, a print job's ``job.toml``, or any TOML file),
-keyed by the slicer's own setting names. A value is either the intended value, or a table with ``value`` or
-``min``/``max`` and an optional ``why``::
+Intent is read from a TOML file (a project's ``agentcad.toml``, a print job's ``job.toml``, or any other) as the
+slicer's target sees it: the neutral ``[print]`` table as the target maps it (``layer_height``, ``walls``,
+``infill_percent``, ``supports``), then the bare ``[slice]`` table when the target is the file's default, then
+``[slice.<target>]``, keyed by the slicer's own setting names. A native value that differs from the mapped one wins
+and is reported as a conflict. A value is either the intended value, or a table with ``value`` or ``min``/``max``
+and an optional ``why``::
 
+    [print]
+    layer_height = 0.2                  # checked as layer_height, why "[print] layer_height"
     [slice]
-    layer_height = 0.2
     temperature = { min = 270, max = 285, why = "layer bond in ASA-CF" }
     support_material_buildplate_only = { value = 1, why = "supports must not grow inside the bores" }
 
@@ -17,7 +21,7 @@ values, where the intent was declared, why it matters, and the usual fix.
 
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agentcad.config import tomllib
 from agentcad.findings import FIX_DIFFERS, FIX_MISSING, Finding   # Finding: callers import it from here too
@@ -108,12 +112,51 @@ def config_block(text: str) -> Optional[Dict[str, str]]:
     return block if seen else None
 
 
-def load_intent(path: Union[str, Path]) -> Dict[str, Any]:
-    """The ``[slice]`` table of a TOML file (empty when the file declares none)."""
+#: The target whose sliced files this check reads.
+READER_TARGET = "prusaslicer"
+
+
+def intent_for(path: Union[str, Path], target_name: str = READER_TARGET) -> Tuple[Dict[str, Any], List[str], List[str]]:
+    """The settings a file sliced by ``target_name`` is checked against, from a TOML file: its ``[print]`` intent as
+    the target maps it (each mapped setting's ``why`` names the ``[print]`` key it came from), then the bare
+    ``[slice]`` table when the target is the file's default (``[print] target``, else prusaslicer), then
+    ``[slice.<target>]``. Returns the settings, a note for each ``[print]`` key the target has no setting for, and
+    each conflict where a native value overrides a mapped one. TargetError for a ``[print]`` value the target
+    cannot use."""
+    from agentcad import targets
+    from agentcad.config import split_slice
     if tomllib is None:
-        raise RuntimeError("reading a [slice] table needs tomllib (Python 3.11+) or the tomli package")
+        raise RuntimeError("reading intent needs tomllib (Python 3.11+) or the tomli package")
     with open(path, "rb") as f:
-        return dict(tomllib.load(f).get("slice", {}))
+        data = tomllib.load(f)
+    neutral = dict(data.get("print") or {})
+    bare, per_target = split_slice(data.get("slice") or {})
+    native = dict(bare) if target_name == str(neutral.get("target") or READER_TARGET) else {}
+    native.update(per_target.get(target_name, {}))
+    mapped: Dict[str, Any] = {}
+    notes: List[str] = []
+    origin: Dict[str, str] = {}
+    stated = {k: v for k, v in neutral.items() if k != "target"}
+    if stated:
+        target = targets.get_target(target_name)
+        mapped, notes = target.map_intent(stated)
+        for key, value in stated.items():                 # which [print] key each mapped setting came from
+            try:
+                for setting in target.map_intent({key: value})[0]:
+                    origin.setdefault(setting, key)
+            except targets.TargetError:
+                pass
+    settings, conflicts = targets.layer_native(mapped, native)
+    for key in mapped:
+        if key not in native:
+            settings[key] = {"value": settings[key], "why": f"[print] {origin.get(key, key)}"}
+    return settings, notes, conflicts
+
+
+def load_intent(path: Union[str, Path]) -> Dict[str, Any]:
+    """The settings a sliced file is checked against, from a TOML file (``intent_for``); empty when the file states
+    no print or slice intent."""
+    return intent_for(path)[0]
 
 
 def _num(v: Any) -> Optional[float]:
