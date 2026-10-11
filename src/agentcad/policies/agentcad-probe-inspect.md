@@ -123,7 +123,7 @@ Each interval has a `kind` (`material` or `void`), an `entry` and an `exit` (dis
 
 ## 3 Inventory and the Census
 
-`agentcad probe inventory SOURCE` measures a build123d program or a STEP file exactly: bounding box, volume, area, validity, the solid, face, edge and vertex counts, the face census by surface type, every cylindrical and conical face with its axis (origin and direction, never a centroid) and radius, and with `--planes` (x=, y= or z= followed by a number or `mid`) the closed loops where each named plane cuts the part. `--max-loops N` keeps at most N loops per plane, and the cap is printed with its value when it applies. `--show N` caps the printed face list. `-o FILE` (`--output`) writes the record as JSON, and `-D VAR=VAL` (`--define`) overrides a program's parameter.
+`agentcad probe inventory SOURCE` measures a build123d program or a STEP file exactly: bounding box, volume, area, validity, the solid, face, edge and vertex counts, the face census by surface type, every cylindrical and conical face with its axis (origin and direction, never a centroid) and radius, and with `--planes` (x=, y= or z= followed by a number or `mid`) the closed loops where each named plane cuts the part. `--max-loops N` keeps at most N loops per plane, and each plane's count says how many were kept when it applies; without `--planes` there are no loops to cap, and it is named on stderr as ignored. `--show N` caps the printed face list. `-o FILE` (`--output`) writes the record as JSON, and `-D VAR=VAL` (`--define`) overrides a program's parameter; for a STEP file, which has none, it is named on stderr as ignored (and so in `probe rays`, where an STL's warning says the same).
 
 ### 3.1 When the Census Cannot See Analytic Types
 

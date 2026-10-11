@@ -37,7 +37,7 @@ Two construction questions recur and cannot be answered from the finished part. 
 
 ## 1 Why a Fillet Fails
 
-`agentcad probe fillet PROGRAM` runs a build123d program until its call of build123d's `fillet` function number `--index` (counting from 0; default the first), or of `chamfer` with `--at chamfer`, and stops there, leaving the program unmodified. A shape's own fillet method is not intercepted, and a program with fewer such calls is an error that says how many it saw. `-D`/`--define VAR=VAL` overrides the program's parameters.
+`agentcad probe fillet PROGRAM` runs a build123d program (any other source is refused, by name, since only a program can be stopped at a call) until its call of build123d's `fillet` function number `--index` (counting from 0; default the first), or of `chamfer` with `--at chamfer`, and stops there, leaving the program unmodified. A shape's own fillet method is not intercepted, and a program with fewer such calls is an error that says how many it saw. `-D`/`--define VAR=VAL` overrides the program's parameters.
 
 At that call the probe reports:
 
@@ -57,7 +57,7 @@ A fillet that fails is pointing at an artifact. The usual one is a step or a lin
 
 `agentcad probe draft SOURCE` takes a STEP file or a build123d program and measures, at a grid of `--samples` by `--samples` points on every face (default 7), the angle between the face and the pull direction: the arcsine of the outward normal's component along the unit pull. A positive draft releases, zero is a wall that drags, and a negative one is an undercut that locks; the sign rule is the same for a pocket and a boss. A curved face reports its range. `--pull x,y,z` sets the direction (default `0,0,1`). A face within one degree of perpendicular to the pull everywhere (a floor, a top, a parting face) is listed as perpendicular and given no draft: the probe says what it cannot judge instead of folding it into a number.
 
-`--min-draft DEG` judges the side faces: those whose smallest draft is under it are listed as UNDERCUT, no draft or too little, worst first (up to `--show` lines, default 12), and the command exits 1 when there is any. `-o`/`--output` writes the record as JSON, and `-D`/`--define` overrides a program's parameters.
+`--min-draft DEG` judges the side faces: those whose smallest draft is under it are listed as UNDERCUT, no draft or too little, worst first (up to `--show` lines, default 12; without `--min-draft` nothing is listed, and `--show` is named on stderr as ignored), and the command exits 1 when there is any. `-o`/`--output` writes the record as JSON, and `-D`/`--define` overrides a program's parameters (named as ignored for a STEP file). An STL is refused by name: draft is read on exact faces.
 
 ## 3 Integration with Other Policies
 

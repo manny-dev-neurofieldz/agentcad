@@ -43,7 +43,7 @@ A replication or a revision is judged against something: an original STEP, a ref
 
 ## 1 What Compare Takes
 
-`agentcad compare ORIGINAL CANDIDATE` takes two sources. When both are exact (a STEP file or a build123d program), they are sectioned on the planes named by `--planes` and compared loop by loop, then sampled; when either is a mesh (an STL), only the sampled deviation is reported, and a note says the loops were not compared. `-D`/`--define VAR=VAL` (repeatable) overrides a parameter of the candidate when it is a program; the original is read as it is.
+`agentcad compare ORIGINAL CANDIDATE` takes two sources. When both are exact (a STEP file or a build123d program), they are sectioned on the planes named by `--planes` and compared loop by loop, then sampled; when either is a mesh (an STL), only the sampled deviation is reported, and a note says the loops were not compared. `-D`/`--define VAR=VAL` (repeatable) overrides a parameter of the candidate when it is a program; the original is read as it is. For a STEP or STL candidate, which has no parameters, `-D` is named on stderr as ignored.
 
 The command prints each plane's loop counts, the windows and the deviation; with `-o`/`--output-dir DIR` it also writes overlay images and `compare.json` with every number. It exits 1 when the loop-count gate fails, and 0 otherwise.
 
@@ -51,7 +51,7 @@ The command prints each plane's loop counts, the windows and the deviation; with
 
 Each `--planes` entry names a section plane: `x=`, `y=` or `z=` followed by a coordinate or `mid` (the middle of each part's own extent on that axis). On each plane the two sections are counted as closed loops, and the gate fails when any plane's counts differ: a hole, a tooth, a slot or a rib that one part has and the other lacks changes the count, whatever the distances say. With no planes there is no gate.
 
-`--max-loops N` keeps at most N loops per plane for the overlays and windows, and says so when it applies; the counts the gate compares are always the totals on the plane. A cap on an instrument is the instrument's limit, not the part's: a count read from a capped listing elsewhere has hidden teeth before.
+`--max-loops N` keeps at most N loops per plane for the overlays and windows, and says so when it applies; the counts the gate compares are always the totals on the plane. Without `--planes` there are no loops to cap or to window, so `--max-loops` and `--window` are named on stderr as ignored; so they are when either source is a mesh, which has no exact loops. A cap on an instrument is the instrument's limit, not the part's: a count read from a capped listing elsewhere has hidden teeth before.
 
 ## 3 Windows and Overlays
 

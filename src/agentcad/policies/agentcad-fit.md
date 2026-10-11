@@ -77,12 +77,12 @@ An assembly (a project with part subprojects, or a print job) names the pair wit
 
 `agentcad fit A B` keeps part A where it is and places part B:
 
-- `--mate NAME` poses B from the datums both parts declare for NAME: B's axis onto A's axis, B's key line onto A's about it, B's rim plane onto A's along it. Each side is the nearest `[mates.NAME]` at or above that part's source; `--a-mates` and `--b-mates` name the file or folder instead, which is needed when one source builds both parts. A side with no declaration, or one without an `axis`, is an error that says what to declare, or to pose with `--map`. Given more than once, the first mate poses B and each further one is compared with it. The window and nominal are A's side's, or else those of the nearest declaration above it (an assembly's).
+- `--mate NAME` poses B from the datums both parts declare for NAME: B's axis onto A's axis, B's key line onto A's about it, B's rim plane onto A's along it. Each side is the nearest `[mates.NAME]` at or above that part's source; `--a-mates` and `--b-mates` name the file or folder instead, which is needed when one source builds both parts; they take effect with `--mate`, and alone each is named on stderr as ignored. A side with no declaration, or one without an `axis`, is an error that says what to declare, or to pose with `--map`. Given more than once, the first mate poses B and each further one is compared with it. The window and nominal are A's side's, or else those of the nearest declaration above it (an assembly's).
 - `--map axis=x|y|z spin=DEG offset=X,Y,Z` turns B about the named axis and then moves it: the pose for a pair with no declared datums.
-- `--offset X,Y,Z` with `--spin DEG` and `--spin-axis` is the same turn-then-move; `--mate` and `--map` each replace them.
+- `--offset X,Y,Z` with `--spin DEG` and `--spin-axis` is the same turn-then-move; `--mate` and `--map` each replace them. `--spin-axis` takes effect with `--spin`; alone it is named on stderr as ignored.
 - With none of these, B stays as modelled, which is right when both parts are modelled in one assembly frame.
 
-A build123d program whose `build()` takes `print_orient` is built with it false unless a define sets it, so parts meet in the assembly frame rather than in a print pose. `--a-define` and `--b-define` set each part's parameters.
+A build123d program whose `build()` takes `print_orient` is built with it false unless a define sets it, so parts meet in the assembly frame rather than in a print pose. `--a-define` and `--b-define` set each part's parameters; for a part that is not a program (a STEP file) they are named on stderr as ignored.
 
 ## 3 What Fit Measures
 
@@ -96,7 +96,7 @@ Contacts answer where the parts meet, which a window answers only for the box it
 
 ### 3.1 The Insertion Sweep
 
-`--sweep x|y|z` with `--travel MM` and `--sweep-steps N` reports the interference with B moved along the positive axis by the travel and then back to its pose in N steps (default 10), so a part that binds on the way in is seen even when it fits once seated.
+`--sweep x|y|z` with `--travel MM` and `--sweep-steps N` reports the interference with B moved along the positive axis by the travel (default 10 mm) and then back to its pose in N steps (default 10), so a part that binds on the way in is seen even when it fits once seated. `--travel` and `--sweep-steps` take effect with `--sweep`; alone each is named on stderr as ignored.
 
 ## 4 Verdicts
 
