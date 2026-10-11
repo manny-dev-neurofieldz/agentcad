@@ -133,10 +133,13 @@ def _ledge_plate(tmp_path, tube_center):
     return f, p
 
 
-def _supports(*words):
+def _supports(*words, without=()):
+    """``agentcad gcode supports`` in a fresh process; ``without`` names modules it cannot import."""
     import subprocess
     import sys
-    run = [sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())"]
+    run = [sys.executable, "-c", "import sys; sys.modules.update(dict.fromkeys(sys.argv[1].split(',') if sys.argv[1] "
+                                 "else [])); from agentcad.cli import main; sys.argv[1:2] = []; sys.exit(main())",
+           ",".join(without)]
     return subprocess.run(run + ["gcode", "supports", *map(str, words), "--contact-distance", "0.25",
                                  "--min-area", "0"], capture_output=True, text=True)
 
@@ -159,7 +162,26 @@ def test_json_says_outside_or_not_checked_and_then_exits_0(tmp_path):
     assert {b["region"] for b in json.loads(r.stdout)} == {"outside"}
     r = _supports(f, "--json")                         # no placement: no region check, and it says so by null
     assert r.returncode == 0, r.stdout + r.stderr
-    assert {(b["region"], b["region_votes"]) for b in json.loads(r.stdout)} == {(None, None)}
+    assert {(b["region"], b["region_votes"], b["region_note"]) for b in json.loads(r.stdout)} == {(None, None, None)}
+
+
+NO_PYVISTA = "pyvista is not installed: no region check (the build123d extra installs it)"
+
+
+def test_without_pyvista_json_lists_the_bands_and_says_why_no_region_was_checked(tmp_path):
+    import json
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))         # a cavity, had it been checked
+    r = _supports(f, "--placement", p, "--json", without=["pyvista"])
+    assert r.returncode == 0, r.stdout + r.stderr
+    bands = json.loads(r.stdout)
+    assert bands and {(b["region"], b["region_votes"], b["region_note"]) for b in bands} == {(None, None, NO_PYVISTA)}
+
+
+def test_without_pyvista_the_text_says_why_no_region_was_checked(tmp_path):
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    r = _supports(f, "--placement", p, without=["pyvista"])
+    assert r.returncode == 0 and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert f"      ({NO_PYVISTA})\n" in r.stdout, r.stdout
 
 
 def test_the_picture_reads_no_stl_the_judging_already_read(tmp_path, monkeypatch):

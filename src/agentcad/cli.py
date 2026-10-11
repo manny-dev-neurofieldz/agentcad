@@ -1062,7 +1062,8 @@ def cmd_gcode_supports(args):
     in_cavity = sum(1 for r in regions.values() if r[2] == "cavity")
     if args.json:
         print(json.dumps([dict(b.__dict__, object_frame=regions[id(b)][0], region=regions[id(b)][2],
-                               region_votes=regions[id(b)][3]) for b in bands], indent=2))
+                               region_votes=regions[id(b)][3], region_note=regions[id(b)][4]) for b in bands],
+                         indent=2))
         if args.png:
             _supports_png(Path(args.png), bands, placement, meshes, stl_root)
             print(f"render: {args.png}", file=sys.stderr)
@@ -1075,7 +1076,7 @@ def cmd_gcode_supports(args):
     for b in sorted(bands, key=lambda b: -b.area_mm2):
         print(f"  {b.sentence()}")
         if args.placement:
-            o, stl, where, votes = regions[id(b)]
+            o, stl, where, votes, why = regions[id(b)]
             print("      in its STL frame: " + (f"x {o['x'][0]:.1f}..{o['x'][1]:.1f}, y {o['y'][0]:.1f}..{o['y'][1]:.1f}, "
                                                  f"z {o['z'][0]:.1f}..{o['z'][1]:.1f}" if o else "placement unknown"))
             if where == "cavity":
@@ -1083,8 +1084,8 @@ def cmd_gcode_supports(args):
                       f"and foul the fit; block them (a support blocker volume) or re-orient. Votes {votes}")
             elif where:
                 print(f"      on an outer surface. Votes {votes}")
-            elif o and not (stl is not None and stl.exists()):
-                print(f"      (STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root)")
+            elif o and why:
+                print(f"      ({why})")
     if args.png:
         _supports_png(Path(args.png), bands, placement, meshes, stl_root)
         print(f"render: {args.png}")
@@ -1093,20 +1094,26 @@ def cmd_gcode_supports(args):
 
 
 def _band_region(band, placement, stl_root, meshes):
-    """(object frame, STL path, region, votes) of one contact band. The region is "cavity" or "outside" by rays
-    across the placed STL, or None when it cannot be checked: no placement for its object, or no STL under
-    ``stl_root``. ``meshes`` caches the STLs read, by path."""
+    """(object frame, STL path, region, votes, why) of one contact band. The region is "cavity" or "outside" by
+    rays across the placed STL, or None when it cannot be checked, and then ``why`` says what stopped it: no
+    placement for its object, no STL under ``stl_root``, or no pyvista to read the STL with. Without a placement
+    file nothing was asked, and ``why`` is None. ``meshes`` caches the STLs read, by path."""
     from agentcad.gcode import supports
 
     o = supports.in_object_frame(band, placement)
     stl = stl_root / o["stl"] if o and o.get("stl") and stl_root is not None else None
     if stl is None or not stl.exists():
-        return o, stl, None, None
+        why = None if stl_root is None else "placement unknown" if not o else \
+            f"STL not found under {stl.parent if stl else '?'}: no region check; pass --stl-root"
+        return o, stl, None, None, why
     if str(stl) not in meshes:
-        import pyvista as pv
+        try:
+            import pyvista as pv
+        except ImportError:
+            return o, stl, None, None, "pyvista is not installed: no region check (the build123d extra installs it)"
         meshes[str(stl)] = pv.read(str(stl))
     votes = supports.band_enclosure(band, placement, meshes[str(stl)])
-    return o, stl, (max(votes, key=votes.get) if votes else None), votes
+    return o, stl, (max(votes, key=votes.get) if votes else None), votes, None
 
 
 def cmd_gcode_view(args):
