@@ -12,6 +12,7 @@ Run `agentcad policy navigate` for each policy below and read the sections whose
 1. `fit` - declaring mates, posing the pair, what fit measures, verdicts and records.
 2. `design-practice` - stating a mate and choosing a clearance.
 3. `render-export` - variant plates for a clearance the material decides.
+4. `records` - what a fit record must hold so a later change shows it is owed again.
 
 ## Questions to Extract from Policy Reading
 
@@ -22,6 +23,7 @@ Run `agentcad policy navigate` for each policy below and read the sections whose
 5. **Verdicts** - When does a fit pass or fail?
 6. **Records** - Where is a fit recorded, and when does finalize run one?
 7. **Material** - How is a clearance found when the process takes its own share?
+8. **Anchoring** - What makes a recorded fit say whether it still holds after either part changes?
 
 ## Workflow
 
@@ -30,6 +32,7 @@ Run `agentcad policy navigate` for each policy below and read the sections whose
 3. Read the windows, the contacts and the sweep, then look at the views (the render-gate skill).
 4. Fix the relation, not the number; fit again.
 5. Record it: `agentcad fit A B --mate NAME --record`, or let finalize fit every declared mate.
+   In a part library, record it on both parts with snapshots of the sources it measured, then `agentcad records check` the library.
 6. Where the material decides the clearance, export a variant plate and print it.
 
 ## Critical Meta-Pattern

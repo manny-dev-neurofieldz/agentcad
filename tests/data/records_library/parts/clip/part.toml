@@ -1,0 +1,18 @@
+[identity]
+slug = "clip"
+name = "Clip"
+
+[relations]
+mates_with = ["bracket"]
+
+[fit.bracket]
+recorded = "2026-01-04T10:00"
+counterpart = "bracket"
+verdict = "pass"
+snapshots = [
+    { path = "../bracket/source/bracket.py", sha256 = "66cff92ecb48b5b91de1f3f167d8055adae5fd1b3d6c029937ea8262d4045e3a" },
+    { path = "source/clip.scad", sha256 = "fbcf6537095ba1792ef5692594b364c5ad3def750f297f743f1af2b5d0db69f8" },
+]
+
+[status]
+state = "draft"

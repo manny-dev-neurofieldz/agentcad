@@ -1,0 +1,14 @@
+[job]
+date = 2026-02-01
+printer = "MK4"
+material = "PLA"
+
+[[item]]
+part = "clip"
+stl = "clip.stl"
+quantity = 4
+
+[outcome]
+result = "Printed; not tried in the bracket yet."
+date_printed = 2026-02-01
+verdict = "pending"

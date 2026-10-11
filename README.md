@@ -392,6 +392,24 @@ folder (`$XDG_CONFIG_HOME/agentcad` or `~/.config/agentcad`). A `hosts.toml` tha
 refused with the `chmod 600` that fixes it. A credential is never printed, logged, put in JSON or written to a
 project. `agentcad policy read printer-hosts` has the rest.
 
+## Records
+
+A part library keeps its history in record files: a `part.toml` per part (with its fit records,
+`[fit.<mate>]`), a `job.toml` per print job, and the print manifests finalize writes. Most of a record is
+prose; a few fields are structured so that tools can rely on them: the day a job was staged, planned and
+printed, the verdict on a print, and when a fit was measured, against which part, with what verdict and on
+which sources (each with its SHA-256).
+
+```
+agentcad records check LIBRARY/             # every record under a folder: types, dates, verdicts, references
+agentcad records check parts/x/part.toml    # one record, its own fields only
+agentcad records check LIBRARY/ --json      # the whole reading (schema agentcad.records/1)
+```
+
+The check exits 1 on an error (a missing or malformed structured field, a verdict that contradicts the print
+date) and reports warnings (a part the library does not know, a fit recorded on one side only) without
+failing. It never edits a record. `agentcad policy read records` has the contract.
+
 ## Program-side helpers (build123d)
 
 ```python

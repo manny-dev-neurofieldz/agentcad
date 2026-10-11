@@ -1,0 +1,3 @@
+# Template: copied into parts/<slug>/part.toml. Folders whose names begin with _ are not records.
+[identity]
+slug = ""

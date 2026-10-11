@@ -59,6 +59,7 @@ It prints the files written, then one `note:` line for each thing the target lef
 - `agentcad-prusaslicer`: the base configuration, the mapping of the intent and what the project holds.
 - `agentcad-qc`: the printer, the pose and the checks to run before staging.
 - `agentcad-gcode`: checking a sliced file against the native settings.
+- `agentcad-records`: the job record a staged print keeps (the day staged, the day planned, the day printed, the verdict).
 - `agentcad-policies`: how this policy is found and read.
 
 ## 5 Anti-Patterns
