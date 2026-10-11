@@ -112,3 +112,51 @@ def test_cli_reports_a_cavity_contact_as_an_error(tmp_path):
                               "--placement", str(p)], capture_output=True, text=True)
     assert r.returncode == 1, r.stdout + r.stderr
     assert "ERROR: walled in on every side" in r.stdout
+
+
+def _ledge_plate(tmp_path, tube_center):
+    """The ledge file, its placement, and a tube STL centred at ``tube_center``: at (10, 1) the contact sits in
+    the tube's bore, far away it sits on nothing the rays can wall in."""
+    import json
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    cx, cy = tube_center
+    tube = pv.Cylinder(center=(cx, cy, 0.0), radius=6.0, height=4, direction=(0, 0, 1), capping=False,
+                       resolution=48) + pv.Cylinder(center=(cx, cy, 0.0), radius=4.0, height=4,
+                                                    direction=(0, 0, 1), capping=False, resolution=48)
+    tube.save(str(tmp_path / "ledge.stl"))
+    f = tmp_path / "ledge.gcode"
+    f.write_text(TEXT)
+    p = tmp_path / "plate.placement.json"
+    p.write_text(json.dumps({"schema": "agentcad.placement/1", "objects": [
+        {"name": "ledge.stl", "stl": "ledge.stl", "instances": [{"label": "ledge.stl", "bed_offset": [0, 0, 0]}]}]}))
+    return f, p
+
+
+def _supports(*words):
+    import subprocess
+    import sys
+    run = [sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())"]
+    return subprocess.run(run + ["gcode", "supports", *map(str, words), "--contact-distance", "0.25",
+                                 "--min-area", "0"], capture_output=True, text=True)
+
+
+def test_json_names_each_contacts_region_and_fails_on_a_cavity_as_the_text_does(tmp_path):
+    import json
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    r = _supports(f, "--placement", p, "--json")
+    assert r.returncode == 1, r.stdout + r.stderr
+    bands = json.loads(r.stdout)                       # stdout is the JSON and nothing else
+    assert bands and {b["region"] for b in bands} == {"cavity"}, bands
+    assert all(b["region_votes"]["cavity"] > 0 for b in bands), bands
+
+
+def test_json_says_outside_or_not_checked_and_then_exits_0(tmp_path):
+    import json
+    f, p = _ledge_plate(tmp_path, (100.0, 100.0))
+    r = _supports(f, "--placement", p, "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert {b["region"] for b in json.loads(r.stdout)} == {"outside"}
+    r = _supports(f, "--json")                         # no placement: no region check, and it says so by null
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert {(b["region"], b["region_votes"]) for b in json.loads(r.stdout)} == {(None, None)}
