@@ -172,3 +172,17 @@ def test_finalize_all_exits_non_zero_when_a_part_is_held(tmp_path, monkeypatch, 
     assert (asm / "parts" / "short" / "exports" / "short.print.json").exists()        # the other part still finalized
     assert not (asm / "parts" / "tall" / "exports" / "tall.print.json").exists()
     assert "tall" in capsys.readouterr().err
+
+
+def test_a_viewer_rebuilt_from_disk_keeps_the_gate_banner_until_a_finalize_passes(tmp_path):
+    from agentcad.viewer import regenerate_from_project_dir
+    held = _session(tmp_path, {"gate": True}, "20, 20, 230")
+    held.finalize()
+    held.save_state()
+    project_dir = held.project.project_dir
+    assert "QC gate failed" in regenerate_from_project_dir(project_dir, cfg=held.config).read_text()
+    held.config.qc = {"gate": True, "pose": {"up": [1, 0, 0]}}        # laid down: the gate passes
+    held.finalize()
+    held.save_state()
+    assert not held.qc_failed and "qc_banner" not in held.project.metadata
+    assert "QC gate failed" not in regenerate_from_project_dir(project_dir, cfg=held.config).read_text()

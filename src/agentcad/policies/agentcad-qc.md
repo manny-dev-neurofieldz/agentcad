@@ -176,7 +176,7 @@ The sweep rebuilds the program with build123d, so it works for a build123d proje
 
 QC runs at `agentcad session finalize` only in a project that declares a `[qc]` table; a project without one finalizes as before. Its findings are shown on the newest variant of the viewer and printed.
 
-With `[qc] gate = true`, an error holds the part back: finalize still writes the viewer, with a banner at the top saying why, but writes no print manifest, does not mark the session finalized, and exits 1. Fix the part and iterate again; no reopen is needed. A warning never holds a part back. `finalize --all` finalizes every part it can and exits 1 when any part was held back or could not be finalized, naming them.
+With `[qc] gate = true`, an error holds the part back: finalize still writes the viewer, with a banner at the top saying why (kept in the session record, so a rebuilt viewer shows it too, until a finalize that is not held), but writes no print manifest, does not mark the session finalized, and exits 1. Fix the part and iterate again; no reopen is needed. A warning never holds a part back. `finalize --all` finalizes every part it can and exits 1 when any part was held back or could not be finalized, naming them.
 
 ## 6 Integration with Other Policies
 
