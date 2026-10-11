@@ -61,6 +61,7 @@ def exercise(name, job, tmp_path):
     if not target.capabilities:
         return
     case = targetfixtures.case_for(name, tmp_path)
+    written = []
     if "write_job" in target.capabilities:
         job.options = dict(case.options)
         written = target.write_job(job, tmp_path / name)
@@ -84,7 +85,11 @@ def exercise(name, job, tmp_path):
     assert placed_on is None or (isinstance(placed_on, printers.Printer) and "printer_config" in target.capabilities), \
         "a job is placed on a printer the target describes, or the target names none"
     if "slice" in target.capabilities:
-        assert Path(target.slice(case.project, tmp_path / "sliced")).is_file()
+        if not target.available():                  # declared, and nothing to slice with here: said, not passed
+            pytest.skip(f"target {name!r} slices, but its slicer is not installed here")
+        project = case.project or next((Path(p) for p in written if str(p).endswith(".3mf")), None)
+        assert project is not None, "a target that slices needs a project: the fixture's, or the job it wrote"
+        assert Path(target.slice(project, tmp_path / "sliced")).is_file()
 
 
 @pytest.mark.parametrize("name", targets.list_targets())
@@ -113,7 +118,7 @@ def test_a_registered_target_with_capabilities_and_no_fixture_fails_the_suite(jo
 
 
 def test_the_suite_runs_slice_for_a_target_that_declares_it_and_fails_one_that_returns_nothing(job, tmp_path):
-    """No registered target slices yet; the suite must already exercise the capability when one does."""
+    """The suite exercises slice for any target that declares it, and fails one that returns no file."""
     class Slicer(OutputTarget):
         name = "slicer"
         capabilities = frozenset({"slice"})

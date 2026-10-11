@@ -2,8 +2,9 @@
 
 Capabilities: ``write_job`` (a project 3MF and the placement sidecar), ``read_output`` (the settings a
 ``.bgcode``, a ``.gcode`` or a project 3MF carries), ``map_intent`` (the neutral ``[print]`` keys that
-have a PrusaSlicer setting) and ``printer_config`` (the bed and height of a configuration). It does not
-slice: headless slicing is a later capability.
+have a PrusaSlicer setting), ``printer_config`` (the bed and height of a configuration) and ``slice``
+(the project sliced headless by PrusaSlicer's command line: ``prusa-slicer`` on PATH, or the program
+``AGENTCAD_PRUSASLICER`` names; the output is named ``.bgcode`` or ``.gcode`` by its first bytes).
 
 The settings a project carries are layered, and each layer can only change what the one below has:
 
@@ -20,7 +21,10 @@ written. A job whose placement leaves the bed or the build height is refused bef
 
 import difflib
 import json
+import os
+import shutil
 import struct
+import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,6 +36,8 @@ from agentcad.targets import prusaslicer_3mf as project
 from agentcad.targets import prusaslicer_config as pconfig
 
 USER_FILE = "targets.toml"
+SLICER_ENV = "AGENTCAD_PRUSASLICER"
+SLICE_TIMEOUT_S = 600
 USER_KEYS = ("base_config",)
 
 #: The neutral intent keys this target maps, and the PrusaSlicer settings each one sets.
@@ -318,10 +324,57 @@ def base_config_path(options: Dict[str, Any]) -> Path:
 
 # --- the target -------------------------------------------------------------------------------------------
 
+def slicer_program() -> Optional[str]:
+    """PrusaSlicer's command line: the program ``AGENTCAD_PRUSASLICER`` names, else ``prusa-slicer`` on PATH.
+    None when neither is there (a name the variable gives that does not exist is not looked past)."""
+    named = os.environ.get(SLICER_ENV)
+    if named:
+        return named if os.path.isfile(named) and os.access(named, os.X_OK) else None
+    return shutil.which("prusa-slicer") or shutil.which("PrusaSlicer")
+
+
 class PrusaSlicerTarget(OutputTarget):
     name = "prusaslicer"
-    capabilities = frozenset({"write_job", "read_output", "map_intent", "printer_config"})
+    capabilities = frozenset({"write_job", "slice", "read_output", "map_intent", "printer_config"})
     job_options = ("base_config",)
+
+    def available(self) -> bool:
+        """Whether PrusaSlicer's command line is here to slice with; the other capabilities need nothing."""
+        return slicer_program() is not None
+
+    def slice(self, project_file: Path, out_dir: Path) -> Path:
+        """The project sliced headless, as ``<project stem>.bgcode`` or ``.gcode`` in ``out_dir``: which one the
+        file's first bytes say (the configuration's ``binary_gcode`` decides what PrusaSlicer writes)."""
+        from agentcad.gcode.bgcode import MAGIC
+        program = slicer_program()
+        if program is None:
+            raise TargetError(f"no PrusaSlicer to slice with: put prusa-slicer on PATH, or name the program in "
+                              f"{SLICER_ENV}")
+        project_file, out_dir = Path(project_file), Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        made = out_dir / f"{project_file.stem}.sliced"
+        made.unlink(missing_ok=True)
+        try:
+            run = subprocess.run([program, "--export-gcode", "--output", str(made), str(project_file)],
+                                 capture_output=True, text=True, timeout=SLICE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            made.unlink(missing_ok=True)
+            raise TargetError(f"PrusaSlicer did not finish slicing {project_file.name} in {SLICE_TIMEOUT_S} s") from None
+        if run.returncode != 0:
+            made.unlink(missing_ok=True)
+            said = [line for line in (run.stderr or run.stdout or "").splitlines() if line.strip()]
+            raise TargetError(f"PrusaSlicer could not slice {project_file.name} (exit {run.returncode})"
+                              + (f": {said[-1].strip()}" if said else ""))
+        if not made.is_file() or made.stat().st_size == 0:
+            made.unlink(missing_ok=True)
+            raise TargetError(f"PrusaSlicer exited 0 but wrote nothing for {project_file.name}")
+        with open(made, "rb") as f:
+            head = f.read(len(MAGIC))
+        final = made.with_suffix(".bgcode" if head == MAGIC else ".gcode")
+        for stale in (made.with_suffix(".bgcode"), made.with_suffix(".gcode")):
+            stale.unlink(missing_ok=True)          # an earlier slice of the other kind would read as this one
+        made.replace(final)
+        return final
 
     def write_job(self, job: Job, out_dir: Path) -> List[Path]:
         if not job.parts:

@@ -53,6 +53,10 @@ def cmd_stage(args):
     if "write_job" not in target.capabilities:
         return _refuse(f"target {target.name!r} does not write a job (its capabilities: "
                        f"{', '.join(sorted(target.capabilities)) or 'none'})")
+    if args.slice and "slice" not in target.capabilities:
+        return _refuse(f"target {target.name!r} does not slice (its capabilities: "
+                       f"{', '.join(sorted(target.capabilities))}); stage without --slice and slice the project "
+                       f"in the slicer")
     if args.base_config and "base_config" not in target.job_options:
         return _refuse(f"target {target.name!r} takes no base configuration (--base-config); it starts from "
                        f"nothing the user supplies")
@@ -116,7 +120,29 @@ def cmd_stage(args):
         print(f"  conflict: {c}")
     for u in unmapped:
         print(f"  not mapped: {u}")
+    if args.slice:
+        return _slice_and_read(target, written, out_dir, cfg)
     return 0
+
+
+def _slice_and_read(target, written, out_dir, cfg):
+    """Slice the staged project headless, then read what came out as gcode check and gcode supports would:
+    the settings against the project's intent (exit 1 on an error), and where supports touch the parts."""
+    from argparse import Namespace
+    from agentcad import targets
+    from agentcad.cli import cmd_gcode_check, cmd_gcode_supports
+
+    project = next((Path(p) for p in written if Path(p).suffix == ".3mf"), Path(written[0]))
+    sidecar = next((Path(p) for p in written if str(p).endswith(".placement.json")), None)
+    try:
+        sliced = target.slice(project, out_dir)
+    except targets.TargetError as e:
+        return _refuse(e)
+    print(f"sliced: {sliced}")
+    checked = cmd_gcode_check(Namespace(file=str(sliced), project=str(cfg.project_dir), intent=None, json=False))
+    cmd_gcode_supports(Namespace(file=str(sliced), contact_distance=None, min_area=1.0,
+                                 placement=str(sidecar) if sidecar else None, stl_root=None, png=None, json=False))
+    return checked or 0
 
 
 def register(subparsers, groups):
@@ -130,4 +156,8 @@ def register(subparsers, groups):
                    help="Complete configuration a slicer target starts from: an exported .ini, a project 3MF or a "
                         "sliced .gcode/.bgcode (default: the target's entry in targets.toml in the agentcad user "
                         "config folder)")
+    p.add_argument("--slice", action="store_true",
+                   help="Also slice the staged project headless (targets that slice; see agentcad targets), then "
+                        "check its settings against the intent and map where supports touch; exit 1 on a settings "
+                        "error")
     p.set_defaults(func=cmd_stage)
