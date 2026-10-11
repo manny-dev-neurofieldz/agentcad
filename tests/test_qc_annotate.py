@@ -325,6 +325,58 @@ def test_fixes_name_the_knob_that_moves_the_wall_and_the_ones_that_do_nothing(tm
     assert [k["verdict"] for k in rec["knobs"]] == ["live", "untried", "untried"]
 
 
+POCKET = FALLBACK + '''
+from build123d import Align, Box, Pos
+
+
+def build(reach=9.6):
+    low = (Align.CENTER, Align.CENTER, Align.MIN)
+    block = Box(20, 20, 10, align=low)
+    pocket = Pos((reach - 6.0) / 2.0, 0, -1) * Box(reach + 6.0, 8, 12, align=low)     # x -6 to reach, through
+    feature("end wall", box=(8, -6, -1, 12, 6, 11), kind="wall", knobs=("reach=2",))
+    return block - pocket
+'''
+
+
+@needs_b3d
+def test_fixes_tell_a_wall_made_thick_from_a_wall_cut_away(tmp_path, capsys):
+    """reach -2 leaves the end wall 2.4 mm thick and reach +2 runs the pocket out through the face: on both
+    builds nothing near the place is thin, and only the line across the place tells them apart."""
+    proj, source = _project(tmp_path)
+    source.write_text(POCKET)
+    cli.main(["session", "start", str(proj)])
+    cli.main(["session", "iterate", str(proj), str(source)])
+    capsys.readouterr()
+    try:
+        cli.main(["qc", str(proj), "--json", "--fixes"])
+    except SystemExit:
+        pass
+    report = json.loads(capsys.readouterr().out)
+    walls = [c for c in report["claimed"] if c["kind"] == "wall"]
+    assert walls and all(c["normal"] is not None and sum(v * v for v in c["normal"]) == pytest.approx(1.0)
+                         for c in walls), walls       # each wall claim carries the line across it, or "gone" is unsaid
+    (rec,) = report["sensitivity"]
+    assert rec["feature"] == "end wall" and rec["base"]["value"] == pytest.approx(0.4, abs=0.01)
+    (k,) = rec["knobs"]
+    assert k["verdict"] == "live" and k["plus"].get("gone") is True, k
+    assert k["minus"].get("clear") is True and k["minus"]["across_mm"] == pytest.approx(2.4, abs=0.01), k
+    fix = report["findings"][rec["finding"]]["fix"]
+    assert "reach +2 leaves no material across the place: the material there is gone (a failure, not a fix)" in fix, fix
+    assert "reach -2 leaves no wall under" in fix and "near it: cleared (2.400 mm across the place)" in fix, fix
+    assert "cleared, or the material there is gone" not in fix, fix
+
+
+def test_a_fix_that_leaves_thin_material_across_the_place_says_look():
+    """The line across the place finds material that no wall region near it reported, still under the limit:
+    neither cleared nor gone, so the fix says to look (rare on a real build, so pinned on a record)."""
+    rec = {"rule": "min_wall", "kind": "wall", "threshold": 0.8, "base": {"value": 0.4},
+           "knobs": [{"name": "reach", "delta": 2, "verdict": "live", "plus": {"clear": True, "across_mm": 0.3},
+                      "minus": {"value": 0.5, "change": 0.1}}]}
+    assert qc._fix_sentence(rec, "thicken") == (
+        "thicken; measured at 0.400 mm: reach +2 leaves no wall under 1.6 mm near it, and 0.300 mm across the "
+        "place, under the limit: look, reach -2 gives 0.500 mm (+0.100)")
+
+
 @needs_b3d
 def test_an_annotated_program_builds_again_in_process(tmp_path):
     from agentcad.probe import load_shape
