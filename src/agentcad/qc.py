@@ -208,9 +208,10 @@ def section_polygons(mesh, z: float):
             for L in meshprobe.plane_loops(mesh, 2, z) if L["closed"] and len(L["edges"]) >= 3]
 
 
-def in_layer_widths(polys, spacing: float, corner: float = 0.0):
+def in_layer_widths(polys, spacing: float, corner: float = 0.0, with_normals: bool = False):
     """Points along every edge of a section (at most ``spacing`` apart) and, for each, the distance
-    along the inward normal to the boundary across the material: the material's width there.
+    along the inward normal to the boundary across the material: the material's width there. With
+    ``with_normals``, the inward normals too, as a third array.
 
     A hit on the same loop within ``corner`` of the point, measured along the boundary, is a corner
     read from inside itself (two edges meeting, a tessellation step), not the far side of a wall,
@@ -235,7 +236,7 @@ def in_layer_widths(polys, spacing: float, corner: float = 0.0):
         at_loop.append(np.full(n, k))
         at_arc.append(s0 + t * length)
     if not pts:
-        return np.zeros((0, 2)), np.zeros(0)
+        return (np.zeros((0, 2)), np.zeros(0)) + ((np.zeros((0, 2)),) if with_normals else ())
     P, N = np.concatenate(pts), np.concatenate(nrm)
     P_loop, P_arc = np.concatenate(at_loop), np.concatenate(at_arc)
 
@@ -259,7 +260,8 @@ def in_layer_widths(polys, spacing: float, corner: float = 0.0):
         along = np.abs(P_arc[:, None] - (starts[None, :] + np.clip(u, 0, 1) * lengths[None, :]))
         along = np.minimum(along, perimeter[P_loop][:, None] - along)
         hit &= ~(same & (along < corner))
-    return P, np.where(hit, dist, np.inf).min(axis=1)
+    widths = np.where(hit, dist, np.inf).min(axis=1)
+    return (P, widths, N) if with_normals else (P, widths)
 
 
 def _clusters(points, link: float):
@@ -288,9 +290,9 @@ def measure_walls(mesh, limit: float, layer: float = 0.2) -> Dict[str, Any]:
         if not polys:
             continue
         n_sections += 1
-        P, W = in_layer_widths(polys, spacing, corner=limit)
+        P, W, N = in_layer_widths(polys, spacing, corner=limit, with_normals=True)
         keep = W < limit
-        thin.extend((p[0], p[1], float(z), float(w)) for p, w in zip(P[keep], W[keep]))
+        thin.extend((p[0], p[1], float(z), float(w), n[0], n[1]) for p, w, n in zip(P[keep], W[keep], N[keep]))
     regions = []
     if thin:
         T = np.array(thin)
@@ -301,6 +303,7 @@ def measure_walls(mesh, limit: float, layer: float = 0.2) -> Dict[str, Any]:
             at = R[np.argmin(R[:, 3])]
             depth, thinnest = _material_depth(mesh, R, limit)
             regions.append({"width_mm": float(at[3]), "at": [float(v) for v in at[:3]],
+                            "normal": [float(at[4]), float(at[5]), 0.0],      # into the material, across the wall
                             "z_range": [float(R[:, 2].min()), float(R[:, 2].max())],
                             "layers": int(len(np.unique(R[:, 2]))), "samples": int(len(R)),
                             "depth_mm": depth, "depth_min_mm": thinnest,
@@ -858,6 +861,7 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
         from agentcad import meshprobe
         mesh = meshprobe.Mesh(mesh.path, mesh.tri + np.asarray(offset, dtype=float))
     pairs: List[Tuple[Finding, Any]] = []
+    normals: Dict[Tuple[float, ...], List[float]] = {}     # a wall region's place -> the line across it, part frame
     not_measured: Dict[str, str] = {}
     sampled: Dict[str, Any] = {}
     loosened, loose_findings = _loosened(ann, lim)
@@ -884,6 +888,9 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
             sampled["walls"] = {k: walls[k] for k in ("pitch_mm", "spacing_mm", "sections")}
             sampled["walls"]["layer_slivers"] = sum(r["kind"] == "layer_sliver" for r in walls["regions"])
             pairs += check_walls(walls, lim, qs, ann, pose, tol, rules, noise)
+            frame = pose if pose is not None else qs.pose                 # the pose check_walls places by
+            normals.update({tuple(_to_part_frame(r["at"], frame)): _to_part_frame(r["normal"], frame)
+                            for r in walls["regions"] if r.get("kind") == "wall" and "normal" in r})
             floors = measure_floors(part, max(wall_limits))
             sampled["floors"] = {"spacing_mm": floors["spacing_mm"], "lines": floors["lines"],
                                  "thin_areas": len(floors["regions"])}
@@ -909,6 +916,7 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
     found = [f for f, _ in kept]
     by_name = {f["name"]: f for f in ann.features}
     claimed = [{"finding": i, "feature": f.feature, "rule": f.rule, "kind": f.key, "at": point,
+                "normal": normals.get(tuple(point)) if point is not None else None,
                 "threshold": Annotated.limit(by_name[f.feature], LIMIT_OF[f.rule], lim)[0],
                 "knobs": list(by_name[f.feature].get("knobs", []))}
                for i, (f, point) in enumerate(kept)
@@ -971,14 +979,42 @@ def _quantity(claim: Dict[str, Any], mesh, pose, layer: float) -> Dict[str, Any]
     reach = max(3.0 * limit, 2.0) if kind != "overhang" else max(5.0, float(part.diag) / 20.0)
     near = [(float(np.linalg.norm(np.subtract(_to_part_frame(r["at"], pose), claim["at"]))), q) for r, q in regions]
     near = [(d, q) for d, q in near if d <= reach]
-    return {"value": float(min(near)[1])} if near else {"clear": True}
+    return {"value": float(min(near)[1])} if near else _across(claim, part, pose, reach)
+
+
+def _across(claim: Dict[str, Any], part, pose, reach: float) -> Dict[str, Any]:
+    """A build with nothing thin near the claimed place: what the line the measure read across that place
+    finds now (a wall's inward normal in the layer plane, the vertical through a floor). The material on it
+    nearest the place, within ``reach``: ``clear`` with its length (``across_mm``) when there is some, ``gone``
+    when there is none. An overhang or a bridge has no such line, and stays ``clear`` alone."""
+    import numpy as np
+    from agentcad.rays import MeshTarget, ray_intervals
+    R = pose_rotation(pose)
+    if claim["kind"] == "wall" and claim.get("normal"):
+        d = R @ np.asarray(claim["normal"], dtype=float)
+    elif claim["kind"] == "floor":
+        d = np.array([0.0, 0.0, 1.0])
+    else:
+        return {"clear": True}
+    d = d / np.linalg.norm(d)
+    p = R @ np.asarray(claim["at"], dtype=float)
+    span = float(part.diag) + 1.0                       # the whole part, so the material is never cut short
+    rec = ray_intervals(MeshTarget(part), p - span * d, d, length=2.0 * span)
+    best = None
+    for iv in rec["intervals"]:
+        if iv["kind"] == "material":
+            gap = max(iv["entry"] - span, span - iv["exit"], 0.0)          # from the place to this material
+            if gap <= reach and (best is None or gap < best[0]):
+                best = (gap, float(iv["length"]))
+    return {"clear": True, "across_mm": best[1]} if best else {"gone": True}
 
 
 def _effect(base: Dict[str, Any], side: Dict[str, Any]) -> Tuple[str, Optional[float]]:
     if "error" in side:
         return "refused", None
-    if "clear" in side or "clear" in base:
-        return ("unchanged", None) if ("clear" in side) == ("clear" in base) else ("changed", None)
+    state = lambda q: "gone" if "gone" in q else "clear" if "clear" in q else "value"      # noqa: E731
+    if state(side) != "value" or state(base) != "value":
+        return ("unchanged", None) if state(side) == state(base) else ("changed", None)
     change = side["value"] - base["value"]
     return ("changed" if abs(change) > 1e-3 else "unchanged"), change
 
@@ -1056,10 +1092,16 @@ def _fix_sentence(rec: Dict[str, Any], before: str) -> str:
         head = f"{k['name']} {'+' if tag == 'plus' else '-'}{k['delta']:g}"
         if "error" in s:
             return f"{head} does not build"
+        if "gone" in s:
+            return f"{head} leaves no material across the place: the material there is gone (a failure, not a fix)"
         if "clear" in s:
             what = "no face steeper than 20 deg under the limit" if unit == "deg" else \
                 f"no {rec.get('kind', 'feature')} under {2 * rec['threshold']:g} mm"
-            return f"{head} leaves {what} near it (cleared, or the material there is gone: look)"
+            if "across_mm" not in s:
+                return f"{head} leaves {what} near it (cleared, or the material there is gone: look)"
+            across = f"{s['across_mm']:.3f} mm across the place"
+            return (f"{head} leaves {what} near it: cleared ({across})" if passes(s["across_mm"])
+                    else f"{head} leaves {what} near it, and {across}, under the limit: look")
         verdict = " (passes)" if passes(s["value"]) else ""
         return f"{head} gives {s['value']:.3f} {unit}" + (f" ({s['change']:+.3f})" if s.get("change") is not None else "") + verdict
 

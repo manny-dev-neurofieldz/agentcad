@@ -325,6 +325,44 @@ def test_fixes_name_the_knob_that_moves_the_wall_and_the_ones_that_do_nothing(tm
     assert [k["verdict"] for k in rec["knobs"]] == ["live", "untried", "untried"]
 
 
+POCKET = FALLBACK + '''
+from build123d import Align, Box, Pos
+
+
+def build(reach=9.6):
+    low = (Align.CENTER, Align.CENTER, Align.MIN)
+    block = Box(20, 20, 10, align=low)
+    pocket = Pos((reach - 6.0) / 2.0, 0, -1) * Box(reach + 6.0, 8, 12, align=low)     # x -6 to reach, through
+    feature("end wall", box=(8, -6, -1, 12, 6, 11), kind="wall", knobs=("reach=2",))
+    return block - pocket
+'''
+
+
+@needs_b3d
+def test_fixes_tell_a_wall_made_thick_from_a_wall_cut_away(tmp_path, capsys):
+    """reach -2 leaves the end wall 2.4 mm thick and reach +2 runs the pocket out through the face: on both
+    builds nothing near the place is thin, and only the line across the place tells them apart."""
+    proj, source = _project(tmp_path)
+    source.write_text(POCKET)
+    cli.main(["session", "start", str(proj)])
+    cli.main(["session", "iterate", str(proj), str(source)])
+    capsys.readouterr()
+    try:
+        cli.main(["qc", str(proj), "--json", "--fixes"])
+    except SystemExit:
+        pass
+    report = json.loads(capsys.readouterr().out)
+    (rec,) = report["sensitivity"]
+    assert rec["feature"] == "end wall" and rec["base"]["value"] == pytest.approx(0.4, abs=0.01)
+    (k,) = rec["knobs"]
+    assert k["verdict"] == "live" and k["plus"].get("gone") is True, k
+    assert k["minus"].get("clear") is True and k["minus"]["across_mm"] == pytest.approx(2.4, abs=0.01), k
+    fix = report["findings"][rec["finding"]]["fix"]
+    assert "reach +2 leaves no material across the place: the material there is gone (a failure, not a fix)" in fix, fix
+    assert "reach -2 leaves no wall under" in fix and "near it: cleared (2.400 mm across the place)" in fix, fix
+    assert "cleared, or the material there is gone" not in fix, fix
+
+
 @needs_b3d
 def test_an_annotated_program_builds_again_in_process(tmp_path):
     from agentcad.probe import load_shape
