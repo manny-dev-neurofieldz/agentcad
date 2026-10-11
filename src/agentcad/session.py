@@ -484,7 +484,9 @@ class DesignSession:
             latest = self.iterations[-1]
             stl = self.project.exports_dir / f"{self.name}_v{latest.number}.stl"
             self.qc_report = qcmod.run(self.config, stl, qs, annotations=latest.metadata.get("qc_annotations"),
-                                       origin_of={str(latest.source_path): latest.origin} if latest.origin else None)
+                                       origin_of={str(latest.source_path): latest.origin} if latest.origin else None,
+                                       resolution_mm=latest.metadata.get("resolution_mm"),
+                                       grid=qcmod.mesh_facts(latest.metadata))
             if self.project.variants:
                 newest = self.project.variants[0]
                 newest.findings = (newest.findings or []) + self.qc_report["findings"]

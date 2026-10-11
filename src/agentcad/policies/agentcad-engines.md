@@ -23,6 +23,7 @@ agentcad drives several CAD kernels through one contract: OpenSCAD for `.scad` s
 **1.2 Measured Metadata**
 - Which measurements can an engine report, and what does a missing one mean?
 - How does an engine that measures nothing on render still feed the tray?
+- Which keys give QC a program's declarations, and the resolution and frame of a mesh, and which engine supplies each?
 
 **2 Python Sources: the Program Contract**
 - What must a Python source define?
@@ -77,6 +78,12 @@ The keys an engine may report are fixed so that the tray and every later check r
 
 A session needs geometry from every iteration. When a render carries no volume and the engine exports STL, the session exports a mesh and measures it, so an OpenSCAD iteration still reports its box, volume and solid count; a lone `agentcad render` does not (`agentcad-render-export`).
 
+Three more keys are for QC and not for the tray (`agentcad-qc`); the iteration keeps them with the rest:
+
+- `qc_annotations`: the features, suppressions and print pose a program declared, as records that each carry the `file` and `line` it was declared at. build123d and VoxelCAD supply them from the program's `agentcad.annotate` calls, one build's worth (VoxelCAD executes a source more than once to size its grid, and keeps the last pass's). OpenSCAD supplies them from the `echo("AGENTCAD_QC", ...)` lines in its output, each distinct line once, with a line of None because an echo carries none. An engine whose program declares nothing leaves the key out.
+- `resolution_mm`: the finest feature the part's mesh can show, in model units. VoxelCAD sets it to its largest voxel edge times the marching-cubes stride of the pipeline that ran. A B-rep or CSG engine, whose mesh is exact to its tessellation, leaves it unset; QC reads a missing value as an exact mesh.
+- `mesh_offset`: where the origin of the exported mesh lies in the frame the program builds in. VoxelCAD writes a mesh from the corner of its grid, so it reports that corner (the same point as `bbox_min`); an engine that writes the mesh where the program built it leaves the key out.
+
 ## 2 Python Sources: the Program Contract
 
 A Python source should define `build(**params)` returning the part, with a default value for every parameter: the defaults are the design, and each parameter is a knob a user may turn. `-D name=value` overrides arrive as strings and are converted to the type of the parameter's default (true or false, an integer, a number or a string; a parameter with no scalar default takes a Python literal). A value that cannot be read as that type is an error, and so is a name the function does not take, unless it accepts `**kwargs`.
@@ -99,6 +106,8 @@ Settings: `fa` and `fs` (fragment angle and size, defaults 1.0 and 0.5), `backen
 
 OpenSCAD exposes no geometry through its command line: a render reports only the facet count, and the box, volume and solid count come from measuring an exported STL (section 1.2).
 
+A `.scad` file declares its features for QC with `echo("AGENTCAD_QC", ...)` statements (`agentcad-qc`, section 2.2). Each render view and each export is a separate OpenSCAD process that prints them again, so the engine reads the distinct lines of all of them and reports the records as `qc_annotations` on the render and on the export alike. A declaration it cannot read, or that the checks refuse, fails that render or export with the line in the message; every other echo line is ignored.
+
 ## 5 VoxelCAD
 
 VoxelCAD models on a voxel grid: implicit shapes, lattices and gyroids, booleans of anything with an inside, and parts whose geometry is easier to state as a field than as faces. Every build runs in a worker process with a time limit, so an oversized grid or a process killed for memory is reported as an error.
@@ -106,6 +115,8 @@ VoxelCAD models on a voxel grid: implicit shapes, lattices and gyroids, booleans
 The grid is sized from the model: `grid` voxels along its longest side (default 256), so a small and a large part build at the same cell count, unless `voxel_size` sets the cell edge directly; `warn_voxels` warns above a cell count (default 64 million). The surface used for renders and for the exported STL is the same: `surface_method` `auto` (the default; the fused streaming pipeline when its compiled kernels are present), `fast_smooth` or `cdt`; the staircase of the voxels is removed by a low-pass filter of `lowpass_cutoff` cycles per voxel (default 0.25; raise it towards 0.35 on a coarse grid whose thin walls are only a few voxels thick) and `lowpass_order` (default 4), then contoured with marching cubes at `mc_stride` (default 2, which loses nothing under the default cutoff). `only_largest_component` keeps the largest connected piece. Also `timeout`, `export_timeout`, `color` and `background`. Exports: STL.
 
 It reports the grid (resolution, voxel size, target), the surface pipeline that ran, the box, the occupied voxels, the volume (occupied cells times the cell volume) and the solid count (connected components on the grid). Area, validity and a face census have no meaning on a grid and are not reported.
+
+For QC it also reports `resolution_mm` (the voxel edge times the marching-cubes stride of the pipeline that ran, so `voxel_size = 0.1` at the default `mc_stride = 2` is 0.2 mm), `mesh_offset` (its mesh starts at the corner of the grid, not where the program built the part) and the program's `qc_annotations`. The worker executes a source twice or three times when the grid is sized from the model, and the annotation registry is cleared before each pass, so the declarations reported are the last pass's, one of each. A wall thinner than about the resolution does not survive the contouring, so QC reads a width off the mesh only where the resolution is at most half the limit (`agentcad-qc`, section 4); pick `voxel_size` and `mc_stride` for the walls the part must be checked for.
 
 ## 6 Camera Presets
 
@@ -121,6 +132,7 @@ An engine subclasses the engine base class, declares its source extension, its e
 - `agentcad-session`: the loop that renders and measures each iteration.
 - `agentcad-render-export`: rendering or exporting a source outside a session.
 - `agentcad-build123d`: building well in the B-rep engine.
+- `agentcad-qc`: how the declarations, the resolution and the frame an engine reports are used.
 - `agentcad-policies`: how this policy is found and read.
 
 ## 9 Anti-Patterns
@@ -128,6 +140,7 @@ An engine subclasses the engine base class, declares its source extension, its e
 - **Leaving the product unnamed**: a program without `build()` or a named product gets the largest shape it left behind, which may be an intermediate.
 - **Trusting `info` for a project's binary**: `info` checks the environment's OpenSCAD, not the one a project names.
 - **A mesh measurement read as B-rep**: VoxelCAD's volume is a count of cells, and OpenSCAD's numbers come from its exported mesh; neither has a face census.
+- **A voxel part's QC read as exact**: its mesh is coarser than a CAD kernel's by `resolution_mm`; a rule QC lists as not measured needs a finer grid, not a different reading.
 - **Smooth shading as evidence of a smooth surface**: render with `flat` shading before calling a loft smooth.
 
 ## 10 Evolution and Feedback

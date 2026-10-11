@@ -35,6 +35,13 @@ seconds), bbox_min,
 bbox_size, occupied_voxels, volume (occupied cells times the cell volume),
 counts.solids (connected components on the grid), runtime_s. Area, validity
 and a face census have no meaning on a voxel grid and are not reported.
+
+For QC it also reports qc_annotations (the program's ``agentcad.annotate``
+declarations, those of the build's last pass: the worker executes a source
+more than once to size the grid) and resolution_mm, the finest feature the
+mesh can show: the voxel edge times the marching-cubes stride of the surface
+pipeline that ran. QC measures a wall only where that is at most half the
+limit.
 """
 
 import importlib.metadata
