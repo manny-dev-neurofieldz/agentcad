@@ -24,8 +24,8 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-#: A part's ``[status] state``.
-PART_STATES = ("draft", "print-tested", "validated", "superseded")
+#: A part's ``[status] state``; ``candidate``: known to exist, its files not yet in the library.
+PART_STATES = ("candidate", "draft", "print-tested", "validated", "superseded")
 #: A fit's verdict, in the words ``agentcad fit`` writes.
 FIT_VERDICTS = ("pass", "fail", "unmeasured", "measured")
 #: A job's (or an item's) verdict. ``pending``: printed, not judged yet; ``cancelled``: never printed.
@@ -351,11 +351,15 @@ class _Reader:
             if isinstance(stl, str) and stl and not (path.parent / stl).is_file():
                 self.problem("warning", path, f"{key} stl", f"{stl} is not in the job folder")
             parsed.append(Item(part, quantity, self.verdict(path, f"{key} verdict", item.get("verdict"), printed)))
+        summed = sum_verdicts([i.verdict for i in parsed])
+        if verdict and summed and verdict != summed:
+            self.problem("warning", path, "[outcome] verdict",
+                         f"{verdict!r}, but its items' verdicts sum to {summed!r}")
         self.out.jobs.append(Job(path.parent.name, self.rel(path), _iso(staged), _iso(planned), _iso(printed),
                                  verdict, parsed))
 
     def verdict(self, path: Path, key: str, value: Any, printed: Optional[When]) -> Optional[str]:
-        if value is None:
+        if value is None or value == "":          # an empty verdict, as a template leaves it, is no verdict
             return None
         if value not in JOB_VERDICTS:
             self.problem("error", path, key, f"{_short(value)!r} is not one of {', '.join(JOB_VERDICTS)}; "
@@ -398,6 +402,16 @@ class _Reader:
                 if item.part and item.part not in known:
                     self.problem("warning", path, f"[[item]] {i + 1} part",
                                  f"{item.part!r} is not a part this library knows")
+
+
+def sum_verdicts(verdicts: List[Optional[str]]) -> Optional[str]:
+    """The verdict a job's items sum to, when every item has one: ``pending`` while any item is,
+    the shared verdict when all agree, otherwise ``partial``. None when an item has no verdict."""
+    if not verdicts or any(v is None for v in verdicts):
+        return None
+    if "pending" in verdicts:
+        return "pending"
+    return verdicts[0] if len(set(verdicts)) == 1 else "partial"
 
 
 def _short(value: Any, limit: int = 60) -> Any:

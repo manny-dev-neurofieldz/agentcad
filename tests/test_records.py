@@ -164,6 +164,26 @@ def test_one_record_read_alone_checks_its_own_fields_only(library):
         records.load(library / "catalog.toml")
 
 
+def test_a_candidate_part_and_an_empty_verdict_are_valid(library):
+    _edit(library / "parts/clip/part.toml", 'state = "draft"', 'state = "candidate"')
+    _edit(library / "print_jobs/2026-03-01_mk4_petg_bracket_v2/job.toml", "quantity = 2",
+          'quantity = 2\n\n[outcome]\nresult = ""\ndate_printed = ""\nverdict = ""')
+    found = records.load(library)
+    assert found.problems == []
+    assert {j.slug: j.verdict for j in found.jobs}["2026-03-01_mk4_petg_bracket_v2"] is None
+
+
+def test_a_job_verdict_that_disagrees_with_its_items_is_a_warning(library):
+    job = library / "print_jobs/2026-01-05_mk4_pla_bracket/job.toml"
+    _edit(job, "quantity = 1", 'quantity = 1\nverdict = "failed"')
+    assert ("warning", "print_jobs/2026-01-05_mk4_pla_bracket/job.toml", "[outcome] verdict") in \
+        [p[:3] for p in _problems(library)]
+    assert records.sum_verdicts(["success", "failed"]) == "partial"
+    assert records.sum_verdicts(["failed", "pending"]) == "pending"
+    assert records.sum_verdicts(["success", "success"]) == "success"
+    assert records.sum_verdicts(["success", None]) is None and records.sum_verdicts([]) is None
+
+
 def test_parse_when_reads_dates_and_date_times_and_nothing_else():
     from datetime import date, datetime
     assert records.parse_when("2026-03-06") == date(2026, 3, 6)

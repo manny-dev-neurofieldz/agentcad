@@ -64,7 +64,7 @@ A library is any folder that holds such files, at any depth. Folders whose names
 The structured fields of a `part.toml`:
 
 - `[identity] slug`: the part's stable name, required, the same as its folder's name. Two records with one slug are an error.
-- `[status] state`: one of `draft`, `print-tested`, `validated`, `superseded`, when present.
+- `[status] state`: one of `candidate` (known to exist, its files not yet in the library), `draft`, `print-tested`, `validated`, `superseded`, when present.
 - `[relations] mates_with` and `supersedes`: lists of part slugs; `superseded_by`: a part slug or empty. Each should name a part the library knows.
 - `[fit.<mate>]`: the part's fit records (section 2.1).
 
@@ -114,14 +114,14 @@ A job's verdict, and an item's, is one of:
 - `pending`: printed, not judged yet.
 - `cancelled`: will not print.
 
-The first four say a print happened, so they need `[outcome] date_printed`; `cancelled` with a print date is a contradiction. A printed job with no verdict reads as not judged yet, like `pending`. A sentence about the print goes in `[outcome] result` or any other key; the verdict is one word.
+The first four say a print happened, so they need `[outcome] date_printed`; `cancelled` with a print date is a contradiction. A printed job with no verdict (or an empty one, as a template leaves it) reads as not judged yet, like `pending`. When the items carry their own verdicts, the job's sums them up: `pending` while any item is, `success` or `failed` when all items agree, otherwise `partial`. A sentence about the print goes in `[outcome] result` or any other key; the verdict is one word.
 
 ## 4 The Check
 
 `agentcad records check <path> [--json]` reads every record under a folder (a library or a project), or one record file, and checks the structured fields above. It prints what it read (parts, jobs, how many printed and how many of those have no verdict, fit records, parts only the catalog lists), then each problem with its file and key:
 
 - **Errors**: a required field missing; a value of the wrong type; a word outside its enumeration; a date that does not read as a date; a verdict that contradicts the print date; two records with one slug; a snapshot without a well-formed digest; a record that is not readable at all.
-- **Warnings**: a reference to a part the library does not know; a fit recorded on one side only; a snapshot or `stl` file that is not where the record says; a slug that differs from its folder's name; a job printed before the day it was staged.
+- **Warnings**: a reference to a part the library does not know; a fit recorded on one side only; a snapshot or `stl` file that is not where the record says; a slug that differs from its folder's name; a job printed before the day it was staged; a job verdict that differs from what its items' verdicts sum to.
 
 The exit code is 0 with no errors (warnings allowed), 1 with errors, 2 when the path does not exist or holds no records. `--json` prints the whole reading (schema `agentcad.records/1`): every part, job and fit as read, each snapshot's file named from the checked folder, and every problem. Tools that derive owed work read that, not the files.
 
