@@ -22,6 +22,13 @@ def _print_report(name, report):
         print(f"  loosened: {item['limit']} {item['value']:g} (from {item['below']:g}) for {item['feature']!r} at "
               f"{item['source']}" + (f", because {item['why']}" if item["why"] else ", with no reason given"))
     print("  limits: " + ", ".join(f"{k} {v['value']:g} ({v['layer']})" for k, v in report["limits"].items()))
+    if report.get("resolution"):
+        from agentcad.qc import mm_text
+        r = report["resolution"]
+        made = [f"voxel {r['voxel_mm']:g} mm"] if r.get("voxel_mm") is not None else []
+        made += [f"stride {r['stride']}"] if r.get("stride") is not None else []
+        print(f"  mesh resolution: {mm_text(r['mm'])}" + (f" ({' x '.join(made)})" if made else "") +
+              "; a width is read only where the mesh resolves at most half its limit")
     if report["not_measured"]:
         print("  not measured: " + "; ".join(f"{k} ({why})" for k, why in report["not_measured"].items()))
     errors = sum(f["severity"] == "error" for f in report["findings"])
@@ -46,22 +53,30 @@ def cmd_qc(args):
         return 2
     it = session.iterations[-1]
     stl = session.project.exports_dir / f"{session.name}_v{it.number}.stl"
+    mesh_md = it.metadata           # what the engine said about the mesh judged: the iteration's, or the fresh export's
     if not stl.is_file():           # not finalized yet: export the latest iteration for QC alone
         stl = Path(it.source_path).parent / f"{session.name}_v{it.number}_qc.stl"
         result = session.engine.export(it.source_path, stl, fmt="stl", defines=it.defines or session.defines or None)
         if not result.success:
             print(f"agentcad qc: no mesh of v{it.number} ({'; '.join(result.errors)}); nothing measured", file=sys.stderr)
             stl = None
+        else:
+            mesh_md = result.metadata       # made now, with today's settings: its resolution is the one to judge by
     try:
         report = qcmod.run(cfg, stl, qs, printer_override=args.printer, annotations=it.metadata.get("qc_annotations"),
-                           origin_of={str(it.source_path): it.origin} if it.origin else None)
+                           origin_of={str(it.source_path): it.origin} if it.origin else None,
+                           resolution_mm=mesh_md.get("resolution_mm"), grid=qcmod.mesh_facts(mesh_md))
     except (KeyError, ValueError) as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
     report.update(iteration=it.number, mesh=str(stl) if stl else None)
     if getattr(args, "fixes", False):
         src = Path(it.source_path) if it.source_path else None
-        if src is None or src.suffix.lower() != ".py":
+        if session.engine.name != "build123d":
+            # a VoxelCAD program is a .py file too, and the sweep would rebuild it with build123d
+            print(f"agentcad qc: --fixes turns the knobs of a build123d program; this project's engine is "
+                  f"{session.engine.name}", file=sys.stderr)
+        elif src is None or src.suffix.lower() != ".py":
             print("agentcad qc: --fixes turns the knobs of a build123d program; this iteration has none", file=sys.stderr)
         else:
             layer = float(getattr(getattr(cfg, "print", None), "layer_height", 0.2) or 0.2)
@@ -99,7 +114,8 @@ def register(subparsers, groups):
     pq.add_argument("--printer", default=None, help="Judge against this printer instead of the project's")
     pq.add_argument("--json", action="store_true", help="Print the report as JSON")
     pq.add_argument("--fixes", action="store_true",
-                    help="For each error a feature claims, turn the knobs the feature names and say what each does")
+                    help="For each error a feature claims, turn the knobs the feature names and say what each does "
+                         "(build123d projects only)")
     pq.add_argument("--max-runs", type=int, default=16, metavar="N",
                     help="Rebuilds --fixes may make, the base included (default 16)")
     pq.set_defaults(func=cmd_qc)

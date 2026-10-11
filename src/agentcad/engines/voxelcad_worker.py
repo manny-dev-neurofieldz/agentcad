@@ -34,6 +34,13 @@ executed again at that size. A boolean's rendered grid can differ from its
 pre-render grid, so one corrective rebuild follows when the rendered grid
 overshoots the target by more than a quarter. An explicit voxel size skips
 all of that.
+
+The source is therefore executed two or three times per build, and each execution calls the
+program's ``agentcad.annotate`` declarations again. ``_execute`` clears the registry before it
+runs the source, so what is left when the build is done is the final pass's declarations alone;
+they are reported as ``metadata["qc_annotations"]``. The mesh's resolution, the voxel edge times
+the marching-cubes stride of the pipeline that ran, is reported as ``metadata["resolution_mm"]``
+for QC to leave unmeasured the walls the mesh is too coarse to show.
 """
 
 import json
@@ -56,6 +63,12 @@ def _last_line(exc: BaseException) -> str:
 # --- source execution and harvest ---------------------------------------------
 
 def _execute(source_path: str) -> Dict[str, Any]:
+    """Run a program's module code. A build executes the source more than once (a probe pass, the
+    sized pass, sometimes a corrective rebuild) and each pass declares the program's features again,
+    so the annotation registry is cleared here, at the start of every pass: a feature is declared
+    once, by the pass that built the model."""
+    from agentcad import annotate
+    annotate.reset()
     with open(source_path) as f:
         code = f.read()
     namespace: Dict[str, Any] = {"__file__": source_path, "__name__": "__agentcad_source__"}
@@ -303,6 +316,30 @@ def _export(model, job: Dict[str, Any], out: Dict[str, Any]) -> None:
         out["errors"].append("VoxelCAD produced no STL file")
 
 
+def _resolution(model, job: Dict[str, Any], out: Dict[str, Any]) -> None:
+    """The finest feature the mesh can show: the largest voxel edge times the marching-cubes stride of
+    the pipeline that ran (the surface record the render or export made; the job's own settings when
+    it made none). A sheet or gap narrower than about this does not survive the contouring, and a width
+    or a position read off the mesh is good to about this much.
+
+    Also where the mesh is: VoxelCAD writes a mesh from the corner of its grid (the first voxel's
+    corner is the mesh's origin) and not where the program built the part, so a point of the mesh plus
+    the grid's corner (``bbox_min``, in the program's frame) is the point of the part. QC needs that to
+    set the program's feature boxes against the mesh."""
+    md = out["metadata"]
+    try:
+        edge = max(float(v) for v in model.grid.voxel_size_vector)
+    except (AttributeError, TypeError, ValueError) as e:
+        md["resolution_mm_error"] = _last_line(e)
+        return
+    surface = md.get("surface") or _surface_record(job, model)
+    # six significant digits: the grid stores float32 edges (0.1 is 0.10000000149...), and a resolution
+    # of exactly half a limit should read as that, not as a hair over it
+    md["resolution_mm"] = float(f"{edge * max(1, int(surface.get('mc_stride') or 1)):.6g}")
+    if "bbox_min" in md:
+        md["mesh_offset"] = list(md["bbox_min"])
+
+
 # --- entry --------------------------------------------------------------------
 
 def run(job: Dict[str, Any], out: Dict[str, Any]) -> None:
@@ -323,6 +360,10 @@ def run(job: Dict[str, Any], out: Dict[str, Any]) -> None:
         )
 
     out["metadata"] = _measure(model, voxel, spec)
+    from agentcad import annotate
+    notes = annotate.records()
+    if notes:
+        out["metadata"]["qc_annotations"] = notes
     out["metadata"]["runtime_s"] = round(time.monotonic() - t0, 3)
     if mode == "render":
         _render(model, job, out)
@@ -330,6 +371,7 @@ def run(job: Dict[str, Any], out: Dict[str, Any]) -> None:
         _export(model, job, out)
     else:
         raise ValueError(f"unknown mode {mode!r}")
+    _resolution(model, job, out)
 
 
 def main(argv: Optional[List[str]] = None) -> int:

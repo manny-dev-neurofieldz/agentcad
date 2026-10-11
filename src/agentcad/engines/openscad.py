@@ -3,6 +3,13 @@
 Wraps the OpenSCAD CLI for rendering .scad files to PNG and exporting
 meshes. Supports BOSL2, the Manifold backend, and native EGL headless
 rendering.
+
+A program declares its features for QC with ``echo("AGENTCAD_QC", "feature", ...)`` statements
+(``agentcad.scadecho`` has the spelling). OpenSCAD runs once per rendered view and once for an
+export, and each run prints the echoes on standard error; the engine reads the distinct
+declaration lines of all of them and reports the records as ``metadata["qc_annotations"]``. A
+declaration it cannot read or the validator refuses fails that render or export, as an invalid
+annotation call fails a Python build. Other ECHO lines are ignored.
 """
 
 import functools
@@ -16,6 +23,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from agentcad import scadecho
 from agentcad.camera import CameraPreset, MULTI_VIEW_DEFAULT
 from agentcad.engine import (
     CADEngine, Defines, RenderResult, ExportResult, ValidationResult,
@@ -192,8 +200,9 @@ class OpenSCADEngine(CADEngine):
             stripped = line.strip()
             if not stripped:
                 continue
-            # Informational lines
-            if "NoError" in stripped or stripped.startswith("Facets:"):
+            # Informational lines; a QC declaration is read by scadecho, and its text (a reason that
+            # says "WARNING") is not a diagnostic
+            if "NoError" in stripped or stripped.startswith("Facets:") or scadecho.is_declaration(stripped):
                 continue
             if stripped.startswith("ERROR"):
                 # Shader errors are a headless-GL artefact, not a model error
@@ -203,6 +212,20 @@ class OpenSCADEngine(CADEngine):
                     errors.append(stripped)
             elif "WARNING" in stripped:
                 warnings.append(stripped)
+
+    @staticmethod
+    def _declared(runs: List[str], source_path: Path, metadata: Dict[str, Any], errors: List[str]) -> None:
+        """Read the QC declarations in the standard error of OpenSCAD's runs of ``source_path`` into
+        ``metadata["qc_annotations"]``, each distinct line once. A line that cannot be read, or that the
+        validator refuses, is an error of this render or export. The records name the file alone: an
+        echo carries no line."""
+        try:
+            records = scadecho.read(runs, source_path)
+        except scadecho.EchoError as e:
+            errors.append(f"{source_path.name}: QC declaration refused: {e}")
+            return
+        if records:
+            metadata["qc_annotations"] = records
 
     # --- contract -----------------------------------------------------------
 
@@ -225,6 +248,7 @@ class OpenSCADEngine(CADEngine):
         errors: List[str] = []
         warnings: List[str] = []
         metadata: Dict[str, Any] = {}
+        runs: List[str] = []            # each view is a process, and each prints the declarations again
         t0 = time.monotonic()
 
         for view_name in views:
@@ -239,6 +263,7 @@ class OpenSCADEngine(CADEngine):
                 continue
 
             self._classify_stderr(result.stderr, errors, warnings)
+            runs.append(result.stderr)
             match = re.search(r"Facets:\s+(\d+)", result.stderr or "")
             if match:
                 metadata["facet_count"] = int(match.group(1))
@@ -248,6 +273,7 @@ class OpenSCADEngine(CADEngine):
             elif result.returncode != 0:
                 errors.append(f"{view_name}: render failed (exit {result.returncode})")
 
+        self._declared(runs, source_path, metadata, errors)
         return RenderResult(
             images=images,
             success=len(images) > 0 and len(errors) == 0,
@@ -299,6 +325,7 @@ class OpenSCADEngine(CADEngine):
         if not produced:
             errors.append(f"OpenSCAD produced no {fmt} file")
         metadata: Dict[str, Any] = {"facet_count": facets} if facets else {}
+        self._declared([result.stderr], source_path, metadata, errors)
         if produced and fmt == "stl":
             # OpenSCAD exposes no geometry through its CLI; the mesh it wrote
             # carries the bounding box, the volume and the body count.

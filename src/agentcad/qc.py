@@ -46,7 +46,7 @@ error; suppressions and loosened limits are listed with their reasons.
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from agentcad import printers
 from agentcad.findings import Finding
@@ -57,6 +57,8 @@ RULES = {"build_volume": "error", "min_feature": "error", "min_wall": "warning",
 #: The limit each measured rule reads.
 LIMIT_OF = {"min_feature": "min_feature_mm", "min_wall": "min_wall_mm", "max_overhang": "max_overhang_deg",
             "max_bridge": "max_bridge_mm"}
+#: The rules that read a width off the mesh: of a wall, of a floor, of a feature.
+WALL_RULES = ("min_feature", "min_wall")
 #: At most this many sections per part: a taller part is cut at a coarser pitch, and the report says so.
 MAX_SECTIONS = 400
 SEVERITIES = ("error", "warning", "off")
@@ -548,13 +550,16 @@ class Annotated:
     def from_records(cls, records: Optional[Sequence[Dict[str, Any]]], origin_of: Optional[Dict[str, str]] = None
                      ) -> "Annotated":
         """``origin_of`` maps the copy of a source the engine built from to the user's file, so a
-        line is named in the file the user edits."""
+        line is named in the file the user edits. A record whose line is None (an OpenSCAD echo
+        carries none) names the file alone."""
         import os
         origins = {os.path.realpath(k): v for k, v in (origin_of or {}).items() if k and v}
         out = cls()
         for r in records or []:
             path = str(r.get("file") or "")
-            source = f"{origins.get(os.path.realpath(path), path) if path else '?'}:{r.get('line', '?')}"
+            where = origins.get(os.path.realpath(path), path) if path else "?"
+            line = r.get("line", "?")
+            source = where if line is None else f"{where}:{line}"
             if r.get("type") == "feature":
                 out.features.append(dict(r, source=source))
             elif r.get("type") == "suppress":
@@ -584,16 +589,90 @@ def _claimed(kind: str, feat: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return {"feature": feat["name"], "source": feat["source"]} if feat else {"feature": "", "source": "[qc]"}
 
 
+# --- mesh resolution: a width is read only where the mesh can show it ------------------------------
+
+def mm_text(value: float) -> str:
+    return f"{value:.2f} mm" if value >= 0.1 else f"{value:.3g} mm"
+
+
+def mesh_facts(metadata: Optional[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+    """What an iteration's metadata says about how a grid engine made its mesh: ``voxel_mm`` (the cell
+    edge) and ``stride`` (of the marching cubes), for the report's words, and ``offset`` (the engine's
+    ``mesh_offset``: where the mesh's origin lies in the program's frame). None when it says none of them."""
+    md = metadata or {}
+    out: Dict[str, Any] = {}
+    try:
+        sizes = [float(v) for v in md.get("voxel_size") or ()]
+    except (TypeError, ValueError):
+        sizes = []
+    if sizes:
+        out["voxel_mm"] = max(sizes)
+    surface = md.get("surface")
+    stride = surface.get("mc_stride") if isinstance(surface, dict) else None
+    if isinstance(stride, int) and not isinstance(stride, bool):
+        out["stride"] = max(1, stride)
+    try:
+        offset = [float(v) for v in md.get("mesh_offset") or ()]
+    except (TypeError, ValueError):
+        offset = []
+    if len(offset) == 3 and all(math.isfinite(v) for v in offset):
+        out["offset"] = offset
+    return out or None
+
+
+def limits_in_force(lim: Dict[str, Tuple[float, str]], ann: "Annotated") -> Dict[str, List[float]]:
+    """For each wall rule, every limit in force on the part: the layered one, then each feature's own."""
+    out: Dict[str, List[float]] = {}
+    for rule in WALL_RULES:
+        key = LIMIT_OF[rule]
+        out[rule] = ([lim[key][0]] if key in lim else []) + \
+            [f["limits"][key] for f in ann.features if key in f.get("limits", {})]
+    return out
+
+
+def readable_rules(resolution_mm: float, in_force: Dict[str, List[float]],
+                   source: Optional[Mapping[str, Any]] = None) -> Tuple[Tuple[str, ...], Dict[str, str]]:
+    """The wall rules a mesh that resolves ``resolution_mm`` can be read for, and why not for the rest.
+    A width is read only where the mesh resolves at most half the smallest limit in force for the rule
+    (the layered limit and any feature's own): a sheet or gap narrower than about the resolution does not
+    survive the contouring, and a width near the limit would be read off noise. A rule with no limit
+    stays in. ``source`` is the voxel edge and stride, for the words."""
+    keep: List[str] = []
+    why: Dict[str, str] = {}
+    for rule in WALL_RULES:
+        smallest = min(in_force[rule]) if in_force[rule] else None
+        if smallest is None or resolution_mm <= smallest / 2.0 * (1.0 + 1e-6):         # inclusive: half is enough
+            keep.append(rule)
+            continue
+        made = []
+        if source and source.get("voxel_mm") is not None:
+            made.append(f"voxel {float(source['voxel_mm']):g} mm")
+        if source and source.get("stride") is not None:
+            made.append(f"stride {source['stride']}")
+        by = f" ({' x '.join(made)})" if made else ""
+        why[rule] = (f"the mesh resolves {mm_text(resolution_mm)}{by}; "
+                     f"a {smallest:g} mm limit needs {smallest / 2.0:g} mm or finer")
+    return tuple(keep), why
+
+
 def _thin(kind: str, measured: float, region: Dict[str, Any], lim, qs: QCSettings, pose, ann: Annotated,
-          tol: float, detail: str):
+          tol: float, detail: str, rules: Tuple[str, ...] = WALL_RULES, uncertainty: float = 0.0):
     """A thin wall or floor judged at its place: an error under the minimum feature (only when a
-    feature claims it), a warning under the minimum wall. Returns (finding, part-frame point) or None."""
+    feature claims it), a warning under the minimum wall. ``rules`` are the wall rules the mesh can be
+    read for (all of them, unless it is too coarse for one) and ``uncertainty`` how far the width may
+    be off. Returns (finding, part-frame point) or None."""
     point = _to_part_frame(region["at"], pose)
     feat = ann.claim(point, tol)
-    fmin, fwall = ann.limit(feat, "min_feature_mm", lim), ann.limit(feat, "min_wall_mm", lim)
-    if fwall is None or measured >= fwall[0]:
-        return None
-    is_feature = fmin is not None and measured < fmin[0]
+    fmin = ann.limit(feat, "min_feature_mm", lim) if "min_feature" in rules else None
+    fwall = ann.limit(feat, "min_wall_mm", lim) if "min_wall" in rules else None
+    if "min_wall" in rules:
+        if fwall is None or measured >= fwall[0]:
+            return None
+        is_feature = fmin is not None and measured < fmin[0]
+    else:                                  # a mesh too coarse for the wall rule: only the feature rule reads
+        if fmin is None or measured >= fmin[0]:
+            return None
+        is_feature = True
     rule = "min_feature" if is_feature else "min_wall"
     value, layer = fmin if is_feature else fwall
     severity = qs.severity.get(rule, RULES[rule])
@@ -604,16 +683,19 @@ def _thin(kind: str, measured: float, region: Dict[str, Any], lim, qs: QCSetting
     where = _fmt_point(point)
     name = f" of {feat['name']!r} ({feat['source']})" if feat else ""
     what = "narrower than the smallest feature it can print" if is_feature else f"thinner than a {kind} should be"
+    coarse = f"; the mesh resolves {mm_text(uncertainty)}, so the width is good to about that" if uncertainty else ""
     finding = Finding(
         kind, severity, f"{measured:.3f} mm", f"at least {value:g} mm", "material narrower than the limit prints "
         "weak, as a seam, or not at all", rule=rule, layer=layer, location=f"{where} in the part's frame",
-        uncertainty=0.0, fix=f"thicken the {kind} there, or move the feature that thins it",
-        message=f"a {kind}{name} {measured:.3f} mm thick at {where} (part frame) is {what} ({value:g} mm); {detail}",
+        uncertainty=uncertainty, fix=f"thicken the {kind} there, or move the feature that thins it",
+        message=f"a {kind}{name} {measured:.3f} mm thick at {where} (part frame) is {what} ({value:g} mm); "
+                f"{detail}{coarse}",
         **_claimed(kind, feat))
     return finding, point
 
 
-def check_walls(walls: Dict[str, Any], lim, qs: QCSettings, ann: Optional[Annotated] = None, pose=None, tol: float = 0.05):
+def check_walls(walls: Dict[str, Any], lim, qs: QCSettings, ann: Optional[Annotated] = None, pose=None, tol: float = 0.05,
+                rules: Tuple[str, ...] = WALL_RULES, uncertainty: float = 0.0):
     """A finding per thin wall region (layer slivers are counted, not judged)."""
     ann, out = ann or Annotated(), []
     for r in walls["regions"]:
@@ -622,20 +704,22 @@ def check_walls(walls: Dict[str, Any], lim, qs: QCSettings, ann: Optional[Annota
         z0, z1 = r["z_range"]
         hit = _thin("wall", r["width_mm"], r, lim, qs, pose if pose is not None else qs.pose, ann, tol,
                     f"it runs over {r['layers']} layer(s), z {z0:.2f} to {z1:.2f} in the print pose, "
-                    f"{r['depth_min_mm']:.3f} mm of material through the part at its thinnest (median {r['depth_mm']:.3f})")
+                    f"{r['depth_min_mm']:.3f} mm of material through the part at its thinnest (median {r['depth_mm']:.3f})",
+                    rules, uncertainty)
         if hit:
             out.append(hit)
     return out
 
 
-def check_floors(floors: Dict[str, Any], lim, qs: QCSettings, ann: Annotated, pose, tol: float):
+def check_floors(floors: Dict[str, Any], lim, qs: QCSettings, ann: Annotated, pose, tol: float,
+                 rules: Tuple[str, ...] = WALL_RULES, uncertainty: float = 0.0):
     """A finding per thin floor or roof (its median thickness judged, its thinnest reported)."""
     out = []
     for r in floors["regions"]:
         z0, z1 = r["z_range"]
         hit = _thin("floor", r["thickness_mm"], r, lim, qs, pose, ann, tol,
                     f"{r['area_mm2']:.0f} mm2 of it, thinnest {r['thinnest_mm']:.3f} mm, at z {z0:.2f} to {z1:.2f} "
-                    f"in the print pose (vertical lines {floors['spacing_mm']:.2f} mm apart)")
+                    f"in the print pose (vertical lines {floors['spacing_mm']:.2f} mm apart)", rules, uncertainty)
         if hit:
             out.append(hit)
     return out
@@ -734,11 +818,31 @@ def _apply_suppressions(pairs, ann: Annotated, tol: float) -> Tuple[List[Tuple[F
 
 
 def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str] = None,
-        annotations: Optional[Sequence[Dict[str, Any]]] = None, origin_of: Optional[Dict[str, str]] = None
+        annotations: Optional[Sequence[Dict[str, Any]]] = None, origin_of: Optional[Dict[str, str]] = None,
+        resolution_mm: Optional[float] = None, grid: Optional[Mapping[str, Any]] = None
         ) -> Dict[str, Any]:
     """Judge one part's mesh (an STL): the printer, every limit with its layer, the findings, what
     each measurement sampled, and the rules not measured (with why). ``annotations`` are the records
-    the part's program made with ``agentcad.annotate``; ``origin_of`` maps a built copy to the user's file."""
+    the part's program made (``agentcad.annotate``, or an OpenSCAD program's echo lines); ``origin_of``
+    maps a built copy to the user's file.
+
+    ``resolution_mm`` is the finest feature the engine's mesh can show (the engine's metadata key of
+    that name; None for an engine whose mesh is exact). A width is read off the mesh only where it
+    resolves at most half the smallest limit in force for the rule; a rule the mesh is too coarse for
+    is listed as not measured, with the resolution and the limit, and when neither wall rule can be
+    read the walls and floors are not measured at all. A wall or floor read off such a mesh carries the
+    resolution as its uncertainty. Overhangs, bridges and the build volume do not depend on it.
+    ``grid`` (``mesh_facts(metadata)``) is how a grid engine made the mesh: the voxel edge and stride, for
+    the words, and the ``offset`` that puts a mesh written from the grid's corner back in the program's
+    frame, where its feature boxes are."""
+    res = None
+    if resolution_mm is not None:
+        try:
+            res = float(resolution_mm)
+        except (TypeError, ValueError):
+            res = float("nan")
+        if not (math.isfinite(res) and res > 0):
+            raise ValueError(f"resolution_mm must be a positive number, not {resolution_mm!r}")
     printer = printer_for(cfg, qs, printer_override)
     lim = limits(printer, qs)
     layer = float(getattr(getattr(cfg, "print", None), "layer_height", 0.2) or 0.2)
@@ -746,6 +850,13 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
     pose = ann.pose if ann.pose is not None else qs.pose
     pose_from = f"annotation at {ann.pose_source}" if ann.pose is not None else ("[qc] pose" if qs.pose else "as modelled")
     mesh = load_mesh(stl)
+    offset = (grid or {}).get("offset")
+    if mesh is not None and offset and any(offset):
+        # an engine that writes its mesh from the corner of its grid: put it where the program built the part,
+        # for that is the frame the program's boxes, and the report's coordinates, are in
+        import numpy as np
+        from agentcad import meshprobe
+        mesh = meshprobe.Mesh(mesh.path, mesh.tri + np.asarray(offset, dtype=float))
     pairs: List[Tuple[Finding, Any]] = []
     not_measured: Dict[str, str] = {}
     sampled: Dict[str, Any] = {}
@@ -755,24 +866,29 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
             not_measured[rule] = "no mesh of the part to measure"
     else:
         part = posed(mesh, pose)
-        tol = max(0.05, 1e-4 * float(part.diag))
+        tol = max(0.05, 1e-4 * float(part.diag), res or 0.0)       # a place on a coarse mesh is good to its resolution
         if qs.severity.get("build_volume", RULES["build_volume"]) == "off":
             not_measured["build_volume"] = "turned off in [qc] severity"
         else:
             pairs.append((check_build_volume(mesh.tri.reshape(-1, 3), printer, pose,
                                              qs.severity.get("build_volume", RULES["build_volume"])), None))
-        own = [v for f in ann.features for k, v in f.get("limits", {}).items() if k in ("min_feature_mm", "min_wall_mm")]
-        wall_limits = [lim[k][0] for k in ("min_feature_mm", "min_wall_mm") if k in lim] + own
+        in_force = limits_in_force(lim, ann)
+        rules, noise, unreadable = WALL_RULES, 0.0, {}
+        if res is not None:             # a coarse mesh is read for the rules it can show, with its resolution as the doubt
+            rules, unreadable = readable_rules(res, in_force, grid)
+            not_measured.update(unreadable)
+            noise = res
+        wall_limits = [v for rule in rules for v in in_force[rule]]
         if wall_limits:
             walls = measure_walls(part, max(wall_limits), layer)
             sampled["walls"] = {k: walls[k] for k in ("pitch_mm", "spacing_mm", "sections")}
             sampled["walls"]["layer_slivers"] = sum(r["kind"] == "layer_sliver" for r in walls["regions"])
-            pairs += check_walls(walls, lim, qs, ann, pose, tol)
+            pairs += check_walls(walls, lim, qs, ann, pose, tol, rules, noise)
             floors = measure_floors(part, max(wall_limits))
             sampled["floors"] = {"spacing_mm": floors["spacing_mm"], "lines": floors["lines"],
                                  "thin_areas": len(floors["regions"])}
-            pairs += check_floors(floors, lim, qs, ann, pose, tol)
-        else:
+            pairs += check_floors(floors, lim, qs, ann, pose, tol, rules, noise)
+        elif not unreadable:
             not_measured["min_wall"] = "no wall limit for this process"
         exclude = None
         if "max_bridge_mm" in lim or any("max_bridge_mm" in f.get("limits", {}) for f in ann.features):
@@ -802,12 +918,15 @@ def run(cfg, stl: Optional[Path], qs: QCSettings, printer_override: Optional[str
     for key in lim:
         if key not in measured_limits:
             not_measured.setdefault(key, "no measurement for this rule yet")
-    return {"printer": printer.to_dict(), "pose": pose or {"up": [0, 0, 1], "spin_deg": 0}, "pose_from": pose_from,
-            "gate": qs.gate, "limits": {k: {"value": v, "layer": layer_name} for k, (v, layer_name) in lim.items()},
-            "sampled": sampled, "findings": [f.to_dict() for f in found + loose_findings],
-            "annotations": {"features": [{"name": f["name"], "kind": f["kind"], "source": f["source"]} for f in ann.features],
-                            "suppressions": len(ann.suppressions)},
-            "suppressed": suppressed, "loosened": loosened, "claimed": claimed, "not_measured": not_measured}
+    report = {"printer": printer.to_dict(), "pose": pose or {"up": [0, 0, 1], "spin_deg": 0}, "pose_from": pose_from,
+              "gate": qs.gate, "limits": {k: {"value": v, "layer": layer_name} for k, (v, layer_name) in lim.items()},
+              "sampled": sampled, "findings": [f.to_dict() for f in found + loose_findings],
+              "annotations": {"features": [{"name": f["name"], "kind": f["kind"], "source": f["source"]} for f in ann.features],
+                              "suppressions": len(ann.suppressions)},
+              "suppressed": suppressed, "loosened": loosened, "claimed": claimed, "not_measured": not_measured}
+    if res is not None:
+        report["resolution"] = {"mm": res, **(dict(grid) if grid else {})}
+    return report
 
 
 # --- fixes by sensitivity: which knob moves a failing finding, and by how much ----------------------

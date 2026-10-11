@@ -40,14 +40,27 @@ Defines = Optional[Mapping[str, str]]
 #:   grid_resolution, voxel_size, grid_target, occupied_voxels   (voxel engines)
 #:   kind                  "3d" | "2d" | "1d"
 #:   runtime_s             seconds the engine spent building and measuring
-#:   qc_annotations        the features, suppressions and print pose a Python program declared
-#:                         with ``agentcad.annotate`` (read by QC, not by the tray)
+#:   qc_annotations        the features, suppressions and print pose a program declared (a Python
+#:                         program with ``agentcad.annotate``, an OpenSCAD one with
+#:                         ``echo("AGENTCAD_QC", ...)``), as records carrying the ``file`` and
+#:                         ``line`` of each (the line None for OpenSCAD, whose echo carries none);
+#:                         read by QC, not by the tray
+#:   resolution_mm         the finest feature the part's mesh can show, in model units: a voxel
+#:                         engine's cell edge times its marching-cubes stride. QC leaves unmeasured
+#:                         the walls and features a coarser mesh cannot resolve. B-rep and CSG
+#:                         engines leave it unset
+#:   mesh_offset           [x, y, z]: where the origin of the exported mesh lies in the frame the
+#:                         program builds in (add it to a vertex of the mesh to get that point of
+#:                         the part). A voxel engine writes its mesh from the corner of its grid and
+#:                         reports the corner; an engine whose mesh is where the program built it
+#:                         leaves the key unset. QC sets a program's feature boxes against the mesh
+#:                         with it
 METADATA_KEYS = frozenset({
     "bbox_min", "bbox_size", "bbox", "volume", "area", "center_of_mass", "counts",
     "is_valid", "face_census", "short_edges", "min_edge_mm", "expected_solids",
     "twisted_faces", "twisted_faces_detail",
     "grid_resolution", "voxel_size", "grid_target", "occupied_voxels", "surface",
-    "kind", "runtime_s", "facet_count", "qc_annotations",
+    "kind", "runtime_s", "facet_count", "qc_annotations", "resolution_mm", "mesh_offset",
     # engine identity lines
     "build123d_version", "openscad_version", "voxelcad_version",
 })
