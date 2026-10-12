@@ -39,7 +39,7 @@ Most design work runs in a session, which keeps every iteration and compares eac
 
 ## 1 Rendering a Source
 
-`agentcad render SOURCE` renders the source to one PNG per view in `output/` beside the source, or in the folder `-o`/`--output-dir` names, and prints each image's path and what the engine measured. The engine is `-e`/`--engine`, else the one named by the nearest `agentcad.toml` from the source's folder upward (whose `[engine.<name>]` settings it also takes), else OpenSCAD. `-v`/`--views` picks camera presets (default `iso`, `front`, `top`, `right`), `-s`/`--size` the image size in pixels (default 1024), and `-D`/`--define VAR=VAL` (repeatable) overrides a parameter. A render fails, with exit 1, when the source is missing, the engine is not available, or the engine reports the render failed.
+`agentcad render SOURCE` renders the source to one PNG per view in `output/` beside the source, or in the folder `-o`/`--output-dir` names, and prints each image's path and what the engine measured. The engine is `-e`/`--engine`, else the one named by the nearest `agentcad.toml` from the source's folder upward (whose `[engine.<name>]` settings it also takes), else OpenSCAD. `-v`/`--views` picks camera presets (default `iso`, `front`, `top`, `right`), `-s`/`--size` the image size in pixels (default 1024), and `-D`/`--define VAR=VAL` (repeatable) overrides a parameter. Before anything runs, exit 2 refuses a `-D` without `=`, a `-D` name the source does not have (where the engine can read the names without running the source: the parameters of a Python source's `build()`, the variables an OpenSCAD file assigns at top level; a file that includes another, or a `build()` that takes any keyword, is passed on), and an `--engine` that reads another kind of file than the source; each message names the flag. A render fails, with exit 1, when the source is missing, the engine is not available, or the engine reports the render failed.
 
 `--report` prints the measured report instead of the raw metadata: the tray an iteration prints, with values but no changes (there is no previous iteration), and its warnings on stderr.
 
@@ -51,11 +51,11 @@ Every render is still subject to the render gate: open the images and say what t
 
 ## 2 Exporting a Source
 
-`agentcad export SOURCE` writes the source as STL, or as the format `-f`/`--format` names; `agentcad info` lists the formats each engine writes, and a format the engine cannot write is refused with that list. The file goes beside the source with the format's extension, or to `-o`/`--output`. The engine is chosen as for a render (`-e`/`--engine`), and `-D`/`--define VAR=VAL` overrides parameters. It prints the path, the format, the facet count where it applies and the time, and exits 1 on failure.
+`agentcad export SOURCE` writes the source as STL, or as the format `-f`/`--format` names; `agentcad info` lists the formats each engine writes, and a format the engine cannot write is refused before anything runs, naming `--format` and that list (exit 2). The file goes beside the source with the format's extension, or to `-o`/`--output`. The engine is chosen as for a render (`-e`/`--engine`), and `-D`/`--define VAR=VAL` overrides parameters. It prints the path, the format, the facet count where it applies and the time, and exits 1 on failure.
 
 ### 2.1 Variant Plates
 
-`--variants KNOB=v1,v2,...` writes one file per value of one parameter, each with the value in its name: `part_clearance-0p2.stl` for `clearance=0.2` (a dot becomes `p`), on top of any `-D` overrides. Each line printed gives the value, and the file's volume where the engine measured one. A malformed specification exits 2; a value that fails to export makes the command exit 1 after the others are written.
+`--variants KNOB=v1,v2,...` writes one file per value of one parameter, each with the value in its name: `part_clearance-0p2.stl` for `clearance=0.2` (a dot becomes `p`), on top of any `-D` overrides. Each line printed gives the value, and the file's volume where the engine measured one. A malformed specification exits 2, as does a knob the source has no parameter for (named as for `-D`, section 1); a value that fails to export makes the command exit 1 after the others are written.
 
 A variant plate is how a material's real clearance is found: print the same mating feature at several clearances side by side and keep the one that fits. As-printed is not nominal, and a single print at the nominal clearance says nothing about the margin either way.
 

@@ -36,13 +36,31 @@ def _say_ignored(args):
 
 
 def _parse_defines(define_list):
-    """Parse ['-D', 'key=value', ...] into a dict."""
+    """Parse ['-D', 'key=value', ...] into a dict; an entry without '=' is refused, never dropped."""
     defines = {}
     for d in define_list:
-        if "=" in d:
-            k, v = d.split("=", 1)
-            defines[k] = v
+        k, eq, v = d.partition("=")
+        if not eq or not k.strip():
+            print(f"Error: -D {d!r}: expected VAR=VAL", file=sys.stderr)
+            sys.exit(2)
+        defines[k.strip()] = v
     return defines
+
+
+def _check_source(engine, source, args, defines=None, flag="-D"):
+    """Refuse, before anything runs, what this engine cannot do with this source: an --engine that reads another
+    kind of file, and a -D name the source does not have (where the engine can tell)."""
+    if getattr(args, "engine", None) and source.suffix.lower() != engine.file_extension:
+        print(f"Error: --engine {args.engine} reads {engine.file_extension} files; {source.name} is not one",
+              file=sys.stderr)
+        sys.exit(2)
+    names = engine.parameters(source) if defines else None
+    unknown = sorted(set(defines or ()) - set(names)) if names is not None else []
+    unknown = [n for n in unknown if not n.startswith("$")]          # OpenSCAD's special variables are always there
+    if unknown:
+        print(f"Error: {flag} {', '.join(unknown)}: {source.name} has no such parameter "
+              f"(it has: {', '.join(sorted(names)) or 'none'})", file=sys.stderr)
+        sys.exit(2)
 
 
 def _engine_for(engine_name, cfg):
@@ -78,6 +96,7 @@ def cmd_render(args):
 
     views = args.views if args.views else MULTI_VIEW_DEFAULT
     defines = _parse_defines(args.define) if args.define else None
+    _check_source(engine, source, args, defines)
     result = engine.render(source, output_dir, views=views, image_size=args.size, defines=defines)
 
     for warn in result.warnings:
@@ -120,6 +139,14 @@ def cmd_export(args):
     output = Path(args.output) if args.output else source.with_suffix(f".{fmt}")
 
     defines = _parse_defines(args.define) if args.define else {}
+    if fmt not in engine.supported_export_formats:
+        print(f"Error: --format {fmt}: {engine.name} exports {', '.join(engine.supported_export_formats)}",
+              file=sys.stderr)
+        sys.exit(2)
+    _check_source(engine, source, args, defines)
+    knob = (getattr(args, "variants", None) or "").partition("=")[0].strip()
+    if knob:
+        _check_source(engine, source, args, {knob: ""}, flag="--variants")
     if getattr(args, "variants", None):
         # One knob, several values, one file each with the value in its name:
         # a print plate that measures the material's clearance tax in one go.

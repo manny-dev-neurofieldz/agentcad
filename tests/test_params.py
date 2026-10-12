@@ -48,3 +48,31 @@ def test_unknown_names_are_rejected_unless_kwargs_are_accepted():
 def test_no_overrides_is_an_empty_mapping():
     assert coerce_defines(None, build) == {}
     assert coerce_defines({}, build) == {}
+
+
+# --- reading a source's parameters without running it -------------------------------------------------------
+
+def test_build_parameters_are_read_from_the_signature_not_run():
+    from agentcad.params import build_parameters
+    text = "raise SystemExit('never run')\n\ndef build(size=6.0, *, wall=1, flat=True):\n    pass\n"
+    assert build_parameters(text) == {"size", "wall", "flat"}
+
+
+def test_build_parameters_cannot_tell_without_a_closed_build():
+    from agentcad.params import build_parameters
+    assert build_parameters("def build(size=1, **more):\n    pass\n") is None     # takes any name
+    assert build_parameters("result = 1\n") is None                               # no build(): harvested by name
+    assert build_parameters("def build(:\n") is None                              # the engine reports the syntax
+
+
+def test_openscad_parameters_are_the_top_level_assignments():
+    from agentcad.engines.openscad import top_level_assignments
+    text = ('size = 6; // width = 3\n/* depth = 2 */ label = "a = b";\nh=2;\n'
+            'module m(r = 1) { inner = 2; }\nfunction f(x = 1) = x;\ncube([size, 4, h]);\nok = size == 6;\n')
+    assert top_level_assignments(text) == {"size", "label", "h", "ok"}
+
+
+def test_openscad_parameters_cannot_be_told_when_another_file_is_included():
+    from agentcad.engines.openscad import top_level_assignments
+    assert top_level_assignments("include <lib.scad>\nsize = 6;\n") is None
+    assert top_level_assignments("use <lib.scad>\nsize = 6;\n") is None

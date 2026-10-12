@@ -12,7 +12,7 @@ import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, is_dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Tuple
 
 from agentcad.camera import CameraPreset, STANDARD_PRESETS, MULTI_VIEW_DEFAULT
 
@@ -198,6 +198,12 @@ class CADEngine(ABC):
     def available(self) -> bool:
         """Whether this engine's backend is installed and working."""
         return False
+
+    def parameters(self, source_path: Path) -> Optional[FrozenSet[str]]:
+        """The names ``-D`` may set in this source, read without running it, or None when the engine cannot tell
+        (then every name is passed on, and the engine reports one it cannot use, as the Python engines do when
+        ``build()`` has no such parameter)."""
+        return None
 
     def version(self) -> Optional[str]:
         """Backend version string, or None when it cannot be determined."""

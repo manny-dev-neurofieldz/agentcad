@@ -68,12 +68,31 @@ def coerce_defines(defines: Optional[Mapping[str, str]], build: Callable[..., An
         if key in sig.parameters:
             default = sig.parameters[key].default
             exemplar = None if default is inspect.Parameter.empty else default
-            params[key] = coerce_to_type_of(raw, exemplar)
+            try:
+                params[key] = coerce_to_type_of(raw, exemplar)
+            except ValueError as e:
+                raise ValueError(f"-D {key}={raw}: {e}") from None
         elif accepts_kwargs:
             params[key] = parse_define_value(raw)
         else:
             raise ValueError(
-                f"build() has no parameter '{key}' "
+                f"-D {key}: build() has no parameter '{key}' "
                 f"(accepts: {', '.join(sig.parameters) or 'none'})"
             )
     return params
+
+
+def build_parameters(source_text: str):
+    """The parameter names of a module-level ``build()``, read from the source without running it; None when there
+    is no ``build()``, it takes ``**kwargs``, or the source does not parse (the engine then reports what it finds)."""
+    try:
+        tree = ast.parse(source_text)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "build":
+            a = node.args
+            if a.kwarg is not None:
+                return None
+            return frozenset(p.arg for p in [*a.posonlyargs, *a.args, *a.kwonlyargs])
+    return None
