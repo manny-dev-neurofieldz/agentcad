@@ -66,6 +66,29 @@ def _backend_flag_supported(binary: str) -> bool:
     return "--backend" in (proc.stdout + proc.stderr)
 
 
+_SCAD_NOISE = re.compile(r'//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\])*"', re.S)
+_SCAD_ASSIGN = re.compile(r"(?:^|;)\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*=(?!=)")
+
+
+def top_level_assignments(text: str) -> Optional[frozenset]:
+    """Names assigned at depth 0 of braces, brackets and parentheses in OpenSCAD source; None when the source
+    includes or uses another file (its variables are not in this text)."""
+    text = _SCAD_NOISE.sub(" ", text)
+    if re.search(r"^\s*(include|use)\s*<", text, re.M):
+        return None
+    depth, top = 0, []
+    for ch in text:
+        if ch in "{[(":
+            depth += 1
+            top.append(" ")
+        elif ch in "}])":
+            depth = max(0, depth - 1)
+            top.append(";")
+        else:
+            top.append(ch if depth == 0 else " ")
+    return frozenset(_SCAD_ASSIGN.findall("".join(top)))
+
+
 class OpenSCADEngine(CADEngine):
     """OpenSCAD rendering engine with BOSL2 and Manifold support.
 
@@ -107,6 +130,11 @@ class OpenSCADEngine(CADEngine):
     @property
     def syntax_language(self) -> str:
         return "openscad"
+
+    def parameters(self, source_path: Path) -> Optional[frozenset]:
+        """The variables the file assigns at top level (outside every module, function and block), which is
+        what OpenSCAD's ``-D`` overrides; None when the file includes or uses another, whose variables count too."""
+        return top_level_assignments(Path(source_path).read_text(errors="replace"))
 
     def available(self) -> bool:
         try:

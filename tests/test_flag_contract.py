@@ -31,6 +31,7 @@ import os
 import re
 import shutil
 import struct
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -269,6 +270,26 @@ def _write_qc_projects(root: Path):
                     assert e.code in (0, None), f"agentcad {' '.join(words)} failed while writing the fixtures"
 
 
+RENDER_SOURCES = {   # kind (an engine) -> its source, sharing a parameter `size` so one -D cell means one thing
+    "build123d": ("box.py", "from build123d import Box\n\ndef build(size=6.0):\n    return Box(size, 4, 2)\n", ""),
+    "openscad": ("box.scad", "size = 6;\ncube([size, 4, 2]);\n", ""),
+    "voxelcad": ("box.py", "from voxelcad import Cube\n\ndef build(size=6.0):\n    return Cube(size)\n",
+                 "[engine.voxelcad]\nvoxel_size = 0.25\nmc_stride = 1\n"),
+}
+
+
+def _write_render_projects(root: Path):
+    """One folder per engine under rx/, its source beside an agentcad.toml that names the engine, so render and
+    export find the engine, the view and the image size from the project."""
+    for kind, (filename, text, extra) in RENDER_SOURCES.items():
+        folder = root / "rx" / kind
+        folder.mkdir(parents=True)
+        (folder / filename).write_text(text)
+        (folder / "agentcad.toml").write_text(
+            f'[project]\nname = "{kind}"\nengine = "{kind}"\n{extra}'
+            '[output]\nimage_size = 64\ndefault_views = ["iso"]\n')
+
+
 def _write_records(root: Path):
     shutil.copytree(Path(__file__).parent / "data" / "records_library", root / "lib")
 
@@ -281,6 +302,7 @@ def fixtures(tmp_path_factory) -> Path:
     _write_sliced(root)
     _write_records(root)
     _write_qc_projects(root)
+    _write_render_projects(root)
     return root
 
 
@@ -298,10 +320,27 @@ class Run:
         return self.code, self.out, tuple(sorted(self.files.items()))
 
 
+def _png(data: bytes) -> str:
+    """A PNG as its width, height and a digest of its pixel data: the chunks a render may stamp (a time, the
+    software) are left out, so two renders of one input agree and a render of another size or shape does not."""
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        return "image"
+    width, height = struct.unpack(">II", data[16:24])
+    pixels, at = hashlib.sha256(), 8
+    while at + 8 <= len(data):
+        length, kind = struct.unpack(">I4s", data[at:at + 8])
+        if kind == b"IDAT":
+            pixels.update(data[at + 8:at + 8 + length])
+        at += 12 + length
+    return f"image {width}x{height} {pixels.hexdigest()[:16]}"
+
+
 def _content(path: Path, d: Path) -> str:
-    """A file as the result sees it: text with the run's folder named <D>, an image by its presence (a render
-    may carry a timestamp), other bytes by their digest."""
-    if path.suffix.lower() in (".png", ".jpg", ".jpeg", ".qoi"):
+    """A file as the result sees it: text with the run's folder named <D>, a PNG by its size and pixels, other
+    bytes by their digest."""
+    if path.suffix.lower() == ".png":
+        return _png(path.read_bytes())
+    if path.suffix.lower() in (".jpg", ".jpeg", ".qoi"):
         return "image"
     data = path.read_bytes()
     try:
@@ -323,6 +362,16 @@ def _stub_png(out, *args, **kwargs):
 
 
 _RUNS = [0]
+_DURATIONS = (re.compile(r"((?:runtime_s|seconds)\W+)[0-9.]+"), re.compile(r"(\b)[0-9]+(?:\.[0-9]+)? ?ms\b"),
+              re.compile(r"(\bin )[0-9]+(?:\.[0-9]+)? ?s\b"))
+
+
+def _masked(text: str) -> str:
+    """Text with its run times replaced by <t>: how long a run took is not something a flag is asked to change, and
+    two runs of one input never take the same time."""
+    for pattern in _DURATIONS:
+        text = pattern.sub(lambda m: m.group(1) + "<t>", text)
+    return text
 
 
 def run(fixtures: Path, scratch: Path, words) -> Run:
@@ -355,7 +404,9 @@ def run(fixtures: Path, scratch: Path, words) -> Run:
     files = {k: v for k, v in after.items() if before.get(k) != v}
     shutil.rmtree(d, ignore_errors=True)
     norm = str(d)
-    return Run(code, out.getvalue().replace(norm, "<D>"), err.getvalue().replace(norm, "<D>"), files, crash)
+    files = {k: _masked(v) for k, v in files.items()}
+    return Run(code, _masked(out.getvalue().replace(norm, "<D>")), _masked(err.getvalue().replace(norm, "<D>")),
+               files, crash)
 
 
 def _command_parser(path):
@@ -583,6 +634,28 @@ COMMANDS = (
                                                  "voxelcad": Same("--fixes is refused on this engine: nothing to bound")},
              needs=("--fixes",)),
     )),
+    Command(("render",), {"build123d": ("{D}/rx/build123d/box.py",), "openscad": ("{D}/rx/openscad/box.scad",), "voxelcad": ("{D}/rx/voxelcad/box.py",)}, engine_kinds=True, base=("-o", "{D}/out"), cells=(
+        Cell("--output-dir", ("--output-dir", "{D}/elsewhere"), CHANGES),
+        Cell("--views", ("--views", "top"), CHANGES),
+        Cell("--size", ("--size", "32"), CHANGES),
+        Cell("--report", ("--report",), CHANGES),
+        Cell("--define", ("--define", "size=8"), CHANGES),
+        Cell("--define", ("--define", "nosuch=1"), REFUSES),
+        Cell("--define", ("--define", "size"), REFUSES),
+        Cell("--engine", ("--engine", "openscad"), {"build123d": REFUSES, "openscad": Same("the engine the project names"),
+                                        "voxelcad": REFUSES}),
+    )),
+    Command(("export",), {"build123d": ("{D}/rx/build123d/box.py",), "openscad": ("{D}/rx/openscad/box.scad",), "voxelcad": ("{D}/rx/voxelcad/box.py",)}, engine_kinds=True, base=("-o", "{D}/out/part.stl"), cells=(
+        Cell("--output", ("--output", "{D}/elsewhere/part.stl"), CHANGES),
+        Cell("--format", ("--format", "step"), {"build123d": CHANGES, "openscad": REFUSES, "voxelcad": REFUSES}),
+        Cell("--variants", ("--variants", "size=6,8"), CHANGES),
+        Cell("--variants", ("--variants", "nosuch=1,2"), REFUSES),
+        Cell("--define", ("--define", "size=8"), CHANGES),
+        Cell("--define", ("--define", "nosuch=1"), REFUSES),
+        Cell("--define", ("--define", "size"), REFUSES),
+        Cell("--engine", ("--engine", "openscad"), {"build123d": REFUSES, "openscad": Same("the engine the project names"),
+                                        "voxelcad": REFUSES}),
+    )),
     Command(("records", "check"), {"library": ("{D}/lib",), "part": ("{D}/lib/parts/bracket/part.toml",),
                                    "job": ("{D}/lib/print_jobs/2026-02-01_mk4_pla_clip/job.toml",),
                                    "manifest": ("{D}/lib/projects/latch/exports/latch.print.json",)}, cells=(
@@ -623,8 +696,6 @@ EXEMPT = {
     ("printer", "files"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("printer", "get"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("printer", "status"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
-    ("render",): "OWED: its kinds are engines (OpenSCAD, VoxelCAD, build123d); every flag per engine, next",
-    ("export",): "OWED: its kinds are engines; every flag per engine, next",
     ("session", "start"): "OWED: its kinds are engines; every flag per engine, next",
     ("session", "iterate"): "OWED: its kinds are engines; every flag per engine, next",
     ("session", "finalize"): "OWED: its kinds are engines; every flag per engine, next",

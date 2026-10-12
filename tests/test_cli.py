@@ -43,8 +43,9 @@ def test_render_and_export_through_the_cli(engine_name, monkeypatch, capsys, tmp
 
     with pytest.raises(SystemExit) as exc:
         _run(monkeypatch, ["export", str(src), "-e", engine_name, "--format", "xyz"])
-    assert exc.value.code == 1
-    assert "cannot export 'xyz'" in capsys.readouterr().err
+    assert exc.value.code == 2                      # refused before anything runs, as a usage error
+    err = capsys.readouterr().err
+    assert "--format xyz" in err and ", ".join(engine.supported_export_formats) in err
 
 
 def test_session_lifecycle_through_the_cli(monkeypatch, capsys, tmp_path):

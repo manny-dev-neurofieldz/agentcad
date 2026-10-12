@@ -67,6 +67,11 @@ class Build123dEngine(CADEngine):
     def syntax_language(self) -> str:
         return "python"
 
+    def parameters(self, source_path: Path):
+        """The parameters of the source's ``build()`` (read, not run); None without one."""
+        from agentcad.params import build_parameters
+        return build_parameters(Path(source_path).read_text(errors="replace"))
+
     def available(self) -> bool:
         return importlib.util.find_spec("build123d") is not None
 

@@ -124,7 +124,7 @@ Renders are named views: `iso`, `front`, `top`, `right`, `back`, `left` and `bot
 
 ## 7 Adding an Engine
 
-An engine subclasses the engine base class, declares its source extension, its export formats and the settings it knows, and implements render, export and syntax validation; an unsupported export format returns an error naming the supported ones rather than raising. It registers under a short lower-case name. The engine contract test drives every registered engine through the same calls the commands make, so a registered engine that skips part of the contract fails there rather than in a session. Measurements go under the fixed keys of section 1.2, or the tray cannot read them.
+An engine subclasses the engine base class, declares its source extension, its export formats and the settings it knows, and implements render, export and syntax validation; an unsupported export format returns an error naming the supported ones rather than raising. An engine may also say which names `-D` can set in a source, read without running it (`parameters`, None when it cannot tell), so `render` and `export` refuse a misspelt name before anything runs; the Python engines read `build()`'s signature and OpenSCAD the variables a file assigns at top level. It registers under a short lower-case name. The engine contract test drives every registered engine through the same calls the commands make, so a registered engine that skips part of the contract fails there rather than in a session. Measurements go under the fixed keys of section 1.2, or the tray cannot read them.
 
 ## 8 Integration with Other Policies
 
