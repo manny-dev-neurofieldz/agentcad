@@ -92,6 +92,11 @@ class OutputTarget(ABC):
         describe the target when it cannot."""
         return True
 
+    def unavailable_reason(self) -> str:
+        """Why ``available()`` is False, in a sentence that says what would make the target work here; empty when
+        it is available. Targets that can be unavailable say what they are missing."""
+        return "" if self.available() else f"target {self.name!r} cannot work here"
+
     def _unsupported(self, capability: str):
         return NotSupported(f"target {self.name!r} does not {capability.replace('_', ' ')} "
                             f"(its capabilities: {', '.join(sorted(self.capabilities)) or 'none'})")
