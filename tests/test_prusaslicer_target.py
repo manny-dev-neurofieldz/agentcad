@@ -699,22 +699,39 @@ def test_stage_slice_on_a_target_that_cannot_slice_says_so_and_writes_nothing(tm
     assert not (tmp_path / "staged").exists()
 
 
-@pytest.mark.parametrize("failure", [OSError("placement unreadable"), ValueError("not a placement"),
-                                     BGCodeError("unknown block type 9", 60, 2)], ids=["os", "value", "bgcode"])
+@pytest.mark.parametrize("step, failure", [("load_placement", OSError("placement unreadable")),
+                                           ("load_placement", ValueError("not a placement")),
+                                           ("gcode_text", BGCodeError("unknown block type 9", 60, 2))],
+                         ids=["os", "value", "bgcode"])
 def test_stage_slice_says_so_in_a_sentence_when_the_support_map_cannot_be_read(tmp_path, monkeypatch, capsys, base,
-                                                                              failure):
+                                                                              step, failure):
+    from agentcad.gcode import bgcode, supports
     proj = staged_project(tmp_path, monkeypatch, capsys, '[print]\nlayer_height = 0.25\n')
     fake_slicer(tmp_path, monkeypatch, writes=tf.write_gcode(tmp_path / "made.gcode", tf.synthetic_config()).read_bytes())
 
-    def unreadable(args):
+    def unreadable(*a, **k):
         raise failure
-    monkeypatch.setattr(cli, "cmd_gcode_supports", unreadable)
+    monkeypatch.setattr(supports if step == "load_placement" else bgcode, step, unreadable)
     rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged",
                            "--slice")
     assert rc == 1                                               # never 0: exit 0 means everything was read
     assert "0 error(s)" in out                                   # the settings check still ran and is reported
     assert f"the support map of {tmp_path / 'staged' / 'bar.gcode'} could not be read: {failure}" in err
     assert "Traceback" not in err
+
+
+def test_stage_slice_lets_a_failure_in_the_support_analysis_surface_rather_than_call_the_file_unreadable(
+        tmp_path, monkeypatch, capsys, base):
+    from agentcad.gcode import supports
+    proj = staged_project(tmp_path, monkeypatch, capsys, '[print]\nlayer_height = 0.25\n')
+    fake_slicer(tmp_path, monkeypatch, writes=tf.write_gcode(tmp_path / "made.gcode", tf.synthetic_config()).read_bytes())
+
+    def broken(*a, **k):
+        raise ValueError("a bug in the analysis")
+    monkeypatch.setattr(supports, "find_contacts", broken)
+    with pytest.raises(ValueError, match="a bug in the analysis"):
+        run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged", "--slice")
+    assert "could not be read" not in capsys.readouterr().err
 
 
 def test_stage_slice_with_no_slicer_installed_is_refused_before_anything_is_written(tmp_path, monkeypatch, capsys,
