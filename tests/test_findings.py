@@ -56,3 +56,21 @@ def test_a_finding_round_trips_and_never_invents_a_severity():
     assert Finding.from_dict(f.to_dict()) == f
     with pytest.raises(ValueError, match="severity"):
         Finding("solids", "critical", "3", "1", "", "default")
+
+
+def test_the_viewer_puts_a_findings_fix_on_its_own_line():
+    """The page shows the remedy apart from the message (they read as one run-on sentence before); the sentence
+    in the JSON and the text keeps the fix inline."""
+    from agentcad.templating import Page
+    f = Finding(key="min_wall", severity="warning", source="qc", found=0.3, intended=0.45, why="", rule="min_wall",
+                message="The wall is 0.3 mm (or joined to another).", fix="join the bodies, or thicken the wall")
+    assert f.sentence() == "The wall is 0.3 mm (or joined to another). Fix: join the bodies, or thicken the wall"
+    page = Page("t")
+    page.variant("v1").findings([f.to_dict()])
+    html = page.build()
+    assert "The wall is 0.3 mm (or joined to another).</span>" in html
+    assert '<div class="finding-fix">Fix: join the bodies, or thicken the wall</div>' in html
+    ok = Finding(key="layer_height", severity="ok", source="intent", found="0.2", intended="0.2", why="", rule="settings")
+    page = Page("t")
+    page.variant("v1").findings([ok.to_dict()])
+    assert '<div class="finding-fix">' not in page.build()    # a finding with no fix shows no fix line
