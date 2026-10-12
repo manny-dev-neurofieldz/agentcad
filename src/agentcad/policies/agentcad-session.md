@@ -68,7 +68,7 @@ The order of work is fixed: start, then for each attempt iterate, read the rende
 
 `agentcad session start PROJECT` begins iteration 1 of a new session for the project (a folder under the designs directory, or a path). `-D`/`--define VAR=VAL` (repeatable) sets parameter overrides applied to every iteration; `--engine` overrides the project's default engine; `--max-iter` caps the iterations.
 
-Starting again over an unfinalized session requires `--force`. The earlier session record and the iteration files it names are moved to `_work/archive_<timestamp>/`, not deleted; `--no-archive` (with `--force`) discards them instead.
+Starting again over an unfinalized session requires `--force`. The earlier session record and the iteration files it names are moved to `_work/archive_<timestamp>/`, not deleted; `--no-archive` (with `--force`) discards them instead; without `--force` it is ignored, and says so, and a previous record is archived as usual. `--force` on a project with no session says there is nothing to overwrite.
 
 ### 1.2 Iterating
 
@@ -76,7 +76,7 @@ Starting again over an unfinalized session requires `--force`. The earlier sessi
 
 `-D`/`--define VAR=VAL` on an iterate overrides a parameter for that iteration only, on top of the session's defines; the defines are recorded with the iteration and shown in the viewer.
 
-`--all` also iterates every part subproject the project declares (`[project] parts` globs), with the same source.
+`--all` also iterates every part subproject the project declares (`[project] parts` globs), with the same source; a project that declares none says so. A `-D` name the source does not have is refused before the iteration runs, as `render` refuses it (`agentcad-render-export`).
 
 ## 2 Reading Each Iteration
 
@@ -114,7 +114,7 @@ A render cannot show connectivity (a tangent touch and a small gap look the same
 
 ## 4 Finalizing
 
-`agentcad session finalize PROJECT` writes the session's results: an export per iteration (an existing export newer than its source is reused; `--export-all` re-exports every one), the print manifest `exports/NAME.print.json`, and the HTML viewer `index.html`. `--all` also finalizes every declared part subproject.
+`agentcad session finalize PROJECT` writes the session's results: an export per iteration (an existing export newer than its source is reused; `--export-all` re-exports every one and says how many existing exports it made again, or that it was ignored when none existed), the print manifest `exports/NAME.print.json`, and the HTML viewer `index.html`. `--all` also finalizes every declared part subproject, and says so when the project declares none.
 
 The print manifest carries what a print job needs: the parts, the print settings, any `[slice]` intent declared in the project, recorded fit results, and the sliced files found among the exports.
 

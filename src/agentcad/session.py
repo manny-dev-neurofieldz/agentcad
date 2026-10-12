@@ -414,6 +414,7 @@ class DesignSession:
         that have no export yet unless ``export_all``. Returns the path to
         the generated index.html.
         """
+        self.exports_made_again = 0       # iterations whose export existed and was made again (export_all)
         if not self.iterations:
             raise RuntimeError("No iterations to finalize")
 
@@ -455,6 +456,8 @@ class DesignSession:
             stl_path = self._work_dir / f"{self.name}_v{it.number}.stl"
             existing = self.project.exports_dir / f"{self.name}_v{it.number}.stl"
             src_mtime = it.source_path.stat().st_mtime if it.source_path and it.source_path.exists() else 0.0
+            if existing.exists() and export_all:
+                self.exports_made_again += 1
             if existing.exists() and not export_all and existing.stat().st_mtime >= src_mtime:
                 # an export at least as new as its source is the same geometry
                 variant.stl_path = existing
@@ -657,7 +660,7 @@ class DesignSession:
         )
         session._finalized = data.get("finalized", False)
         for meta_k, meta_v in (data.get("project_metadata") or {}).items():
-            session.project.metadata.setdefault(meta_k, meta_v)
+            session.project.metadata[meta_k] = meta_v        # the record, not this load, says when it began
         for it_data in data.get("iterations", []):
             session.iterations.append(Iteration.from_dict(it_data))
         session.rejudge()          # judgments follow today's rules; the measurements are what was stored
