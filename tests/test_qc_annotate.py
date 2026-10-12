@@ -385,3 +385,41 @@ def test_an_annotated_program_builds_again_in_process(tmp_path):
     first, second = load_shape(src), load_shape(src, {"wall": "0.5"})      # a second build declares afresh
     assert second.volume > first.volume
     assert [r["name"] for r in annotate.records()] == ["tube wall"]
+
+
+BORE = FALLBACK + '''
+from build123d import Align, Box, Cylinder, Pos
+
+
+def build(r=4.0):
+    low = (Align.CENTER, Align.CENTER, Align.MIN)
+    block = Box(20, 20, 10, align=low)
+    bore = Pos(5.6, 0, -1) * Cylinder(r, 12, align=low)          # 0.4 mm short of the +x face at r = 4
+    feature("bore wall", box=(9, -3, -1, 10.5, 3, 11), kind="wall", knobs=("r=0.5",))
+    return block - bore
+'''
+
+
+@needs_b3d
+def test_a_knob_that_opens_the_wall_is_gone_even_with_thin_lips_beside_the_place(tmp_path, capsys):
+    """r +0.5 runs the bore 0.1 mm out through the face: thin lips stay on either side of the opening, within
+    reach of the place, but the line across the place finds no material: the wall is gone, not thinner."""
+    proj, source = _project(tmp_path)
+    source.write_text(BORE)
+    cli.main(["session", "start", str(proj)])
+    cli.main(["session", "iterate", str(proj), str(source)])
+    capsys.readouterr()
+    try:
+        cli.main(["qc", str(proj), "--json", "--fixes"])
+    except SystemExit:
+        pass
+    report = json.loads(capsys.readouterr().out)
+    (rec,) = report["sensitivity"]
+    assert rec["feature"] == "bore wall" and rec["base"]["value"] == pytest.approx(0.4, abs=0.02), rec
+    (k,) = rec["knobs"]
+    assert k["plus"].get("gone") is True, k
+    assert 0 < k["plus"]["lips_mm"] < 0.4, k                          # the lips are named beside the verdict
+    assert k["minus"].get("value") == pytest.approx(0.9, abs=0.02), k
+    fix = report["findings"][rec["finding"]]["fix"]
+    assert "r +0.5 leaves no material across the place: the material there is gone (a failure, not a fix)" in fix
+    assert "mm remain near it" in fix, fix

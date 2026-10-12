@@ -978,7 +978,15 @@ def _quantity(claim: Dict[str, Any], mesh, pose, layer: float) -> Dict[str, Any]
     reach = max(3.0 * limit, 2.0) if kind != "overhang" else max(5.0, float(part.diag) / 20.0)
     near = [(float(np.linalg.norm(np.subtract(_to_part_frame(r["at"], pose), claim["at"]))), q) for r, q in regions]
     near = [(d, q) for d, q in near if d <= reach]
-    return {"value": float(min(near)[1])} if near else _across(claim, part, pose, reach)
+    if not near:
+        return _across(claim, part, pose, reach)
+    nearest = float(min(near)[1])
+    # Thin regions near the place can be the lips of an opening where the wall was (a bore grown through the
+    # face): the line across the place itself tells a thinner wall from one that is gone.
+    line = _line_across(claim, part, pose, float(claim["threshold"]))
+    if line is not None and line[0] is None:
+        return {"gone": True, "lips_mm": nearest}
+    return {"value": nearest}
 
 
 def _across(claim: Dict[str, Any], part, pose, reach: float) -> Dict[str, Any]:
@@ -986,6 +994,16 @@ def _across(claim: Dict[str, Any], part, pose, reach: float) -> Dict[str, Any]:
     finds now (a wall's inward normal in the layer plane, the vertical through a floor). The material on it
     nearest the place, within ``reach``: ``clear`` with its length (``across_mm``) when there is some, ``gone``
     when there is none. An overhang or a bridge has no such line, and stays ``clear`` alone."""
+    line = _line_across(claim, part, pose, reach)
+    if line is None:
+        return {"clear": True}
+    return {"clear": True, "across_mm": line[1]} if line[0] is not None else {"gone": True}
+
+
+def _line_across(claim: Dict[str, Any], part, pose, reach: float):
+    """(gap, length) of the material on the line across the claimed place nearest to it, within ``reach``;
+    (None, None) when there is none; None when the claim's kind has no such line (an overhang, a bridge, a
+    wall without its normal)."""
     import numpy as np
     from agentcad.rays import MeshTarget, ray_intervals
     R = pose_rotation(pose)
@@ -994,7 +1012,7 @@ def _across(claim: Dict[str, Any], part, pose, reach: float) -> Dict[str, Any]:
     elif claim["kind"] == "floor":
         d = np.array([0.0, 0.0, 1.0])
     else:
-        return {"clear": True}
+        return None
     d = d / np.linalg.norm(d)
     p = R @ np.asarray(claim["at"], dtype=float)
     span = float(part.diag) + 1.0                       # the whole part, so the material is never cut short
@@ -1005,7 +1023,7 @@ def _across(claim: Dict[str, Any], part, pose, reach: float) -> Dict[str, Any]:
             gap = max(iv["entry"] - span, span - iv["exit"], 0.0)          # from the place to this material
             if gap <= reach and (best is None or gap < best[0]):
                 best = (gap, float(iv["length"]))
-    return {"clear": True, "across_mm": best[1]} if best else {"gone": True}
+    return best if best else (None, None)
 
 
 def _effect(base: Dict[str, Any], side: Dict[str, Any]) -> Tuple[str, Optional[float]]:
@@ -1092,7 +1110,8 @@ def _fix_sentence(rec: Dict[str, Any], before: str) -> str:
         if "error" in s:
             return f"{head} does not build"
         if "gone" in s:
-            return f"{head} leaves no material across the place: the material there is gone (a failure, not a fix)"
+            lips = f"; lips of {s['lips_mm']:.3f} mm remain near it" if "lips_mm" in s else ""
+            return f"{head} leaves no material across the place: the material there is gone (a failure, not a fix){lips}"
         if "clear" in s:
             what = "no face steeper than 20 deg under the limit" if unit == "deg" else \
                 f"no {rec.get('kind', 'feature')} under {2 * rec['threshold']:g} mm"
