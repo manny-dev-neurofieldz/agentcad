@@ -199,9 +199,13 @@ class VariantBuilder:
         for f in self._findings:
             severity = f.get("severity", "warning")
             limit = f' <span class="finding-layer">(limit: {_esc(f["layer"])})</span>' if f.get("layer") else ""
+            # the remedy on a line of its own: inline, the message and the fix read as one run-on sentence
+            text, sep, fix = f.get("sentence", "").rpartition(" Fix: ")
+            text = text if sep else fix
+            fix_line = f'<div class="finding-fix">Fix: {_esc(fix)}</div>' if sep else ""
             items.append(f'<li class="finding finding-{_esc(severity)}"><b>{_esc(severity)}</b> '
                          f'<span class="finding-rule">{_esc(f.get("rule", ""))}</span> '
-                         f'{_esc(f.get("sentence", ""))}{limit}</li>')
+                         f'<span class="finding-text">{_esc(text)}</span>{limit}{fix_line}</li>')
         return (f'<div class="findings"><h3>Findings ({len(self._findings)})</h3>'
                 f'<ul>{"".join(items)}</ul></div>')
 

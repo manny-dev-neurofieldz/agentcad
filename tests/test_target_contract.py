@@ -97,6 +97,15 @@ def test_every_capability_is_declared_and_kept(name, job, tmp_path):
     exercise(name, job, tmp_path)
 
 
+@pytest.mark.parametrize("name", targets.list_targets())
+def test_a_target_says_why_exactly_when_it_is_unavailable(name, monkeypatch):
+    target = targets.get_target(name)
+    for here in (True, False):
+        monkeypatch.setattr(type(target), "available", lambda self, here=here: here)
+        reason = target.unavailable_reason()
+        assert (reason == "") is here, (name, here, reason)
+
+
 def test_a_registered_target_with_capabilities_and_no_fixture_fails_the_suite(job, tmp_path):
     class Bare(OutputTarget):
         name = "bare"

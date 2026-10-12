@@ -57,6 +57,9 @@ def cmd_stage(args):
         return _refuse(f"target {target.name!r} does not slice (its capabilities: "
                        f"{', '.join(sorted(target.capabilities))}); stage without --slice and slice the project "
                        f"in the slicer")
+    if args.slice and not target.available():
+        return _refuse(f"{target.unavailable_reason()}; nothing was staged (stage without --slice to write the "
+                       f"project alone)")
     if args.base_config and "base_config" not in target.job_options:
         return _refuse(f"target {target.name!r} takes no base configuration (--base-config); it starts from "
                        f"nothing the user supplies")
@@ -140,8 +143,14 @@ def _slice_and_read(target, written, out_dir, cfg):
         return _refuse(e)
     print(f"sliced: {sliced}")
     checked = cmd_gcode_check(Namespace(file=str(sliced), project=str(cfg.project_dir), intent=None, json=False))
-    cmd_gcode_supports(Namespace(file=str(sliced), contact_distance=None, min_area=1.0,
-                                 placement=str(sidecar) if sidecar else None, stl_root=None, png=None, json=False))
+    try:
+        # Where supports touch is advisory: a contact in a cavity is printed, not counted. A support map that cannot
+        # be read at all is counted, so exit 0 still means everything that was sliced was read.
+        cmd_gcode_supports(Namespace(file=str(sliced), contact_distance=None, min_area=1.0,
+                                     placement=str(sidecar) if sidecar else None, stl_root=None, png=None, json=False))
+    except (OSError, ValueError) as e:              # a BGCodeError is a ValueError
+        print(f"Error: the support map of {sliced} could not be read: {e}", file=sys.stderr)
+        return 1
     return checked or 0
 
 

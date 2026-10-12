@@ -342,14 +342,17 @@ class PrusaSlicerTarget(OutputTarget):
         """Whether PrusaSlicer's command line is here to slice with; the other capabilities need nothing."""
         return slicer_program() is not None
 
+    def unavailable_reason(self) -> str:
+        return "" if self.available() else (f"no PrusaSlicer to slice with: put prusa-slicer on PATH, or name the "
+                                            f"program in {SLICER_ENV}")
+
     def slice(self, project_file: Path, out_dir: Path) -> Path:
         """The project sliced headless, as ``<project stem>.bgcode`` or ``.gcode`` in ``out_dir``: which one the
         file's first bytes say (the configuration's ``binary_gcode`` decides what PrusaSlicer writes)."""
         from agentcad.gcode.bgcode import MAGIC
         program = slicer_program()
         if program is None:
-            raise TargetError(f"no PrusaSlicer to slice with: put prusa-slicer on PATH, or name the program in "
-                              f"{SLICER_ENV}")
+            raise TargetError(self.unavailable_reason())
         project_file, out_dir = Path(project_file), Path(out_dir)
         out_dir.mkdir(parents=True, exist_ok=True)
         made = out_dir / f"{project_file.stem}.sliced"

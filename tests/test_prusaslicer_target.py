@@ -15,6 +15,7 @@ import pytest
 
 from agentcad import cli, printers, targets
 from agentcad.gcode import check
+from agentcad.gcode.bgcode import BGCodeError
 from agentcad.targets import Job, JobPart, TargetError
 from agentcad.targets import prusaslicer as ps
 from agentcad.targets import prusaslicer_3mf as p3mf
@@ -695,6 +696,35 @@ def test_stage_slice_on_a_target_that_cannot_slice_says_so_and_writes_nothing(tm
     proj = staged_project(tmp_path, monkeypatch, capsys)
     rc, out, err = run_cli(capsys, "stage", proj, "--target", "generic", "-o", tmp_path / "staged", "--slice")
     assert rc == 2 and "target 'generic' does not slice" in err
+    assert not (tmp_path / "staged").exists()
+
+
+@pytest.mark.parametrize("failure", [OSError("placement unreadable"), ValueError("not a placement"),
+                                     BGCodeError("unknown block type 9", 60, 2)], ids=["os", "value", "bgcode"])
+def test_stage_slice_says_so_in_a_sentence_when_the_support_map_cannot_be_read(tmp_path, monkeypatch, capsys, base,
+                                                                              failure):
+    proj = staged_project(tmp_path, monkeypatch, capsys, '[print]\nlayer_height = 0.25\n')
+    fake_slicer(tmp_path, monkeypatch, writes=tf.write_gcode(tmp_path / "made.gcode", tf.synthetic_config()).read_bytes())
+
+    def unreadable(args):
+        raise failure
+    monkeypatch.setattr(cli, "cmd_gcode_supports", unreadable)
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged",
+                           "--slice")
+    assert rc == 1                                               # never 0: exit 0 means everything was read
+    assert "0 error(s)" in out                                   # the settings check still ran and is reported
+    assert f"the support map of {tmp_path / 'staged' / 'bar.gcode'} could not be read: {failure}" in err
+    assert "Traceback" not in err
+
+
+def test_stage_slice_with_no_slicer_installed_is_refused_before_anything_is_written(tmp_path, monkeypatch, capsys,
+                                                                                    base):
+    proj = staged_project(tmp_path, monkeypatch, capsys)
+    monkeypatch.setenv("AGENTCAD_PRUSASLICER", str(tmp_path / "no-such-slicer"))
+    monkeypatch.setattr(ps.shutil, "which", lambda name: None)
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged",
+                           "--slice")
+    assert rc == 2 and "no PrusaSlicer to slice with" in err and "AGENTCAD_PRUSASLICER" in err
     assert not (tmp_path / "staged").exists()
 
 
