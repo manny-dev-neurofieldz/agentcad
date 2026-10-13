@@ -195,6 +195,56 @@ def test_without_pyvista_png_is_refused_before_any_output_as_a_usage_error(tmp_p
         assert not png.exists()
 
 
+def test_a_contact_distance_that_is_not_a_number_is_one_error_line_naming_the_setting(tmp_path):
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance="abc"))
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())",
+                        "gcode", "supports", str(f)], capture_output=True, text=True)
+    assert r.returncode == 1 and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert f"Error: {f}: support_material_contact_distance 'abc' is not a number" in r.stderr, r.stderr
+
+
+def test_a_placed_stl_that_cannot_be_read_is_a_reason_no_region_was_checked_not_a_traceback(tmp_path):
+    """pyvista reads a corrupt STL as an empty mesh (it prints an error and raises nothing), and the rays then failed
+    deep in the analysis. The band is listed as before, and says why its region was not checked."""
+    import pytest
+    pytest.importorskip("pyvista")
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    (tmp_path / "ledge.stl").write_bytes(b"\x00\x01 not an STL " * 8)
+    r = _supports(f, "--placement", p)
+    assert r.returncode == 0 and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert "contact band(s)" in r.stdout and "could not be read" in r.stdout and "no region check" in r.stdout, r.stdout
+
+
+def test_the_picture_draws_the_bands_of_a_part_whose_stl_could_not_be_read_and_skips_the_part(tmp_path, monkeypatch):
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    from agentcad import cli
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    bands = sp.find_contacts(gm.parse(TEXT), contact_distance=0.25)
+    drawn = []
+
+    class Plotter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_mesh(self, *args, **kwargs):
+            drawn.append("part")
+
+        def add_points(self, *args, **kwargs):
+            drawn.append("band")
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+    monkeypatch.setattr(pv, "Plotter", Plotter)
+    meshes = {str(tmp_path / "ledge.stl"): "no triangles in it"}           # as the judging leaves an unreadable STL
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), meshes, tmp_path,
+                      {id(b): (None, None, None, None, "could not be read") for b in bands})
+    assert drawn == ["band"] * len(bands), drawn
+
+
 def test_the_picture_reads_no_stl_the_judging_already_read(tmp_path, monkeypatch):
     import pytest
     pv = pytest.importorskip("pyvista")

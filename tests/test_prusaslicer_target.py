@@ -729,6 +729,17 @@ def test_stage_slice_says_so_in_a_sentence_when_the_support_map_cannot_be_read(t
     assert "Traceback" not in err
 
 
+def test_stage_slice_reads_the_contact_distance_with_the_file_and_names_a_malformed_one(tmp_path, monkeypatch, capsys,
+                                                                                       base):
+    proj = staged_project(tmp_path, monkeypatch, capsys, '[print]\nlayer_height = 0.25\n')
+    made = tf.write_gcode(tmp_path / "made.gcode", tf.synthetic_config(support_material_contact_distance="abc"))
+    fake_slicer(tmp_path, monkeypatch, writes=made.read_bytes())
+    rc, out, err = run_cli(capsys, "stage", proj, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged",
+                           "--slice")
+    assert rc == 1 and "Traceback" not in err, (out, err)
+    assert "could not be read: support_material_contact_distance 'abc' is not a number" in err, err
+
+
 def test_stage_slice_lets_a_failure_in_the_support_analysis_surface_rather_than_call_the_file_unreadable(
         tmp_path, monkeypatch, capsys, base):
     from agentcad.gcode import supports
