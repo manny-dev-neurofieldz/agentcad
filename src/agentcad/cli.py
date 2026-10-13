@@ -1083,6 +1083,14 @@ def _supports_png(out, bands, placement, meshes, stl_root):
 
 def cmd_gcode_supports(args):
     """Where supports touch each object, as contact bands in the bed frame."""
+    if args.png:
+        # The bands are listed without pyvista (the region check says why it was skipped); the picture is not,
+        # so asking for it without pyvista is a usage error, refused before anything is read or printed.
+        try:
+            import pyvista  # noqa: F401
+        except ImportError:
+            print("Error: --png needs pyvista (the build123d extra installs it)", file=sys.stderr)
+            sys.exit(2)
     return _supports_report(args, _supports_read(args))
 
 
