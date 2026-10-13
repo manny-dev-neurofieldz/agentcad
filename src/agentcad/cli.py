@@ -1083,17 +1083,28 @@ def _supports_png(out, bands, placement, meshes, stl_root):
 
 def cmd_gcode_supports(args):
     """Where supports touch each object, as contact bands in the bed frame."""
+    return _supports_report(args, _supports_read(args))
+
+
+def _supports_read(args):
+    """(path, embedded config, parsed model, placement) of a support map: every step that reads a file, so a caller
+    can tell a file that cannot be read from a failure in the analysis after it."""
     from agentcad.gcode import bgcode, model, supports
     from agentcad.gcode.check import embedded_config
 
     path = Path(args.file)
-    cfg = embedded_config(path)
+    placement = supports.load_placement(Path(args.placement)) if args.placement else {}
+    return path, embedded_config(path), model.parse(bgcode.gcode_text(path)), placement
+
+
+def _supports_report(args, read):
+    from agentcad.gcode import supports
+
+    path, cfg, parsed, placement = read
     cd = args.contact_distance
     if cd is None:
         cd = float(cfg.get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
-    bands = [b for b in supports.find_contacts(model.parse(bgcode.gcode_text(path)), contact_distance=cd)
-             if b.area_mm2 >= args.min_area]
-    placement = supports.load_placement(Path(args.placement)) if args.placement else {}
+    bands = [b for b in supports.find_contacts(parsed, contact_distance=cd) if b.area_mm2 >= args.min_area]
     stl_root = Path(args.stl_root or Path(args.placement).parent) if args.placement else None
     meshes = {}
     # Every band is placed and judged before either output is written, so --json and the text agree on the
