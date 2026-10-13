@@ -692,6 +692,15 @@ def test_stage_slice_exits_1_when_the_sliced_file_disagrees_with_the_intent(tmp_
     assert rc == 1 and "ERROR" in out and "layer_height" in out
 
 
+def test_stage_copies_below_one_is_refused_by_name_and_writes_nothing(tmp_path, monkeypatch, capsys):
+    """0 once read as "not given" and staged the project's quantity in silence; -1 staged and printed -1 instances."""
+    proj = staged_project(tmp_path, monkeypatch, capsys)
+    for n in ("0", "-1"):
+        rc, out, err = run_cli(capsys, "stage", proj, "--target", "generic", "--copies", n, "-o", tmp_path / "staged")
+        assert rc == 2 and f"--copies {n}: " in err and "at least 1" in err, (n, out, err)
+        assert not (tmp_path / "staged").exists(), n
+
+
 def test_stage_slice_on_a_target_that_cannot_slice_says_so_and_writes_nothing(tmp_path, monkeypatch, capsys):
     proj = staged_project(tmp_path, monkeypatch, capsys)
     rc, out, err = run_cli(capsys, "stage", proj, "--target", "generic", "-o", tmp_path / "staged", "--slice")
