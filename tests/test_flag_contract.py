@@ -290,6 +290,29 @@ def _write_render_projects(root: Path):
             '[output]\nimage_size = 64\ndefault_views = ["iso"]\n')
 
 
+def _write_session_projects(root: Path):
+    """Per engine, a project with no session yet (sx/<engine>) and one started and iterated once (sy/<engine>),
+    each with its source in src/ beside the project folders; base_dir is relative, so a copy is its own project."""
+    for kind, (filename, text, extra) in RENDER_SOURCES.items():
+        if not ENGINE_UP[kind]:
+            continue
+        for group in ("sx", "sy"):
+            proj, source = root / group / kind, root / group / "src" / kind / filename
+            proj.mkdir(parents=True)
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text(text)
+            (proj / "agentcad.toml").write_text(
+                f'[project]\nname = "{kind}"\nengine = "{kind}"\n{extra}'
+                '[output]\nbase_dir = ".."\nsub_dir = "."\nimage_size = 64\ndefault_views = ["iso"]\n')
+            if group == "sy":
+                with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    for words in (["session", "start", str(proj)], ["session", "iterate", str(proj), str(source)]):
+                        try:
+                            cli.main(words)
+                        except SystemExit as e:
+                            assert e.code in (0, None), f"agentcad {' '.join(words)} failed while writing the fixtures"
+
+
 def _write_records(root: Path):
     shutil.copytree(Path(__file__).parent / "data" / "records_library", root / "lib")
 
@@ -303,6 +326,7 @@ def fixtures(tmp_path_factory) -> Path:
     _write_records(root)
     _write_qc_projects(root)
     _write_render_projects(root)
+    _write_session_projects(root)
     return root
 
 
@@ -362,13 +386,15 @@ def _stub_png(out, *args, **kwargs):
 
 
 _RUNS = [0]
-_DURATIONS = (re.compile(r"((?:runtime_s|seconds)\W+)[0-9.]+"), re.compile(r"(\b)[0-9]+(?:\.[0-9]+)? ?ms\b"),
+_DURATIONS = (re.compile(r"((?:runtime_s|runtime|seconds)\W+)[0-9.]+"),
+              re.compile(r"()\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?"), re.compile(r"(\b)[0-9]+(?:\.[0-9]+)? ?ms\b"),
               re.compile(r"(\bin )[0-9]+(?:\.[0-9]+)? ?s\b"))
 
 
 def _masked(text: str) -> str:
-    """Text with its run times replaced by <t>: how long a run took is not something a flag is asked to change, and
-    two runs of one input never take the same time."""
+    """Text with its run times and wall-clock timestamps replaced by <t>: how long a run took, and when, is not
+    something a flag is asked to change, and two runs of one input never agree on either. (A record that rewrites a
+    time it should keep, as loading a session once did with its start, is pinned by its own test.)"""
     for pattern in _DURATIONS:
         text = pattern.sub(lambda m: m.group(1) + "<t>", text)
     return text
@@ -656,6 +682,25 @@ COMMANDS = (
         Cell("--engine", ("--engine", "openscad"), {"build123d": REFUSES, "openscad": Same("the engine the project names"),
                                         "voxelcad": REFUSES}),
     )),
+    Command(("session", "start"), {"build123d": ("{D}/sx/build123d",), "openscad": ("{D}/sx/openscad",), "voxelcad": ("{D}/sx/voxelcad",)}, engine_kinds=True, cells=(
+        Cell("--engine", ("--engine", "openscad"), {"build123d": CHANGES, "openscad": Same("the engine the project names"),
+                                                    "voxelcad": CHANGES}),
+        Cell("--max-iter", ("--max-iter", "3"), CHANGES),
+        Cell("--define", ("--define", "size=8"), CHANGES),
+        Cell("--force", ("--force",), SAYS),
+        Cell("--no-archive", ("--no-archive",), SAYS),
+        Cell("--no-archive", ("--no-archive",), Same("no session to archive or discard; --force says so"),
+             needs=("--force",)),
+    )),
+    Command(("session", "iterate"), {"build123d": ("{D}/sy/build123d", "{D}/sy/src/build123d/box.py"), "openscad": ("{D}/sy/openscad", "{D}/sy/src/openscad/box.scad"), "voxelcad": ("{D}/sy/voxelcad", "{D}/sy/src/voxelcad/box.py")}, engine_kinds=True, cells=(
+        Cell("--define", ("--define", "size=8"), CHANGES),
+        Cell("--define", ("--define", "nosuch=1"), REFUSES),
+        Cell("--all", ("--all",), SAYS),
+    )),
+    Command(("session", "finalize"), {"build123d": ("{D}/sy/build123d",), "openscad": ("{D}/sy/openscad",), "voxelcad": ("{D}/sy/voxelcad",)}, engine_kinds=True, cells=(
+        Cell("--all", ("--all",), SAYS),
+        Cell("--export-all", ("--export-all",), SAYS),         # a first finalize has no export to reuse
+    )),
     Command(("records", "check"), {"library": ("{D}/lib",), "part": ("{D}/lib/parts/bracket/part.toml",),
                                    "job": ("{D}/lib/print_jobs/2026-02-01_mk4_pla_clip/job.toml",),
                                    "manifest": ("{D}/lib/projects/latch/exports/latch.print.json",)}, cells=(
@@ -696,9 +741,6 @@ EXEMPT = {
     ("printer", "files"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("printer", "get"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("printer", "status"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
-    ("session", "start"): "OWED: its kinds are engines; every flag per engine, next",
-    ("session", "iterate"): "OWED: its kinds are engines; every flag per engine, next",
-    ("session", "finalize"): "OWED: its kinds are engines; every flag per engine, next",
     ("stage",): "OWED: its kinds are output targets; every flag per target, next",
 }
 

@@ -133,7 +133,7 @@ def _slice_and_read(target, written, out_dir, cfg):
     the settings against the project's intent (exit 1 on an error), and where supports touch the parts."""
     from argparse import Namespace
     from agentcad import targets
-    from agentcad.cli import cmd_gcode_check, cmd_gcode_supports
+    from agentcad.cli import _supports_read, _supports_report, cmd_gcode_check
 
     project = next((Path(p) for p in written if Path(p).suffix == ".3mf"), Path(written[0]))
     sidecar = next((Path(p) for p in written if str(p).endswith(".placement.json")), None)
@@ -143,14 +143,17 @@ def _slice_and_read(target, written, out_dir, cfg):
         return _refuse(e)
     print(f"sliced: {sliced}")
     checked = cmd_gcode_check(Namespace(file=str(sliced), project=str(cfg.project_dir), intent=None, json=False))
+    # Where supports touch is advisory: a contact in a cavity is printed, not counted. A support map that cannot
+    # be read at all is counted, so exit 0 still means everything that was sliced was read. Only the reading is
+    # caught: a failure in the analysis after it is a bug, and surfaces as one.
+    args = Namespace(file=str(sliced), contact_distance=None, min_area=1.0,
+                     placement=str(sidecar) if sidecar else None, stl_root=None, png=None, json=False)
     try:
-        # Where supports touch is advisory: a contact in a cavity is printed, not counted. A support map that cannot
-        # be read at all is counted, so exit 0 still means everything that was sliced was read.
-        cmd_gcode_supports(Namespace(file=str(sliced), contact_distance=None, min_area=1.0,
-                                     placement=str(sidecar) if sidecar else None, stl_root=None, png=None, json=False))
+        read = _supports_read(args)
     except (OSError, ValueError) as e:              # a BGCodeError is a ValueError
         print(f"Error: the support map of {sliced} could not be read: {e}", file=sys.stderr)
         return 1
+    _supports_report(args, read)
     return checked or 0
 
 

@@ -109,6 +109,20 @@ def test_state_round_trips_with_schema_two(session, config):
     assert loaded.current.notes == ["looks right"]
 
 
+def test_loading_a_session_keeps_when_it_was_created_and_started(session, config):
+    session.iterate("volume = 10\n")
+    session.project.metadata["created"] = "2026-01-02T03:04:05"
+    session.project.metadata["started"] = "2026-01-02T03:04:06"
+    session.save_state()
+    loaded = DesignSession.load_state("widget", FakeEngine(), config=config)
+    assert loaded.project.metadata["created"] == "2026-01-02T03:04:05"
+    assert loaded.project.metadata["started"] == "2026-01-02T03:04:06"
+    loaded.save_state()                                  # and saving it again does not move them either
+    again = DesignSession.load_state("widget", FakeEngine(), config=config)
+    assert (again.project.metadata["created"], again.project.metadata["started"]) == (
+        "2026-01-02T03:04:05", "2026-01-02T03:04:06")
+
+
 def test_a_schema_one_record_still_loads(session, config):
     session.iterate("volume = 10\n")
     path = session.save_state()
