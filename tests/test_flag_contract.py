@@ -27,6 +27,7 @@ import argparse
 import contextlib
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -760,6 +761,56 @@ def _cases():
 _BASELINES: Dict[tuple, Run] = {}
 
 
+def _json_leaves(value, at=""):
+    """A JSON value's leaves as {dotted path: value}."""
+    if isinstance(value, dict):
+        return {k: v for key, item in value.items() for k, v in _json_leaves(item, f"{at}.{key}" if at else key).items()}
+    if isinstance(value, list):
+        return {k: v for i, item in enumerate(value) for k, v in _json_leaves(item, f"{at}[{i}]").items()}
+    return {at: value}
+
+
+def _lines_moved(where, a, b):
+    la, lb = a.splitlines(), b.splitlines()
+    said = [f"{where}: line {i + 1}: {x!r} then {y!r}" for i, (x, y) in enumerate(zip(la, lb)) if x != y]
+    if len(la) != len(lb):
+        said.append(f"{where}: {len(la)} lines then {len(lb)}")
+    return said
+
+
+def _moved(first: "Run", second: "Run", fixtures: Path) -> str:
+    """What differs between two runs of one input, field by field: the exit status, stdout's lines, and each file
+    by its JSON leaves (with the value the fixture holds, when it holds the file) or by its lines. A value the run
+    read from the clock moves between runs and not against its fixture's absence; a stored value that moves, and
+    differs from what the fixture holds, is being rewritten (learning: find each moving field's source before
+    masking it)."""
+    said = [f"exit: {first.code} then {second.code}"] if first.code != second.code else []
+    said += _lines_moved("stdout", first.out, second.out)
+    for name in sorted(set(first.files) | set(second.files)):
+        a, b = first.files.get(name), second.files.get(name)
+        if a == b:
+            continue
+        if a is None or b is None:
+            said.append(f"{name}: written by {'the second' if a is None else 'the first'} run only")
+            continue
+        try:
+            ja, jb = _json_leaves(json.loads(a)), _json_leaves(json.loads(b))
+        except ValueError:
+            said += _lines_moved(name, a, b)
+            continue
+        held = fixtures / name
+        try:
+            jf = _json_leaves(json.loads(held.read_text())) if held.is_file() else None
+        except ValueError:
+            jf = None
+        for key in sorted(set(ja) | set(jb)):
+            if ja.get(key) != jb.get(key):
+                note = f" (the fixture holds {jf.get(key)!r})" if jf is not None and key in jf else \
+                    (" (not in the fixture)" if jf is not None else "")
+                said.append(f"{name}: {key}: {ja.get(key)!r} then {jb.get(key)!r}{note}")
+    return "\n".join(said)
+
+
 def _baseline(fixtures, scratch, command, kind, needs):
     key = (command.path, kind, needs)
     if key not in _BASELINES:
@@ -767,8 +818,8 @@ def _baseline(fixtures, scratch, command, kind, needs):
         first, second = run(fixtures, scratch, words), run(fixtures, scratch, words)
         assert first.crash is None, f"`agentcad {' '.join(words)}` crashed: {first.crash}"
         assert first.result() == second.result(), (
-            f"`agentcad {' '.join(words)}` gives two results from one input, so no flag can be judged against it:\n"
-            f"{first.result()}\n{second.result()}")
+            f"`agentcad {' '.join(words)}` gives two results from one input, so no flag can be judged against it. "
+            f"What moved (name each field's source before masking it):\n{_moved(first, second, fixtures)}")
         _BASELINES[key] = first
     return _BASELINES[key]
 
@@ -928,3 +979,24 @@ def test_an_echoed_value_is_not_an_effect_and_a_named_line_is_not_a_change():
     assert _view(moved, options, pattern) != _view(base, options, pattern)
     noted = Run(0, "loop 1: 4 line(s)\nwarning: --fit-tol ignored\n", "", {})
     assert _view(noted, options, None) == _view(Run(0, "loop 1: 4 line(s)\n", "", {}), options, None)
+
+
+def test_a_baseline_that_disagrees_names_each_field_that_moved_and_what_its_fixture_holds(tmp_path):
+    """Two runs of one input that disagree: the failure names the moving fields (a JSON key by its path, with both
+    values and the value the fixture holds) instead of printing both results whole, so the source of each value is
+    the first thing read. In the record below `created` moved and the fixture holds a third value: a stored value
+    being rewritten, which is how the session bug of 2026-10-12 looked."""
+    (tmp_path / "sy").mkdir()
+    (tmp_path / "sy" / "session.json").write_text(json.dumps({"metadata": {"created": "T0", "name": "box"}, "n": 1}))
+    a = Run(0, "Rendered 4 view(s)\nvariant 1\n", "",
+            {"sy/session.json": json.dumps({"metadata": {"created": "T1", "name": "box"}, "n": 1}),
+             "sy/page.html": "<p>\n<div data-variant-id=\"1\">\n</p>\n"})
+    b = Run(0, "Rendered 4 view(s)\nvariant 2\n", "",
+            {"sy/session.json": json.dumps({"metadata": {"created": "T2", "name": "box"}, "n": 1}),
+             "sy/page.html": "<p>\n<div data-variant-id=\"2\">\n</p>\n"})
+    said = _moved(a, b, tmp_path)
+    assert "sy/session.json: metadata.created: 'T1' then 'T2' (the fixture holds 'T0')" in said, said
+    assert "metadata.name" not in said and ".n:" not in said, said           # fields that held still are not named
+    assert "sy/page.html: line 2: '<div data-variant-id=\"1\">' then '<div data-variant-id=\"2\">'" in said, said
+    assert "stdout: line 2: 'variant 1' then 'variant 2'" in said and "Rendered" not in said, said
+    assert _moved(a, a, tmp_path) == ""
