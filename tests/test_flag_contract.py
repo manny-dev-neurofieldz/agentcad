@@ -42,6 +42,7 @@ import pytest
 from agentcad import cli
 from agentcad.engines import get_engine, list_engines
 from tests import gcode_fixtures as gf
+from tests import targetfixtures as tf
 
 B3D = "build123d" in list_engines() and get_engine("build123d").available()
 ENGINE_UP = {name: name in list_engines() and get_engine(name).available() for name in ("build123d", "openscad", "voxelcad")}
@@ -313,6 +314,40 @@ def _write_session_projects(root: Path):
                             assert e.code in (0, None), f"agentcad {' '.join(words)} failed while writing the fixtures"
 
 
+STAGE_BOX = "from build123d import *\n\ndef build():\n    return Box(20, 10, 5)\n"
+
+
+def _write_stage_project(root: Path):
+    """A finalized one-part project (st/box), two complete PrusaSlicer base configurations that differ in their
+    layer height, and a stand-in slicer (st/slicer/prusa-slicer) that copies a G-code carrying the base's settings
+    to its --output. The runner names the stand-in for every run, so a machine with PrusaSlicer installed and one
+    without judge --slice alike."""
+    st = root / "st"
+    proj, source = st / "box", st / "src" / "box.py"
+    proj.mkdir(parents=True)
+    source.parent.mkdir(parents=True)
+    source.write_text(STAGE_BOX)
+    (proj / "agentcad.toml").write_text(
+        '[project]\nname = "box"\nengine = "build123d"\n'
+        '[output]\nbase_dir = ".."\nsub_dir = "."\nimage_size = 64\ndefault_views = ["iso"]\n')
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        for words in (["session", "start", str(proj)], ["session", "iterate", str(proj), str(source)],
+                      ["session", "finalize", str(proj)]):
+            try:
+                cli.main(words)
+            except SystemExit as e:
+                assert e.code in (0, None), f"agentcad {' '.join(words)} failed while writing the fixtures"
+    tf.write_ini(st / "base.ini", tf.synthetic_config())
+    tf.write_ini(st / "other.ini", tf.synthetic_config(layer_height="0.15"))
+    slicer = st / "slicer"
+    slicer.mkdir()
+    tf.write_gcode(slicer / "made.gcode", tf.synthetic_config())
+    (slicer / "prusa-slicer").write_text(
+        '#!/bin/sh\nout=""; prev=""\nfor a in "$@"; do [ "$prev" = "--output" ] && out="$a"; prev="$a"; done\n'
+        '[ -n "$out" ] && cp "$(dirname "$0")/made.gcode" "$out"\nexit 0\n')
+    (slicer / "prusa-slicer").chmod(0o755)
+
+
 def _write_records(root: Path):
     shutil.copytree(Path(__file__).parent / "data" / "records_library", root / "lib")
 
@@ -327,6 +362,8 @@ def fixtures(tmp_path_factory) -> Path:
     _write_qc_projects(root)
     _write_render_projects(root)
     _write_session_projects(root)
+    if B3D:
+        _write_stage_project(root)
     return root
 
 
@@ -418,7 +455,8 @@ def run(fixtures: Path, scratch: Path, words) -> Run:
     os.chdir(d)
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
-                mock.patch("agentcad.fit._render_pair", _no_render), mock.patch("agentcad.cli._supports_png", _stub_png):
+                mock.patch("agentcad.fit._render_pair", _no_render), mock.patch("agentcad.cli._supports_png", _stub_png), \
+                mock.patch.dict(os.environ, {"AGENTCAD_PRUSASLICER": str(d / "st" / "slicer" / "prusa-slicer")}):
             cli.main(argv)
     except SystemExit as e:
         code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
@@ -701,6 +739,14 @@ COMMANDS = (
         Cell("--all", ("--all",), SAYS),
         Cell("--export-all", ("--export-all",), SAYS),         # a first finalize has no export to reuse
     )),
+    Command(("stage",), {"generic": ("{D}/st/box", "--target", "generic"),
+                         "prusaslicer": ("{D}/st/box", "--target", "prusaslicer", "--base-config", "{D}/st/base.ini")},
+            geometry=True, cells=(
+        Cell("--output", ("-o", "{D}/elsewhere"), CHANGES),
+        Cell("--copies", ("--copies", "2"), CHANGES),
+        Cell("--base-config", ("--base-config", "{D}/st/other.ini"), {"generic": REFUSES, "prusaslicer": CHANGES}),
+        Cell("--slice", ("--slice",), {"generic": REFUSES, "prusaslicer": CHANGES}),
+    )),
     Command(("records", "check"), {"library": ("{D}/lib",), "part": ("{D}/lib/parts/bracket/part.toml",),
                                    "job": ("{D}/lib/print_jobs/2026-02-01_mk4_pla_clip/job.toml",),
                                    "manifest": ("{D}/lib/projects/latch/exports/latch.print.json",)}, cells=(
@@ -741,7 +787,6 @@ EXEMPT = {
     ("printer", "files"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("printer", "get"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
     ("printer", "status"): "one kind of input: a printer host; hosts are held to their contract in test_host_contract",
-    ("stage",): "OWED: its kinds are output targets; every flag per target, next",
 }
 
 
