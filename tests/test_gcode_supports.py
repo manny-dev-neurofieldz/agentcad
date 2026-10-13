@@ -184,6 +184,17 @@ def test_without_pyvista_the_text_says_why_no_region_was_checked(tmp_path):
     assert f"      ({NO_PYVISTA})\n" in r.stdout, r.stdout
 
 
+def test_without_pyvista_png_is_refused_before_any_output_as_a_usage_error(tmp_path):
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    png = tmp_path / "contacts.png"
+    for mode in ((), ("--json",)):
+        r = _supports(f, "--placement", p, *mode, "--png", png, without=["pyvista"])
+        assert r.returncode == 2, (mode, r.stdout + r.stderr)
+        assert r.stdout == "" and "Traceback" not in r.stderr, (mode, r.stdout + r.stderr)
+        assert "Error: --png needs pyvista (the build123d extra installs it)" in r.stderr, (mode, r.stderr)
+        assert not png.exists()
+
+
 def test_the_picture_reads_no_stl_the_judging_already_read(tmp_path, monkeypatch):
     import pytest
     pv = pytest.importorskip("pyvista")
