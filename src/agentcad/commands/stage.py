@@ -45,6 +45,8 @@ def cmd_stage(args):
     from agentcad.meshmeasure import read_stl
     from agentcad.session import DesignSession
 
+    if args.copies is not None and args.copies < 1:
+        return _refuse(f"--copies {args.copies}: a count of copies is at least 1; nothing was staged")
     cfg, _, name = _resolve_project(args.project)
     try:
         target = targets.get_target(args.target)
@@ -100,7 +102,7 @@ def cmd_stage(args):
         if y_next is not None:                       # the next part in a row along y
             T[1][3] += y_next
         y_next = (y_next or 0.0) + float(extent[1]) + GAP_MM
-        copies = args.copies if args.copies else int(part_cfg.quantity or 1)
+        copies = args.copies if args.copies is not None else int(part_cfg.quantity or 1)
         parts.append(targets.JobPart(part_name, stl, copies=copies, transform=T))
     native = targets.native_tables(cfg, target.name)
     _, conflicts = targets.layer_native(mapped, native)
