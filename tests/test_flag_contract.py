@@ -1026,6 +1026,20 @@ def test_an_echoed_value_is_not_an_effect_and_a_named_line_is_not_a_change():
     assert _view(noted, options, None) == _view(Run(0, "loop 1: 4 line(s)\n", "", {}), options, None)
 
 
+def test_a_baseline_that_disagrees_fails_with_what_moved_named(tmp_path, monkeypatch):
+    """The wiring: _baseline's own failure leads with _moved's list, so a disagreement is read field by field
+    wherever it happens (two stand-in runs that disagree on one stdout line)."""
+    import sys
+    runs = iter([Run(0, "same\nfirst\n", "", {}), Run(0, "same\nsecond\n", "", {})])
+    monkeypatch.setattr(sys.modules[__name__], "run", lambda fixtures, scratch, words: next(runs))
+    command = Command(("wired",), {"one": ("x",)}, cells=())
+    with pytest.raises(AssertionError) as failed:
+        _baseline(tmp_path, tmp_path, command, "one", ("--wiring-test",))
+    message = str(failed.value)
+    assert "What moved" in message and "stdout: line 2: 'first' then 'second'" in message, message
+    assert "same" not in message.split("What moved", 1)[1].splitlines()[1], message      # the held line is unnamed
+
+
 def test_a_baseline_that_disagrees_names_each_field_that_moved_and_what_its_fixture_holds(tmp_path):
     """Two runs of one input that disagree: the failure names the moving fields (a JSON key by its path, with both
     values and the value the fixture holds) instead of printing both results whole, so the source of each value is
