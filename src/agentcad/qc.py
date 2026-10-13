@@ -982,8 +982,9 @@ def _quantity(claim: Dict[str, Any], mesh, pose, layer: float) -> Dict[str, Any]
         return _across(claim, part, pose, reach)
     nearest = float(min(near)[1])
     # Thin regions near the place can be the lips of an opening where the wall was (a bore grown through the
-    # face): the line across the place itself tells a thinner wall from one that is gone.
-    line = _line_across(claim, part, pose, float(claim["threshold"]))
+    # face): the line across the place itself tells a thinner wall from one that is gone. It is read as far as
+    # the regions are found, so a wall a knob only moved sideways (further than the limit) is still on it.
+    line = _line_across(claim, part, pose, reach)
     if line is not None and line[0] is None:
         return {"gone": True, "lips_mm": nearest}
     return {"value": nearest}

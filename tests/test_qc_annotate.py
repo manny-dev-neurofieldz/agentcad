@@ -423,3 +423,39 @@ def test_a_knob_that_opens_the_wall_is_gone_even_with_thin_lips_beside_the_place
     fix = report["findings"][rec["finding"]]["fix"]
     assert "r +0.5 leaves no material across the place: the material there is gone (a failure, not a fix)" in fix
     assert "mm remain near it" in fix, fix
+
+
+MOVED = FALLBACK + '''
+from build123d import Align, Cylinder
+
+
+def build(r=5.0):
+    low = (Align.CENTER, Align.CENTER, Align.MIN)
+    part = Cylinder(r, 10, align=low) - Cylinder(r - 0.4, 12, align=low)
+    feature("tube wall", box=(-r - 2, -r - 2, -1, r + 2, r + 2, 11), kind="wall", knobs=("r=1",))
+    return part
+'''
+
+
+@needs_b3d
+def test_a_knob_that_moves_an_intact_wall_further_than_the_limit_is_not_called_gone(tmp_path, capsys):
+    """r moves both faces of a 0.4 mm tube wall by 1 mm, more than the limit, and leaves it 0.4 mm: the wall is
+    still there beside the place, so the knob moves nothing here; the line across the place must not call it gone
+    (a review of the change that added the lips found it did)."""
+    proj, source = _project(tmp_path)
+    source.write_text(MOVED)
+    cli.main(["session", "start", str(proj)])
+    cli.main(["session", "iterate", str(proj), str(source)])
+    capsys.readouterr()
+    try:
+        cli.main(["qc", str(proj), "--json", "--fixes"])
+    except SystemExit:
+        pass
+    report = json.loads(capsys.readouterr().out)
+    (rec,) = report["sensitivity"]
+    (k,) = rec["knobs"]
+    assert "gone" not in k["plus"] and "gone" not in k["minus"], k
+    assert k["verdict"] == "dead", k
+    assert k["plus"]["value"] == pytest.approx(0.4, abs=0.02) and k["minus"]["value"] == pytest.approx(0.4, abs=0.02)
+    fix = report["findings"][rec["finding"]]["fix"]
+    assert "r moves nothing here" in fix and "gone" not in fix, fix
