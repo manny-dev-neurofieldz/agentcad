@@ -1050,11 +1050,12 @@ def cmd_gcode_check(args):
     return 1 if any(f.severity == "error" for f in findings) else 0
 
 
-def _supports_png(out, bands, placement, meshes, stl_root):
-    """Parts (translucent, placed on the bed) with contact cells: green on an outer surface, red in a cavity."""
+def _supports_png(out, bands, placement, meshes, stl_root, regions):
+    """Parts (translucent, placed on the bed) with contact cells: green on an outer surface, red in a cavity.
+    ``regions`` is the judgment the text and the JSON print (``_band_region`` per band, by id): the picture colours
+    from it and judges nothing again, so the three outputs cannot disagree."""
     import numpy as np
     import pyvista as pv
-    from agentcad.gcode import supports
 
     pl = pv.Plotter(off_screen=True, window_size=(1000, 800))
     placed = set()
@@ -1063,18 +1064,14 @@ def _supports_png(out, bands, placement, meshes, stl_root):
         cells = np.array(b.cells or [], float)
         if not len(cells):
             continue
-        colour = "seagreen"
         if p and stl_root is not None and (stl_root / p["stl"]).exists():
             key = str(stl_root / p["stl"])
             if key not in meshes:                   # judged bands left their STLs here: read each once
                 meshes[key] = pv.read(key)
-            mesh = meshes[key]
             if b.object not in placed:
-                pl.add_mesh(mesh.transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
+                pl.add_mesh(meshes[key].transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)
-            votes = supports.band_enclosure(b, placement, mesh) or {}
-            if votes and max(votes, key=votes.get) == "cavity":
-                colour = "red"
+        colour = "red" if regions[id(b)][2] == "cavity" else "seagreen"
         pl.add_points(cells, color=colour, point_size=6, render_points_as_spheres=True)
     pl.add_axes()
     pl.camera_position = "iso"
@@ -1116,7 +1113,7 @@ def _supports_report(args, read):
                                region_votes=regions[id(b)][3], region_note=regions[id(b)][4]) for b in bands],
                          indent=2))
         if args.png:
-            _supports_png(Path(args.png), bands, placement, meshes, stl_root)
+            _supports_png(Path(args.png), bands, placement, meshes, stl_root, regions)
             print(f"render: {args.png}", file=sys.stderr)
         return 1 if in_cavity else None
     if not bands:
@@ -1138,7 +1135,7 @@ def _supports_report(args, read):
             elif o and why:
                 print(f"      ({why})")
     if args.png:
-        _supports_png(Path(args.png), bands, placement, meshes, stl_root)
+        _supports_png(Path(args.png), bands, placement, meshes, stl_root, regions)
         print(f"render: {args.png}")
     if in_cavity:
         return 1
