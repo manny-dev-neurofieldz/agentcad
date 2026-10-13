@@ -214,5 +214,40 @@ def test_the_picture_reads_no_stl_the_judging_already_read(tmp_path, monkeypatch
     reads = []
     monkeypatch.setattr(pv, "read", lambda path: reads.append(path))
     monkeypatch.setattr(pv, "Plotter", Plotter)
-    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), cache, tmp_path)
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), cache, tmp_path,
+                      {id(b): (None, None, None, None, None) for b in bands})
     assert bands and reads == [], reads
+
+
+def test_the_picture_colours_each_band_by_the_region_already_judged_and_judges_nothing_again(tmp_path, monkeypatch):
+    """One judgment, three outputs: the text, the JSON and the picture cannot disagree on a band's region, and the
+    picture casts no second set of rays. A band judged a cavity is drawn red even where a judgment now would say
+    otherwise (here, nothing is walled in: the tube is far from the contact)."""
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    from agentcad import cli
+    f, p = _ledge_plate(tmp_path, (60.0, 60.0))         # the contact sits on nothing the rays can wall in
+    bands = sp.find_contacts(gm.parse(TEXT), contact_distance=0.25)
+    colours = []
+
+    class Plotter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_points(self, cells, color=None, **kwargs):
+            colours.append(color)
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+
+    def judged_again(*args, **kwargs):
+        raise AssertionError("the picture judged a band again")
+    monkeypatch.setattr(pv, "Plotter", Plotter)
+    monkeypatch.setattr(sp, "band_enclosure", judged_again)
+    regions = {id(b): (None, None, "cavity", {"cavity": 9}, None) for b in bands}
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), {}, tmp_path, regions)
+    assert bands and colours == ["red"] * len(bands), colours
+    regions = {id(b): (None, None, "outside", {"outside": 9}, None) for b in bands}
+    colours.clear()
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), {}, tmp_path, regions)
+    assert colours == ["seagreen"] * len(bands), colours
