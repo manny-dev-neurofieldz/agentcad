@@ -138,11 +138,8 @@ class Button:
 class VariantBuilder:
     """Builder for a single design variant section."""
 
-    _id_counter = 0
-
-    def __init__(self, name: str):
-        VariantBuilder._id_counter += 1
-        self._id = VariantBuilder._id_counter
+    def __init__(self, name: str, variant_id: int = 1):
+        self._id = variant_id                 # unique within its page, which numbers its variants from 1
         self.name = name
         self._params = Table(["Parameter", "Value"])
         self._gallery = Gallery()
@@ -326,7 +323,7 @@ class Page:
         return self
 
     def variant(self, name: str) -> VariantBuilder:
-        v = VariantBuilder(name)
+        v = VariantBuilder(name, variant_id=len(self._variants) + 1)
         self._variants.append(v)
         return v
 

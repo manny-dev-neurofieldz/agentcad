@@ -387,7 +387,7 @@ def cmd_session_start(args):
                   f"to close it, or `agentcad session reopen` to continue it.",
                   file=sys.stderr)
             sys.exit(1)
-        if getattr(args, "no_archive", False):
+        if args.force and getattr(args, "no_archive", False):
             print(f"Warning: --no-archive: discarding the previous session record at {session.state_file}",
                   file=sys.stderr)
             session.state_file.unlink()
@@ -398,6 +398,10 @@ def cmd_session_start(args):
             )
             if archive:
                 print(f"  Archived previous session to {archive}")
+
+    elif args.force:
+        print(f"agentcad: --force ignored: there is no session at {session.state_file} to overwrite",
+              file=sys.stderr)
 
     state_path = session.save_state()
     print(f"Session started for project '{project_name}' (engine: {engine.name})")
@@ -428,10 +432,12 @@ def cmd_session_iterate(args):
         sys.exit(1)
 
     code = source.read_text()
+    defines = _parse_defines(args.define) if getattr(args, "define", None) else None
+    _check_source(engine, source, args, defines)
     if getattr(args, "all", False):
         _iterate_parts(cfg, source, code, args)
     try:
-        it = session.iterate(code, defines=_parse_defines(args.define) if getattr(args, "define", None) else None,
+        it = session.iterate(code, defines=defines,
                              origin=source)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -567,6 +573,8 @@ def cmd_session_finalize(args):
         sys.exit(1)
 
     failed = []          # parts (and the project) that a QC gate held back or that could not be finalized
+    if getattr(args, "all", False) and not cfg.part_projects():
+        print("Warning: --all given but the project declares no parts ([project] parts = [...])", file=sys.stderr)
     if getattr(args, "all", False):
         gathered = []
         for folder, part_cfg in cfg.part_projects():
@@ -598,6 +606,11 @@ def cmd_session_finalize(args):
         print("Session finalized." + (" (again: variants rebuilt, existing exports reused)" if already else ""))
     print(f"  HTML viewer: {html_path}")
     print(f"  Iterations:  {session.iteration_count}")
+    if getattr(args, "export_all", False):
+        if session.exports_made_again:
+            print(f"  --export-all: {session.exports_made_again} existing export(s) made again")
+        else:
+            print("agentcad: --export-all ignored: no iteration had an export to reuse", file=sys.stderr)
     if session.qc_report is not None:
         for f in session.qc_report["findings"]:
             print(f"  QC {f['severity']}: {f['sentence']}")
@@ -1743,6 +1756,7 @@ def _register_session(sub, groups):
     p_ss.add_argument("-f", "--force", action="store_true",
                       help="Overwrite an existing un-finalized session")
     p_ss.set_defaults(func=cmd_session_start)
+    _requires(p_ss, "--no-archive", "--force")
 
     p_si = sub_session.add_parser("iterate", help="Add iteration: render source file, record")
     p_si.add_argument("project", help="Project name or path")
