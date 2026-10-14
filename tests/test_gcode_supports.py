@@ -185,10 +185,13 @@ def test_without_pyvista_the_text_says_why_no_region_was_checked(tmp_path):
 
 
 def test_without_pyvista_png_is_refused_before_any_output_as_a_usage_error(tmp_path):
-    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    """The machine this matters on has no pyvista, so the test needs none either: plain G-code, no placement and no
+    STL to build (the refusal comes before anything is read)."""
+    f = tmp_path / "ledge.gcode"
+    f.write_text(TEXT)
     png = tmp_path / "contacts.png"
     for mode in ((), ("--json",)):
-        r = _supports(f, "--placement", p, *mode, "--png", png, without=["pyvista"])
+        r = _supports(f, *mode, "--png", png, without=["pyvista"])
         assert r.returncode == 2, (mode, r.stdout + r.stderr)
         assert r.stdout == "" and "Traceback" not in r.stderr, (mode, r.stdout + r.stderr)
         assert "Error: --png needs pyvista (the build123d extra installs it)" in r.stderr, (mode, r.stderr)
