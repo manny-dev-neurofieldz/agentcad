@@ -1,4 +1,5 @@
 """Support contact from the toolpaths: a part printed over a support block, three thin layers up."""
+import pytest
 from agentcad.gcode import model as gm, supports as sp
 
 
@@ -198,15 +199,52 @@ def test_without_pyvista_png_is_refused_before_any_output_as_a_usage_error(tmp_p
         assert not png.exists()
 
 
-def test_a_contact_distance_that_is_not_a_number_is_one_error_line_naming_the_setting(tmp_path):
-    from tests import targetfixtures as tf
-    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance="abc"))
+def _cli(*argv):
     import subprocess
     import sys
-    r = subprocess.run([sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())",
-                        "gcode", "supports", str(f)], capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())",
+                           *map(str, argv)], capture_output=True, text=True)
+
+
+# nan, inf and a negative gap all parse as floats and find no contact at all: a silent all-clear on a file that
+# cannot be read correctly. They are refused like a value that is not a number.
+@pytest.mark.parametrize("raw,why", [("abc", "is not a number"), ("nan", "is not a distance"),
+                                     ("inf", "is not a distance"), ("-1", "is not a distance")])
+def test_a_contact_distance_that_is_not_a_distance_is_one_error_line_naming_the_setting(tmp_path, raw, why):
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance=raw))
+    r = _cli("gcode", "supports", f)
+    assert r.returncode == 1 and r.stdout == "" and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert f"Error: {f}: support_material_contact_distance {raw!r} {why}" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("raw", ["abc", "nan", "inf", "-1"])
+def test_a_contact_distance_flag_that_is_not_a_distance_is_a_usage_error(tmp_path, raw):
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance="0.25"))
+    r = _cli("gcode", "supports", f, f"--contact-distance={raw}")
+    assert r.returncode == 2 and r.stdout == "" and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert "--contact-distance" in r.stderr and repr(raw) in r.stderr, r.stderr
+
+
+def test_a_contact_distance_of_zero_is_a_distance_from_the_file_and_the_flag(tmp_path):
+    """0 is soluble supports printed touching the part: allowed."""
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance="0"))
+    for extra in ((), ("--contact-distance", "0")):
+        r = _cli("gcode", "supports", f, *extra)
+        assert r.returncode == 0 and "Traceback" not in r.stderr, r.stdout + r.stderr
+        assert "contact distance 0.0 mm" in r.stdout, r.stdout
+
+
+def test_the_toolpath_page_refuses_a_file_contact_distance_that_is_not_a_distance(tmp_path):
+    pytest.importorskip("pyvista")
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    f.write_text(f.read_text() + "; support_material_contact_distance = nan\n")
+    r = _cli("gcode", "view", f, "--placement", p, "-o", tmp_path / "page.html")
     assert r.returncode == 1 and "Traceback" not in r.stderr, r.stdout + r.stderr
-    assert f"Error: {f}: support_material_contact_distance 'abc' is not a number" in r.stderr, r.stderr
+    assert f"Error: {f}: support_material_contact_distance 'nan' is not a distance" in r.stderr, r.stderr
+    assert not (tmp_path / "page.html").exists()
 
 
 def test_a_placed_stl_that_cannot_be_read_is_a_reason_no_region_was_checked_not_a_traceback(tmp_path):

@@ -1099,22 +1099,48 @@ def cmd_gcode_supports(args):
     return _supports_report(args, read)
 
 
+def _contact_distance(raw: str) -> float:
+    """A support contact distance in mm: a finite number of at least 0 (0 is soluble supports printed touching
+    the part). Anything else raises ValueError naming it: nan, inf or a negative gap would read as no contact
+    at all, a silent all-clear."""
+    import math
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{raw!r} is not a number") from None
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{raw!r} is not a distance (a finite number of mm, 0 or more)")
+    return value
+
+
+def _contact_distance_arg(raw: str) -> float:
+    """--contact-distance: a usage error (exit 2) for a value that is not a distance."""
+    try:
+        return _contact_distance(raw)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
+def _file_contact_distance(path) -> float:
+    """The sliced file's own support_material_contact_distance (0.25 when it states none); a value that is not
+    a distance makes the file one that cannot be read (ValueError naming the setting)."""
+    from agentcad.gcode.check import embedded_config
+    raw = embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0] or "0.25"
+    try:
+        return _contact_distance(raw)
+    except ValueError as e:
+        raise ValueError(f"support_material_contact_distance {e}") from None
+
+
 def _supports_read(args):
     """(path, contact distance, parsed model, placement) of a support map: every step that reads a file, so a caller
     can tell a file that cannot be read from a failure in the analysis after it. The contact distance, unless given,
-    is the sliced file's own setting, and a value that is not a number is a file that cannot be read."""
+    is the sliced file's own setting, and a value that is not a distance is a file that cannot be read."""
     from agentcad.gcode import bgcode, model, supports
-    from agentcad.gcode.check import embedded_config
 
     path = Path(args.file)
     placement = supports.load_placement(Path(args.placement)) if args.placement else {}
-    cd = args.contact_distance
-    if cd is None:
-        raw = embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0]
-        try:
-            cd = float(raw or 0.25)
-        except ValueError:
-            raise ValueError(f"support_material_contact_distance {raw!r} is not a number") from None
+    cd = args.contact_distance if args.contact_distance is not None else _file_contact_distance(path)
     return path, cd, model.parse(bgcode.gcode_text(path)), placement
 
 
@@ -1205,8 +1231,11 @@ def cmd_gcode_view(args):
     if args.placement:
         import pyvista as pv
         from agentcad.gcode import supports
-        from agentcad.gcode.check import embedded_config
-        cd = float(embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
+        try:
+            cd = _file_contact_distance(path)
+        except ValueError as e:
+            print(f"Error: {args.file}: {e}", file=sys.stderr)
+            sys.exit(1)
         placement = supports.load_placement(Path(args.placement))
         root = Path(args.stl_root or Path(args.placement).parent)
         for b in supports.find_contacts(m, contact_distance=cd):
@@ -1660,7 +1689,7 @@ def _register_gcode(sub, groups):
     pg.set_defaults(func=cmd_gcode_check)
     pg = sub_gcode.add_parser("supports", help="Where supports touch each object: contact bands (bed frame)")
     pg.add_argument("file", help=SLICED_FILE_HELP)
-    pg.add_argument("--contact-distance", type=float, default=None,
+    pg.add_argument("--contact-distance", type=_contact_distance_arg, default=None,
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
     pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1 or /2): bands in each STL's frame")
