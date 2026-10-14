@@ -820,7 +820,16 @@ def _lines_moved(where, a, b):
     said = [f"{where}: line {i + 1}: {x!r} then {y!r}" for i, (x, y) in enumerate(zip(la, lb)) if x != y]
     if len(la) != len(lb):
         said.append(f"{where}: {len(la)} lines then {len(lb)}")
+    if a != b and not said:                              # a trailing newline or a line ending
+        said.append(f"{where}: the text moved but no line did")
     return said
+
+
+_ABSENT = object()
+
+
+def _shown(value):
+    return "absent" if value is _ABSENT else repr(value)
 
 
 def _moved(first: "Run", second: "Run", fixtures: Path) -> str:
@@ -848,11 +857,15 @@ def _moved(first: "Run", second: "Run", fixtures: Path) -> str:
             jf = _json_leaves(json.loads(held.read_text())) if held.is_file() else None
         except ValueError:
             jf = None
+        named = len(said)
         for key in sorted(set(ja) | set(jb)):
-            if ja.get(key) != jb.get(key):
-                note = f" (the fixture holds {jf.get(key)!r})" if jf is not None and key in jf else \
+            x, y = ja.get(key, _ABSENT), jb.get(key, _ABSENT)
+            if _shown(x) != _shown(y):                   # by repr: 1 and 1.0, true and 1 are equal in Python only
+                note = f" (the fixture holds {jf[key]!r})" if jf is not None and key in jf else \
                     (" (not in the fixture)" if jf is not None else "")
-                said.append(f"{name}: {key}: {ja.get(key)!r} then {jb.get(key)!r}{note}")
+                said.append(f"{name}: {key}: {_shown(x)} then {_shown(y)}{note}")
+        if len(said) == named:                           # key order or spacing: never a disagreement with no name
+            said.append(f"{name}: the text moved but no field did")
     return "\n".join(said)
 
 
@@ -1041,7 +1054,21 @@ def test_a_baseline_that_disagrees_names_each_field_that_moved_and_what_its_fixt
              "sy/page.html": "<p>\n<div data-variant-id=\"2\">\n</p>\n"})
     said = _moved(a, b, tmp_path)
     assert "sy/session.json: metadata.created: 'T1' then 'T2' (the fixture holds 'T0')" in said, said
-    assert "metadata.name" not in said and ".n:" not in said, said           # fields that held still are not named
+    assert "metadata.name" not in said and "session.json: n:" not in said, said   # fields that held still: unnamed
     assert "sy/page.html: line 2: '<div data-variant-id=\"1\">' then '<div data-variant-id=\"2\">'" in said, said
     assert "stdout: line 2: 'variant 1' then 'variant 2'" in said and "Rendered" not in said, said
     assert _moved(a, a, tmp_path) == ""
+
+
+def test_what_moved_names_text_that_moved_where_no_field_or_line_did_and_a_key_that_is_absent(tmp_path):
+    """Leaves that compare equal in Python but differ as JSON (1 and 1.0, true and 1), keys in another order, a
+    trailing newline, and a key on one side only: a disagreement is never reported with nothing under it."""
+    def run(out, record):
+        return Run(0, out, "", {"r.json": record})
+    said = _moved(run("x\n", '{"a": 1, "b": true}'), run("x", '{"a": 1.0, "b": 1}'), tmp_path)
+    assert "r.json: a: 1 then 1.0" in said and "r.json: b: True then 1" in said, said
+    assert "stdout: the text moved but no line did" in said, said
+    said = _moved(run("x", '{"a": 1, "b": 2}'), run("x", '{"b": 2, "a": 1}'), tmp_path)
+    assert said == "r.json: the text moved but no field did", said
+    said = _moved(run("x", '{"a": 1}'), run("x", '{"a": 1, "c": 2}'), tmp_path)
+    assert said == "r.json: c: absent then 2", said
