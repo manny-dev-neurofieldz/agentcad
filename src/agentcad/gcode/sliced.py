@@ -118,14 +118,14 @@ def _first_number(value: str, default: float) -> float:
 def summary_record(s: Sliced) -> Dict:
     """The record ``gcode summary --json`` prints (schema agentcad.gcode.summary/1).
 
-    The slicer's density and diameter come from a .bgcode's slicer metadata, and the stated filament total from
-    its print metadata; a plain file has neither here, as before. ``estimated_time`` is the one field added
-    to the record: the time the file states, or null."""
-    slicer = s.metadata.get("slicer_metadata", {})
-    density = _first_number(slicer.get("filament_density", ""), 0.0) or None
-    diameter = _first_number(slicer.get("filament_diameter", ""), DEFAULT_FILAMENT_DIAMETER)
+    The slicer's density and diameter come from the file's configuration and the stated filament total from
+    its statistics, read the same way from a .bgcode (its slicer and print metadata) and from a plain file (its
+    configuration block and the statistics written before it), so one slice summarizes the same in either
+    format. ``estimated_time``: the time the file states, or null."""
+    density = _first_number(s.config.get("filament_density", ""), 0.0) or None
+    diameter = _first_number(s.config.get("filament_diameter", ""), DEFAULT_FILAMENT_DIAMETER)
     rec = gm.summary(s.model, diameter, density)
-    stated = stated_total(s.metadata.get("print_metadata", {}), FILAMENT_KEY)
+    stated = stated_total(s.stated, FILAMENT_KEY)
     if stated is not None:
         rec["filament_used_stated_mm"] = stated
     rec["estimated_time"] = stated_time(s.stated)
