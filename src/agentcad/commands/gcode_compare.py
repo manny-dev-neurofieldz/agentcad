@@ -3,7 +3,7 @@
 import json
 import sys
 
-from agentcad.gcode import compare, sliced
+from agentcad.gcode import compare, sliced, supports
 
 
 def cmd_gcode_compare(args):
@@ -13,7 +13,9 @@ def cmd_gcode_compare(args):
     loaded = []
     for label, name in (("A", args.a), ("B", args.b)):
         try:
-            loaded.append(sliced.load(name))
+            s = sliced.load(name)
+            supports.contact_distance_from(s.config)     # a contact distance that is not one: cannot be read
+            loaded.append(s)
         except (OSError, ValueError) as e:        # BGCodeError is a ValueError
             reason = e.strerror if isinstance(e, OSError) and e.strerror else e
             print(f"Error: cannot read {label} ({name}): {reason}", file=sys.stderr)

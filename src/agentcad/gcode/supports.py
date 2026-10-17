@@ -44,13 +44,31 @@ def _samples(points: List[Tuple[float, float]], step: float):
         yield points[-1]
 
 
+def contact_distance(raw: str) -> float:
+    """A support contact distance in mm: a finite number of at least 0 (0 is soluble supports printed touching
+    the part). Anything else raises ValueError naming it: nan, inf or a negative gap would find no contact at
+    all, a silent all-clear."""
+    import math
+    try:
+        value = float(raw)
+    except ValueError:
+        raise ValueError(f"{raw!r} is not a number") from None
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{raw!r} is not a distance (a finite number of mm, 0 or more)")
+    return value + 0.0                                  # -0.0 reads as 0.0
+
+
 def contact_distance_from(config: Dict[str, str], default: float = 0.25) -> float:
     """The support-to-part gap a file was sliced with (its ``support_material_contact_distance``, the first value
-    of a list), in mm; ``default`` when the configuration does not say or says something unreadable."""
-    try:
-        return float(config.get("support_material_contact_distance", "").split(",")[0] or default)
-    except ValueError:
+    of a list), in mm; ``default`` when the configuration does not state one. A stated value that is not a
+    distance raises ValueError naming the setting: the file cannot be read correctly."""
+    raw = config.get("support_material_contact_distance", "").split(",")[0]
+    if not raw.strip():
         return default
+    try:
+        return contact_distance(raw)
+    except ValueError as e:
+        raise ValueError(f"support_material_contact_distance {e}") from None
 
 
 def find_contacts(model: GCodeModel, contact_distance: float = 0.25, cell: float = 0.25) -> List[Band]:

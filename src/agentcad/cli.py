@@ -1099,24 +1099,11 @@ def cmd_gcode_supports(args):
     return _supports_report(args, read)
 
 
-def _contact_distance(raw: str) -> float:
-    """A support contact distance in mm: a finite number of at least 0 (0 is soluble supports printed touching
-    the part). Anything else raises ValueError naming it: nan, inf or a negative gap would read as no contact
-    at all, a silent all-clear."""
-    import math
-    try:
-        value = float(raw)
-    except ValueError:
-        raise ValueError(f"{raw!r} is not a number") from None
-    if not math.isfinite(value) or value < 0:
-        raise ValueError(f"{raw!r} is not a distance (a finite number of mm, 0 or more)")
-    return value
-
-
 def _contact_distance_arg(raw: str) -> float:
     """--contact-distance: a usage error (exit 2) for a value that is not a distance."""
+    from agentcad.gcode import supports
     try:
-        return _contact_distance(raw)
+        return supports.contact_distance(raw)
     except ValueError as e:
         raise argparse.ArgumentTypeError(str(e)) from None
 
@@ -1124,12 +1111,9 @@ def _contact_distance_arg(raw: str) -> float:
 def _file_contact_distance(path) -> float:
     """The sliced file's own support_material_contact_distance (0.25 when it states none); a value that is not
     a distance makes the file one that cannot be read (ValueError naming the setting)."""
+    from agentcad.gcode import supports
     from agentcad.gcode.check import embedded_config
-    raw = embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0] or "0.25"
-    try:
-        return _contact_distance(raw)
-    except ValueError as e:
-        raise ValueError(f"support_material_contact_distance {e}") from None
+    return supports.contact_distance_from(embedded_config(path))
 
 
 def _supports_read(args):
