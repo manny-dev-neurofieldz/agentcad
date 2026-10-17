@@ -1,4 +1,5 @@
 """Support contact from the toolpaths: a part printed over a support block, three thin layers up."""
+import pytest
 from agentcad.gcode import model as gm, supports as sp
 
 
@@ -196,6 +197,93 @@ def test_without_pyvista_png_is_refused_before_any_output_as_a_usage_error(tmp_p
         assert r.stdout == "" and "Traceback" not in r.stderr, (mode, r.stdout + r.stderr)
         assert "Error: --png needs pyvista (the build123d extra installs it)" in r.stderr, (mode, r.stderr)
         assert not png.exists()
+
+
+def _cli(*argv):
+    import subprocess
+    import sys
+    return subprocess.run([sys.executable, "-c", "import sys; from agentcad.cli import main; sys.exit(main())",
+                           *map(str, argv)], capture_output=True, text=True)
+
+
+# nan, inf and a negative gap all parse as floats and find no contact at all: a silent all-clear on a file that
+# cannot be read correctly. They are refused like a value that is not a number.
+@pytest.mark.parametrize("raw,why", [("abc", "is not a number"), ("nan", "is not a distance"),
+                                     ("inf", "is not a distance"), ("-1", "is not a distance")])
+def test_a_contact_distance_that_is_not_a_distance_is_one_error_line_naming_the_setting(tmp_path, raw, why):
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance=raw))
+    r = _cli("gcode", "supports", f)
+    assert r.returncode == 1 and r.stdout == "" and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert f"Error: {f}: support_material_contact_distance {raw!r} {why}" in r.stderr, r.stderr
+
+
+@pytest.mark.parametrize("raw", ["abc", "nan", "inf", "-1"])
+def test_a_contact_distance_flag_that_is_not_a_distance_is_a_usage_error(tmp_path, raw):
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance="0.25"))
+    r = _cli("gcode", "supports", f, f"--contact-distance={raw}")
+    assert r.returncode == 2 and r.stdout == "" and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert "--contact-distance" in r.stderr and repr(raw) in r.stderr, r.stderr
+
+
+def test_a_contact_distance_of_zero_is_a_distance_from_the_file_and_the_flag(tmp_path):
+    """0 is soluble supports printed touching the part: allowed."""
+    from tests import targetfixtures as tf
+    f = tf.write_gcode(tmp_path / "cd.gcode", tf.synthetic_config(support_material_contact_distance="0"))
+    for extra in ((), ("--contact-distance", "0")):
+        r = _cli("gcode", "supports", f, *extra)
+        assert r.returncode == 0 and "Traceback" not in r.stderr, r.stdout + r.stderr
+        assert "contact distance 0.0 mm" in r.stdout, r.stdout
+
+
+def test_the_toolpath_page_refuses_a_file_contact_distance_that_is_not_a_distance(tmp_path):
+    pytest.importorskip("pyvista")
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    f.write_text(f.read_text() + "; support_material_contact_distance = nan\n")
+    r = _cli("gcode", "view", f, "--placement", p, "-o", tmp_path / "page.html")
+    assert r.returncode == 1 and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert f"Error: {f}: support_material_contact_distance 'nan' is not a distance" in r.stderr, r.stderr
+    assert not (tmp_path / "page.html").exists()
+
+
+def test_a_placed_stl_that_cannot_be_read_is_a_reason_no_region_was_checked_not_a_traceback(tmp_path):
+    """pyvista reads a corrupt STL as an empty mesh (it prints an error and raises nothing), and the rays then failed
+    deep in the analysis. The band is listed as before, and says why its region was not checked."""
+    import pytest
+    pytest.importorskip("pyvista")
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    (tmp_path / "ledge.stl").write_bytes(b"\x00\x01 not an STL " * 8)
+    r = _supports(f, "--placement", p)
+    assert r.returncode == 0 and "Traceback" not in r.stderr, r.stdout + r.stderr
+    assert "contact band(s)" in r.stdout and "could not be read" in r.stdout and "no region check" in r.stdout, r.stdout
+
+
+def test_the_picture_draws_the_bands_of_a_part_whose_stl_could_not_be_read_and_skips_the_part(tmp_path, monkeypatch):
+    import pytest
+    pv = pytest.importorskip("pyvista")
+    from agentcad import cli
+    f, p = _ledge_plate(tmp_path, (10.0, 1.0))
+    bands = sp.find_contacts(gm.parse(TEXT), contact_distance=0.25)
+    drawn = []
+
+    class Plotter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_mesh(self, *args, **kwargs):
+            drawn.append("part")
+
+        def add_points(self, *args, **kwargs):
+            drawn.append("band")
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+    monkeypatch.setattr(pv, "Plotter", Plotter)
+    meshes = {str(tmp_path / "ledge.stl"): "no triangles in it"}           # as the judging leaves an unreadable STL
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), meshes, tmp_path,
+                      {id(b): (None, None, None, None, "could not be read") for b in bands})
+    assert drawn == ["band"] * len(bands), drawn
 
 
 def test_the_picture_reads_no_stl_the_judging_already_read(tmp_path, monkeypatch):
