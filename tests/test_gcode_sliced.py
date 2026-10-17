@@ -24,19 +24,26 @@ def files(tmp_path):
 
 # --- the summary keeps its record and gains the time ------------------------------------------------------------
 
-@pytest.mark.parametrize("key,name,time", [
-    ("plain_a", "a", {"seconds": 3723, "text": "1h 2m 3s"}),
-    ("plain_b", "b", {"seconds": 3382, "text": "56m 22s"}),
-    ("bgcode_b", "b_bgcode", {"seconds": 3382, "text": "56m 22s"})])
-def test_the_summary_keeps_every_old_field_and_value_and_gains_the_time(files, capsys, key, name, time):
+# A plain file also gains the filament total it states: the summary reads it from the statistics either format
+# carries, so one slice summarizes the same as .gcode and as .bgcode (tests/test_gcode_golden_pair.py).
+@pytest.mark.parametrize("key,name,time,gained,states", [
+    ("plain_a", "a", {"seconds": 3723, "text": "1h 2m 3s"}, {"filament_used_stated_mm": 30.0}, "30.00"),
+    ("plain_b", "b", {"seconds": 3382, "text": "56m 22s"}, {"filament_used_stated_mm": 20.0}, "20.00"),
+    ("bgcode_b", "b_bgcode", {"seconds": 3382, "text": "56m 22s"}, {}, None)])
+def test_the_summary_keeps_every_old_field_and_value_and_gains_the_time(files, capsys, key, name, time, gained,
+                                                                         states):
     rc, out, _ = run_cli(capsys, "gcode", "summary", files[name], "--json")
     assert rc == 0
     new = json.loads(out)
-    assert {k: v for k, v in new.items() if k != "estimated_time"} == GOLDEN["json"][key]
-    assert set(new) - set(GOLDEN["json"][key]) == {"estimated_time"}
+    added = {"estimated_time"} | set(gained)
+    assert {k: v for k, v in new.items() if k not in added} == GOLDEN["json"][key]
+    assert set(new) - set(GOLDEN["json"][key]) == added
+    assert {k: new[k] for k in gained} == gained
     assert new["estimated_time"] == time
     rc, text, _ = run_cli(capsys, "gcode", "summary", files[name])
-    assert text == GOLDEN["text"][key]                       # the printed summary is unchanged
+    first, rest = GOLDEN["text"][key].split("\n", 1)
+    expected = first + (f"; the file states {states} mm" if states else "") + "\n" + rest
+    assert text == expected       # unchanged, but for the stated total a plain file now shows beside its own
 
 
 # --- time: read, never computed ---------------------------------------------------------------------------------

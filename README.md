@@ -293,8 +293,8 @@ without feature comments still gives layers by Z and totals, and says the featur
 types the model does not recognise are counted, never dropped.
 
 `--json` prints a record with schema `agentcad.gcode.summary/1`: `layers`, `top_z`, `filament_used`
-(`filament_mm`, `volume_cm3`, `mass_g` when the density is known), `filament_used_stated_mm` (from the
-file's metadata), `features_known`, `unknown_features`, `objects` (id to name), `by_object` (filament,
+(`filament_mm`, `volume_cm3`, `mass_g` when the density is known), `filament_used_stated_mm` (the total
+the file states: a binary file's print metadata, a plain file's statistics comments), `features_known`, `unknown_features`, `objects` (id to name), `by_object` (filament,
 per-feature amounts, `support_share`), `by_feature`, `support` (`share`, first and last layer and Z),
 `brim_area_mm2` and `estimated_time` (the printing time the file states, as `seconds` and the file's own
 `text`, or null; it is read from the file's metadata or its estimate comment, never computed).

@@ -853,8 +853,8 @@ def _moved(first: "Run", second: "Run", fixtures: Path) -> str:
             said += _lines_moved(name, a, b)
             continue
         held = fixtures / name
-        try:
-            jf = _json_leaves(json.loads(held.read_text())) if held.is_file() else None
+        try:                                             # the fixture seen as a run sees its files: its folder <D>,
+            jf = _json_leaves(json.loads(_masked(_content(held, fixtures)))) if held.is_file() else None   # times <t>
         except ValueError:
             jf = None
         named = len(said)
@@ -1072,6 +1072,21 @@ def test_a_baseline_that_disagrees_names_each_field_that_moved_and_what_its_fixt
     assert "sy/page.html: line 2: '<div data-variant-id=\"1\">' then '<div data-variant-id=\"2\">'" in said, said
     assert "stdout: line 2: 'variant 1' then 'variant 2'" in said and "Rendered" not in said, said
     assert _moved(a, a, tmp_path) == ""
+
+
+def test_what_the_fixture_holds_is_shown_as_a_run_shows_its_own_values(tmp_path):
+    """A run's files name its folder <D> and mask times as <t>; the fixture's value beside them is read the same
+    way, so a path or a time the fixture holds compares with the run's values instead of reading as a third,
+    different value."""
+    (tmp_path / "s.json").write_text(json.dumps({"stl": str(tmp_path / "parts" / "a.stl"), "k": 1,
+                                                 "at": "2026-10-12T05:00:00"}))
+    a = Run(0, "", "", {"s.json": json.dumps({"stl": "<D>/parts/a.stl", "k": 2, "at": "<t>"})})
+    b = Run(0, "", "", {"s.json": json.dumps({"stl": "<D>/parts/b.stl", "k": 3, "at": "never"})})
+    said = _moved(a, b, tmp_path)
+    assert "s.json: stl: '<D>/parts/a.stl' then '<D>/parts/b.stl' (the fixture holds '<D>/parts/a.stl')" in said, said
+    assert "s.json: k: 2 then 3 (the fixture holds 1)" in said, said
+    assert "s.json: at: '<t>' then 'never' (the fixture holds '<t>')" in said, said
+    assert str(tmp_path) not in said and "2026-10-12" not in said, said
 
 
 def test_what_moved_names_text_that_moved_where_no_field_or_line_did_and_a_key_that_is_absent(tmp_path):

@@ -979,7 +979,7 @@ def cmd_gcode_summary(args):
     path = Path(args.file)
     loaded = sliced.load(path)
     s = sliced.summary_record(loaded)
-    stated = loaded.metadata.get("print_metadata", {}).get("filament used [mm]")
+    stated = loaded.stated.get(sliced.FILAMENT_KEY)
     if args.json:
         print(json.dumps(s, indent=2))
         return

@@ -202,6 +202,23 @@ def test_values_are_spelled_the_way_a_configuration_file_spells_them(tmp_path, s
     assert (written["temperature"], written["support_material_threshold"]) == ("200,205.5", "40")
 
 
+def test_a_setting_the_base_writes_quoted_is_written_quoted_the_empty_value_too(tmp_path, stl):
+    """PrusaSlicer writes a list-of-strings setting quoted. Written bare, an empty value reads as an empty list and
+    the MK4's start G-code (filament_notes[0]) stops the slice; a quote or backslash inside is escaped as the slicer
+    escapes it. A setting the base writes bare stays bare."""
+    base = tf.write_ini(tmp_path / "quoted.ini", tf.synthetic_config(
+        filament_notes='"the base note"', filament_settings_id='"Synthetic PLA"', notes=""))
+    cases = {"": '""', 'say "hi"': '"say \\"hi\\""', "a\\b": '"a\\\\b"', '"kept"': '"kept"'}
+    for value, written in cases.items():
+        job = job_for(stl, base, native={"filament_notes": value, "filament_settings_id": "Generic PLA",
+                                         "notes": "plain"})
+        settings = ps.resolve(job, pconfig.load(base)).settings
+        assert settings["filament_notes"] == written, (value, settings["filament_notes"])
+        assert settings["filament_settings_id"] == '"Generic PLA"' and settings["notes"] == "plain"
+    project, _ = write(job_for(stl, base, native={"filament_notes": ""}), tmp_path / "out")
+    assert targets.get_target(PRUSA).read_settings(project)["filament_notes"] == '""'
+
+
 def test_a_native_value_over_the_intent_wins_and_is_reported_with_both_values(tmp_path, stl, base):
     intent = {"layer_height": 0.15, "supports": True, "walls": 3}
     native = {"layer_height": 0.2, "support_material": True, "perimeters": 3.0}
