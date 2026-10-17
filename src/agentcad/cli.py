@@ -1068,7 +1068,7 @@ def _supports_png(out, bands, placement, meshes, stl_root, regions):
             key = str(stl_root / p["stl"])
             if key not in meshes:                   # judged bands left their STLs here: read each once
                 meshes[key] = pv.read(key)
-            if b.object not in placed:
+            if b.object not in placed and not isinstance(meshes[key], str):    # a string: it could not be read
                 pl.add_mesh(meshes[key].transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)
         colour = "red" if regions[id(b)][2] == "cavity" else "seagreen"
@@ -1088,27 +1088,50 @@ def cmd_gcode_supports(args):
         except ImportError:
             print("Error: --png needs pyvista (the build123d extra installs it)", file=sys.stderr)
             sys.exit(2)
-    return _supports_report(args, _supports_read(args))
+    from agentcad.gcode.bgcode import BGCodeError
+    try:
+        read = _supports_read(args)
+    except BGCodeError:
+        raise                                       # main says so, with its hints
+    except (OSError, ValueError) as e:              # a setting or a placement that cannot be read: a sentence
+        print(f"Error: {args.file}: {e}", file=sys.stderr)
+        sys.exit(1)
+    return _supports_report(args, read)
+
+
+def _contact_distance_arg(raw: str) -> float:
+    """--contact-distance: a usage error (exit 2) for a value that is not a distance."""
+    from agentcad.gcode import supports
+    try:
+        return supports.contact_distance(raw)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from None
+
+
+def _file_contact_distance(path) -> float:
+    """The sliced file's own support_material_contact_distance (0.25 when it states none); a value that is not
+    a distance makes the file one that cannot be read (ValueError naming the setting)."""
+    from agentcad.gcode import supports
+    from agentcad.gcode.check import embedded_config
+    return supports.contact_distance_from(embedded_config(path))
 
 
 def _supports_read(args):
-    """(path, embedded config, parsed model, placement) of a support map: every step that reads a file, so a caller
-    can tell a file that cannot be read from a failure in the analysis after it."""
+    """(path, contact distance, parsed model, placement) of a support map: every step that reads a file, so a caller
+    can tell a file that cannot be read from a failure in the analysis after it. The contact distance, unless given,
+    is the sliced file's own setting, and a value that is not a distance is a file that cannot be read."""
     from agentcad.gcode import bgcode, model, supports
-    from agentcad.gcode.check import embedded_config
 
     path = Path(args.file)
     placement = supports.load_placement(Path(args.placement)) if args.placement else {}
-    return path, embedded_config(path), model.parse(bgcode.gcode_text(path)), placement
+    cd = args.contact_distance if args.contact_distance is not None else _file_contact_distance(path)
+    return path, cd, model.parse(bgcode.gcode_text(path)), placement
 
 
 def _supports_report(args, read):
     from agentcad.gcode import supports
 
-    path, cfg, parsed, placement = read
-    cd = args.contact_distance
-    if cd is None:
-        cd = float(cfg.get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
+    path, cd, parsed, placement = read
     bands = [b for b in supports.find_contacts(parsed, contact_distance=cd) if b.area_mm2 >= args.min_area]
     stl_root = Path(args.stl_root or Path(args.placement).parent) if args.placement else None
     meshes = {}
@@ -1152,8 +1175,9 @@ def _supports_report(args, read):
 def _band_region(band, placement, stl_root, meshes):
     """(object frame, STL path, region, votes, why) of one contact band. The region is "cavity" or "outside" by
     rays across the placed STL, or None when it cannot be checked, and then ``why`` says what stopped it: no
-    placement for its object, no STL under ``stl_root``, or no pyvista to read the STL with. Without a placement
-    file nothing was asked, and ``why`` is None. ``meshes`` caches the STLs read, by path."""
+    placement for its object, no STL under ``stl_root``, no pyvista to read the STL with, or an STL that could not be
+    read. Without a placement file nothing was asked, and ``why`` is None. ``meshes`` caches the STLs read, by path,
+    or why one could not be read (a string)."""
     from agentcad.gcode import supports
 
     o = supports.in_object_frame(band, placement)
@@ -1167,7 +1191,14 @@ def _band_region(band, placement, stl_root, meshes):
             import pyvista as pv
         except ImportError:
             return o, stl, None, None, "pyvista is not installed: no region check (the build123d extra installs it)"
-        meshes[str(stl)] = pv.read(str(stl))
+        try:
+            mesh = pv.read(str(stl))
+        except (OSError, ValueError) as e:
+            mesh = f"{e}"
+        # A corrupt STL reads as an empty mesh (pyvista logs the error and raises nothing); the rays need triangles.
+        meshes[str(stl)] = mesh if isinstance(mesh, str) or mesh.n_cells else "no triangles in it"
+    if isinstance(meshes[str(stl)], str):
+        return o, stl, None, None, f"its STL {stl.name} could not be read ({meshes[str(stl)]}): no region check"
     votes = supports.band_enclosure(band, placement, meshes[str(stl)])
     return o, stl, (max(votes, key=votes.get) if votes else None), votes, None
 
@@ -1184,8 +1215,11 @@ def cmd_gcode_view(args):
     if args.placement:
         import pyvista as pv
         from agentcad.gcode import supports
-        from agentcad.gcode.check import embedded_config
-        cd = float(embedded_config(path).get("support_material_contact_distance", "0.25").split(",")[0] or 0.25)
+        try:
+            cd = _file_contact_distance(path)
+        except ValueError as e:
+            print(f"Error: {args.file}: {e}", file=sys.stderr)
+            sys.exit(1)
         placement = supports.load_placement(Path(args.placement))
         root = Path(args.stl_root or Path(args.placement).parent)
         for b in supports.find_contacts(m, contact_distance=cd):
@@ -1639,7 +1673,7 @@ def _register_gcode(sub, groups):
     pg.set_defaults(func=cmd_gcode_check)
     pg = sub_gcode.add_parser("supports", help="Where supports touch each object: contact bands (bed frame)")
     pg.add_argument("file", help=SLICED_FILE_HELP)
-    pg.add_argument("--contact-distance", type=float, default=None,
+    pg.add_argument("--contact-distance", type=_contact_distance_arg, default=None,
                     help="Support-to-part gap in mm (default: the file's support_material_contact_distance)")
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
     pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1 or /2): bands in each STL's frame")

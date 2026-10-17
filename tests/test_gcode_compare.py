@@ -283,8 +283,25 @@ def test_the_contact_distance_comes_from_the_files_own_configuration():
     assert f({"support_material_contact_distance": "0.2"}) == 0.2
     assert f({"support_material_contact_distance": "0.2,0.3"}) == 0.2                # the first extruder's
     assert f({"support_material_contact_distance": "0"}) == 0.0                      # "none" is a value, not a gap
-    assert f({}) == 0.25 and f({"support_material_contact_distance": ""}) == 0.25
-    assert f({"support_material_contact_distance": "soluble"}) == 0.25               # unreadable: the default
+    assert f({}) == 0.25 and f({"support_material_contact_distance": ""}) == 0.25    # not stated: the default
+    assert str(f({"support_material_contact_distance": "-0.0"})) == "0.0"
+    for raw, why in (("soluble", "is not a number"), ("nan", "is not a distance"), ("inf", "is not a distance"),
+                     ("-1", "is not a distance"), ("nan,0.2", "is not a distance")):
+        with pytest.raises(ValueError, match=f"support_material_contact_distance '{raw.split(',')[0]}' {why}"):
+            f({"support_material_contact_distance": raw})                            # stated but unreadable
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-1"])
+@pytest.mark.parametrize("as_json", [False, True])
+def test_a_file_whose_contact_distance_is_not_a_distance_cannot_be_compared(tmp_path, capsys, raw, as_json):
+    """nan or a negative gap finds no contact at all, and nan or inf would print as NaN or Infinity in --json,
+    which strict parsers refuse: the file cannot be read correctly, and says why."""
+    a, b = tmp_path / "a.gcode", tmp_path / "b.gcode"
+    a.write_text(fx.BODY_A + fx.trailer(None, None, {"support_material_contact_distance": raw}))
+    b.write_text(fx.BODY_B + fx.trailer(None, None, {"support_material_contact_distance": "0.2"}))
+    rc, out, err = run_cli(capsys, "gcode", "compare", a, b, *(["--json"] if as_json else []))
+    assert rc == 1 and out == "", out
+    assert f"Error: cannot read A ({a}): support_material_contact_distance '{raw}' is not a distance" in err, err
 
 
 # --- the command ------------------------------------------------------------------------------------------------
