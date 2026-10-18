@@ -1051,7 +1051,8 @@ def cmd_gcode_check(args):
 
 
 def _supports_png(out, bands, placement, meshes, stl_root, regions):
-    """Parts (translucent, placed on the bed) with contact cells: green on an outer surface, red in a cavity.
+    """Parts (translucent, placed on the bed) with contact cells: green on an outer surface, red in a cavity, grey
+    where no region was checked (no placement, no STL, an STL that could not be read, no pyvista for the rays).
     ``regions`` is the judgment the text and the JSON print (``_band_region`` per band, by id): the picture colours
     from it and judges nothing again, so the three outputs cannot disagree."""
     import numpy as np
@@ -1071,7 +1072,7 @@ def _supports_png(out, bands, placement, meshes, stl_root, regions):
             if b.object not in placed and not isinstance(meshes[key], str):    # a string: it could not be read
                 pl.add_mesh(meshes[key].transform(p["transform"], inplace=False), color="lightsteelblue", opacity=0.35)
                 placed.add(b.object)
-        colour = "red" if regions[id(b)][2] == "cavity" else "seagreen"
+        colour = {"cavity": "red", "outside": "seagreen"}.get(regions[id(b)][2], "darkgray")
         pl.add_points(cells, color=colour, point_size=6, render_points_as_spheres=True)
     pl.add_axes()
     pl.camera_position = "iso"
@@ -1678,7 +1679,7 @@ def _register_gcode(sub, groups):
     pg.add_argument("--min-area", type=float, default=1.0, help="Hide bands smaller than this (mm2, default 1)")
     pg.add_argument("--placement", default=None, help="Placement sidecar (agentcad.placement/1 or /2): bands in each STL's frame")
     pg.add_argument("--stl-root", default=None, help="Folder the sidecar's STL paths are relative to (default: the sidecar's)")
-    pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity)")
+    pg.add_argument("--png", default=None, help="Render the parts with contact cells (green outside, red in a cavity, grey not checked)")
     pg.add_argument("--json", action="store_true", help="Bands as JSON")
     _requires(pg, "--stl-root", "--placement")
     pg.set_defaults(func=cmd_gcode_supports)

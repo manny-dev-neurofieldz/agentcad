@@ -342,3 +342,31 @@ def test_the_picture_colours_each_band_by_the_region_already_judged_and_judges_n
     colours.clear()
     cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), {}, tmp_path, regions)
     assert colours == ["seagreen"] * len(bands), colours
+
+
+def test_each_band_is_coloured_by_its_own_region_and_one_not_checked_is_grey(tmp_path, monkeypatch):
+    """Three bands judged three ways in one picture: colouring every band from one band's region would fail, and a
+    band whose region was not checked is drawn grey, not green: the picture says no more than the text does."""
+    import dataclasses
+    pv = pytest.importorskip("pyvista")
+    from agentcad import cli
+    f, p = _ledge_plate(tmp_path, (60.0, 60.0))
+    band = sp.find_contacts(gm.parse(TEXT), contact_distance=0.25)[0]
+    bands = [band, dataclasses.replace(band), dataclasses.replace(band)]
+    colours = []
+
+    class Plotter:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def add_points(self, cells, color=None, **kwargs):
+            colours.append(color)
+
+        def __getattr__(self, name):
+            return lambda *args, **kwargs: None
+    monkeypatch.setattr(pv, "Plotter", Plotter)
+    regions = {id(bands[0]): (None, None, "outside", {"outside": 9}, None),
+               id(bands[1]): (None, None, "cavity", {"cavity": 9}, None),
+               id(bands[2]): (None, None, None, None, "its STL could not be read: no region check")}
+    cli._supports_png(tmp_path / "s.png", bands, sp.load_placement(p), {}, tmp_path, regions)
+    assert colours == ["seagreen", "red", "darkgray"], colours
