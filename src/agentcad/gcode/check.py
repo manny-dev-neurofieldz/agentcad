@@ -166,13 +166,33 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
+_ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
+
+
+def _text(value: Any) -> str:
+    """A value as text the way the slicer means it: a string setting written quoted (``"say \\"hi\\""``) loses its
+    one pair of quotes and has its backslash escapes read, so it compares equal to the plain text that was asked
+    for; anything else is the value with its surrounding space dropped."""
+    s = str(value).strip()
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        out, chars = [], iter(s[1:-1])
+        for c in chars:
+            if c == "\\":
+                nxt = next(chars, "")
+                out.append(_ESCAPES.get(nxt, nxt))
+            else:
+                out.append(c)
+        return "".join(out)
+    return s
+
+
 def _same(found: str, want: Any) -> bool:
     if isinstance(want, bool):
         want = int(want)
     a, b = _num(found), _num(want)
     if a is not None and b is not None:
         return abs(a - b) <= 1e-6 * max(1.0, abs(b))
-    return str(found).strip().strip('"') == str(want).strip().strip('"')
+    return _text(found) == _text(want)
 
 
 def check(config: Dict[str, str], intent: Dict[str, Any], source: str) -> List[Finding]:

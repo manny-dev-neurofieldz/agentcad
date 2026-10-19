@@ -40,6 +40,18 @@ def test_findings_say_what_differs_and_why(tmp_path):
     assert by["brim_width"].severity == "warning" and "not in the file" in by["brim_width"].sentence()
 
 
+def test_a_quoted_string_setting_is_read_the_way_the_slicer_writes_it():
+    """PrusaSlicer writes a string setting quoted, with a quote or backslash inside escaped: the value below is what
+    2.9.6 wrote back for filament_notes = 'say "hi" and a\\b'. Read with its quotes merely stripped it differed
+    from the text asked for, and stage --slice reported an error on a setting written correctly."""
+    found = {"filament_notes": '"say \\"hi\\" and a\\\\b"', "filament_settings_id": '"Generic PLA"', "notes": ""}
+    intent = {"filament_notes": 'say "hi" and a\\b', "filament_settings_id": "Generic PLA", "notes": ""}
+    by = {f.key: f.severity for f in check.check(found, intent, "t")}
+    assert by == {"filament_notes": "ok", "filament_settings_id": "ok", "notes": "ok"}
+    assert check.check({"filament_notes": '"say \\"hi\\""'}, {"filament_notes": 'say "ho"'}, "t")[0].severity == "error"
+    assert check.check({"start_gcode": '"M104 S200\\nG28"'}, {"start_gcode": "M104 S200\nG28"}, "t")[0].severity == "ok"
+
+
 def test_private_keys_are_never_checked_or_echoed():
     findings = check.check({"printhost_apikey": "secret"}, {"printhost_apikey": "x"}, "t")
     assert findings == []
