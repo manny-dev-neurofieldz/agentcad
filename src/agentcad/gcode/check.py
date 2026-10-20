@@ -169,21 +169,30 @@ def _num(v: Any) -> Optional[float]:
 _ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
 
 
-def _text(value: Any) -> str:
-    """A value as text the way the slicer means it: a string setting written quoted (``"say \\"hi\\""``) loses its
-    one pair of quotes and has its backslash escapes read, so it compares equal to the plain text that was asked
-    for; anything else is the value with its surrounding space dropped."""
+def _unescape(s: str) -> str:
+    out, chars = [], iter(s)
+    for c in chars:
+        if c == "\\":
+            nxt = next(chars, "")
+            out.append(_ESCAPES.get(nxt, nxt))
+        else:
+            out.append(c)
+    return "".join(out)
+
+
+def _quoted(s: str) -> bool:
+    return len(s) >= 2 and s[0] == '"' and s[-1] == '"'
+
+
+def _text(value: Any, written: bool = False) -> str:
+    """A value as text the way the slicer means it. The slicer escapes every string setting it writes: a list of
+    strings value-quoted (``filament_notes = "say \\"hi\\""``), a single string bare (``start_gcode = M17\\nG28``),
+    so a value read from a file (``written``) has its escapes read either way. A value asked for is plain text: it
+    loses one pair of quotes, and their escapes, only when it carries them."""
     s = str(value).strip()
-    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
-        out, chars = [], iter(s[1:-1])
-        for c in chars:
-            if c == "\\":
-                nxt = next(chars, "")
-                out.append(_ESCAPES.get(nxt, nxt))
-            else:
-                out.append(c)
-        return "".join(out)
-    return s
+    if _quoted(s):
+        return _unescape(s[1:-1])
+    return _unescape(s) if written else s
 
 
 def _same(found: str, want: Any) -> bool:
@@ -192,7 +201,7 @@ def _same(found: str, want: Any) -> bool:
     a, b = _num(found), _num(want)
     if a is not None and b is not None:
         return abs(a - b) <= 1e-6 * max(1.0, abs(b))
-    return _text(found) == _text(want)
+    return _text(found, written=True) == _text(want)
 
 
 def check(config: Dict[str, str], intent: Dict[str, Any], source: str) -> List[Finding]:
