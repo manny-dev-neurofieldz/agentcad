@@ -109,7 +109,9 @@ A value that is not usable (a layer height of 0, a fractional number of walls, `
 
 A native value over a mapped one wins, and the disagreement is reported naming the key and both values; the same value spelled differently (`true`, `1` and `"1"`) is one statement, not a conflict.
 
-A mapped or native key that the base configuration does not carry is refused by name, with the nearest keys the base does carry: a mistyped key would otherwise be written as a setting nothing reads, and the project would silently not say what the designer wrote. A key that holds a credential, an address or a program to run is refused as well (section 2.3). A value that spans lines is refused: a configuration value is one line.
+A mapped or native key that the base configuration does not carry is refused by name, with the nearest keys the base does carry: a mistyped key would otherwise be written as a setting nothing reads, and the project would silently not say what the designer wrote. A key that holds a credential, an address or a program to run is refused as well (section 2.3).
+
+A string value is written the way PrusaSlicer spells it. A list of strings (`filament_notes`, `filament_settings_id`, ...) gets one item per element of a TOML list, each quoted only where the slicer quotes. A value with real line breaks (a multi-line `start_gcode` given as a TOML multi-line string) is plain text: its breaks and backslashes are escaped, its quotes and tabs stay as they are. A value on one line is written as given, so one copied from a configuration, where a break is already the two characters `\n`, is not escaped twice; there, `\\` is a backslash and any other backslash escapes the character after it (`\t` is the letter t, not a tab). A value that ends in a lone backslash is refused, as the slicer refuses it.
 
 A native entry that states a range or a reason but no value (`temperature = { min = 270, max = 285 }`) is a check for `agentcad gcode check`, not a setting. It is not written, and the target says so.
 

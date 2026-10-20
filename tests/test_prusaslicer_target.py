@@ -230,6 +230,20 @@ def test_a_list_of_strings_is_written_item_by_item_the_way_the_slicer_saves_it(t
     assert empty["filament_type"] == '""'                    # bare it would read as no items at all
 
 
+def test_a_multi_line_single_string_is_written_the_way_the_slicer_saves_it(tmp_path, stl, base):
+    """Text with real line breaks is plain text: written with its breaks and backslashes escaped and its quotes and
+    tabs as they are (PrusaSlicer 2.9.6's spelling), read back equal, and checked ok against the text asked for.
+    A value with no line break is written as given, so one copied from a configuration is not escaped twice."""
+    asked = 'M17 ; enable steppers\nM117 "hi"\tC:\\x\r\nG28'
+    job = job_for(stl, base, native={"start_gcode": asked, "end_gcode": "M84\\nM107"})
+    project, _ = write(job, tmp_path / "out")
+    read = targets.get_target(PRUSA).read_settings(project)
+    assert read["start_gcode"] == 'M17 ; enable steppers\\nM117 "hi"\tC:\\\\x\\r\\nG28'
+    assert read["end_gcode"] == "M84\\nM107"
+    assert {f.key: f.severity for f in check.check(read, {"start_gcode": asked, "end_gcode": "M84\nM107"}, "t")} == {
+        "start_gcode": "ok", "end_gcode": "ok"}
+
+
 def test_a_native_value_over_the_intent_wins_and_is_reported_with_both_values(tmp_path, stl, base):
     intent = {"layer_height": 0.15, "supports": True, "walls": 3}
     native = {"layer_height": 0.2, "support_material": True, "perimeters": 3.0}
@@ -248,7 +262,7 @@ def test_a_key_the_base_does_not_carry_is_refused_by_name_and_nothing_is_written
         ({"intent": {"supports": True}, "base": tf.synthetic_config(support_material_auto=None)}, "support_material_auto"),
         ({"native": {"post_process": "x.sh"}}, "post_process is never written"),
         ({"native": {"printhost_apikey": "k"}}, "printhost_apikey is never written"),
-        ({"native": {"start_gcode": "G28\nG29"}}, "start_gcode has a line break"),
+        ({"native": {"start_gcode": "G28 ; home \\"}}, "start_gcode ends in a lone backslash"),
     ]
     for fields, said in cases:
         source = tf.write_ini(tmp_path / "special.ini", fields.pop("base")) if "base" in fields else base

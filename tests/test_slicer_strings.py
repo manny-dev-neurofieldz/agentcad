@@ -11,6 +11,19 @@ SAVED = [
     (";x", ["", "x"]),
     ('""', [""]),
     ("", []),
+    ('"real\ttab";escttab;"q\\"z";"cr\\rx"', ["real\ttab", "escttab", 'q"z', "cr\rx"]),
+]
+
+#: (written, held): written is the spelling PrusaSlicer 2.9.6 saves for a single string setting holding ``held``
+#: (start_gcode, notes, printer_notes); what it holds was read from the start G-code a real slice emitted.
+SINGLE_SAVED = [
+    ("line1\\nline2", "line1\nline2"),
+    ('say "hi" and "esc"', 'say "hi" and "esc"'),
+    ("C:\\\\path", "C:\\path"),
+    ("real\ttab", "real\ttab"),
+    ("cr\\rhere", "cr\rhere"),
+    ('"; quoted whole"', '"; quoted whole"'),
+    ("", ""),
 ]
 
 
@@ -25,6 +38,20 @@ def test_a_list_reads_and_writes_the_way_the_slicer_saves_it(written, items):
 def test_a_list_written_loosely_reads_as_the_slicer_reads_it(loaded, items):
     """The slicer loaded these and saved them as the spellings above."""
     assert ss.split_list(loaded) == items
+
+
+@pytest.mark.parametrize("written,held", SINGLE_SAVED)
+def test_a_single_string_reads_and_writes_the_way_the_slicer_saves_it(written, held):
+    assert ss.unescape(written) == held
+    assert ss.escape_single(held) == written
+
+
+@pytest.mark.parametrize("loaded,held", [("tab\\there", "tabthere"), ('say \\"esc\\"', 'say "esc"'),
+                                         ("C:\\path", "C:path"), ("mid\\ space", "mid space"), ("x\\;y", "x;y")])
+def test_a_single_string_written_loosely_reads_as_the_slicer_reads_it(loaded, held):
+    """The slicer loaded these and held (and saved) the text on the right: an escape it does not know, \\t
+    included, is the escaped character itself."""
+    assert ss.unescape(loaded) == held
 
 
 def test_a_lone_backslash_at_the_end_is_kept():

@@ -140,9 +140,19 @@ def _spelled_like(key: str, value: Any, base_value: str) -> str:
     """``value`` as PrusaSlicer spells this setting. A list of strings (filament_notes, filament_settings_id, ...;
     agentcad.gcode.slicer_strings) is written as its items, one per element of a TOML list or the one value, each
     quoted and escaped only when it needs to be: written bare, an empty value reads as no items and the slice fails
-    where the start G-code indexes it. A value given already quoted, and any other setting, are written as given."""
+    where the start G-code indexes it. A value given already quoted is written as given. Any other setting with a
+    line break in it is plain text (a multi-line start_gcode) and is written as the slicer writes a single string,
+    its breaks and backslashes escaped; without one it is written as given, so a value copied from a configuration,
+    where a break is already the two characters \\n, is not escaped twice. TargetError for a value the slicer would
+    refuse: one that ends in a lone backslash."""
     if not slicer_strings.is_string_list(key, base_value):
-        return canonical(value)
+        text = canonical(value)
+        if "\n" in text or "\r" in text:
+            return slicer_strings.escape_single(text)
+        if slicer_strings.ends_in_lone_backslash(text):
+            raise TargetError(f"{key} ends in a lone backslash, which PrusaSlicer refuses to load; write \\\\ for "
+                              f"a backslash, or give the text with real line breaks to have it escaped")
+        return text
     if isinstance(value, (list, tuple)):
         return slicer_strings.join_list([canonical(v) for v in value])
     text = canonical(value)
