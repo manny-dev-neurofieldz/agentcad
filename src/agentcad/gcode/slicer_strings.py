@@ -1,9 +1,11 @@
 """How PrusaSlicer spells string settings in a configuration, read and written the same way everywhere.
 
-A single string setting (start_gcode, printer_notes) is written bare, with its line breaks, quotes and backslashes
-escaped. A list of strings (one item per extruder: filament_notes, filament_settings_id, filament_type, ...) is
-written as its items joined by semicolons, each item quoted and escaped only when it needs to be. Measured on
-PrusaSlicer 2.9.6, by loading a configuration and saving it back:
+A single string setting (start_gcode, printer_notes) is written bare, with its line breaks and backslashes escaped
+and its quotes and tabs as they are. A list of strings (one item per extruder: filament_notes, filament_settings_id,
+filament_type, ...) is written as its items joined by semicolons, each item quoted and escaped only when it needs to
+be. Both are read the same way: \\n and \\r are a line feed and a carriage return, any other escaped character is
+itself (\\t is the letter t, not a tab). Measured on PrusaSlicer 2.9.6, by loading a configuration and saving it
+back, and by the start G-code a slice emitted:
 
     "first; with \\"quote\\"";"second\\\\path"   saved unchanged
     "a" ; "b"                                  saved as  a;b
@@ -11,11 +13,16 @@ PrusaSlicer 2.9.6, by loading a configuration and saving it back:
     "";"x"                                     saved as  ;x            (an empty item among others is bare)
     ""                                         saved as  ""            (one empty item, told from no items)
     (nothing)                                  saved as  (nothing)     (no items)
+    "<tab>";"esc\\ttab"                        saved as  "<tab>";escttab   (a real tab quoted, kept raw)
+    single: say \\"hi\\" tab\\there C:\\path     saved as  say "hi" tabthere C:path
+    single: "; quoted whole"                   held with its quotes
+    single: ends in a lone backslash           refused (Invalid value provided)
 """
 from typing import List
 
-_ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
-_WRITTEN = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+_ESCAPES = {"n": "\n", "r": "\r"}
+_WRITTEN = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r"}
+_WRITTEN_SINGLE = {"\\": "\\\\", "\n": "\\n", "\r": "\\r"}
 
 #: Settings PrusaSlicer keeps as a list of strings. A one-word value of one of these is written bare, so the base
 #: configuration's spelling alone cannot tell such a setting from a single string.
@@ -26,8 +33,8 @@ STRING_LISTS = frozenset({
 
 
 def unescape(text: str) -> str:
-    """Backslash escapes read: \\n, \\r and \\t as their characters, any other escaped character as itself. A lone
-    backslash at the very end is kept, not dropped."""
+    """Backslash escapes read: \\n and \\r as their characters, any other escaped character (\\t included) as
+    itself. A lone backslash at the very end is kept, not dropped."""
     out, i = [], 0
     while i < len(text):
         c = text[i]
@@ -41,7 +48,19 @@ def unescape(text: str) -> str:
 
 
 def escape(text: str) -> str:
+    """One item of a list of strings, escaped as the slicer escapes it inside quotes; a tab stays a tab."""
     return "".join(_WRITTEN.get(c, c) for c in text)
+
+
+def escape_single(text: str) -> str:
+    """A single string setting as the slicer writes it: line breaks and backslashes escaped, quotes and tabs as
+    they are."""
+    return "".join(_WRITTEN_SINGLE.get(c, c) for c in text)
+
+
+def ends_in_lone_backslash(written: str) -> bool:
+    """Whether a written value ends in a backslash that escapes nothing, which the slicer refuses to load."""
+    return (len(written) - len(written.rstrip("\\"))) % 2 == 1
 
 
 def split_list(written: str) -> List[str]:
