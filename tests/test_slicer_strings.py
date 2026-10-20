@@ -46,6 +46,14 @@ def test_a_single_string_reads_and_writes_the_way_the_slicer_saves_it(written, h
     assert ss.escape_single(held) == written
 
 
+@pytest.mark.parametrize("written,refused", [("trail\\", True), ("trail\\\\", False), ("trail\\\\\\", True),
+                                             ("trail", False), ("", False), ("\\\\", False)])
+def test_only_a_backslash_that_escapes_nothing_ends_a_value_the_slicer_refuses(written, refused):
+    """PrusaSlicer 2.9.6 loaded printer_notes = trail\\\\ (an escaped backslash) and refused trail\\ and trail\\\\\\
+    (Invalid value provided): the count of trailing backslashes decides, not whether there is one."""
+    assert ss.ends_in_lone_backslash(written) is refused
+
+
 @pytest.mark.parametrize("loaded,held", [("tab\\there", "tabthere"), ('say \\"esc\\"', 'say "esc"'),
                                          ("C:\\path", "C:path"), ("mid\\ space", "mid space"), ("x\\;y", "x;y")])
 def test_a_single_string_written_loosely_reads_as_the_slicer_reads_it(loaded, held):
