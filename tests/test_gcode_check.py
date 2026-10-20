@@ -52,6 +52,29 @@ def test_a_quoted_string_setting_is_read_the_way_the_slicer_writes_it():
     assert check.check({"start_gcode": '"M104 S200\\nG28"'}, {"start_gcode": "M104 S200\nG28"}, "t")[0].severity == "ok"
 
 
+#: printer_notes as PrusaSlicer 2.9.6 wrote it into the golden pair's slice (tests/data/golden_pair/peg.bgcode): a single
+#: string setting, written bare, its line breaks escaped.
+PRINTER_NOTES_AS_WRITTEN = (
+    r"""Don't remove the following keywords! These keywords are used in the "compatible printer" condition of the """
+    r"""print and filament profiles to link the particular print and filament profiles to this printer profile.\n"""
+    r"""PRINTER_MODEL_MK4IS\nPG""")
+
+
+def test_a_bare_string_setting_is_read_the_way_the_slicer_writes_it_too():
+    """A single string setting (start_gcode, printer_notes) is written without quotes but with the same escapes, so
+    the text asked for, with real line breaks, matches the value as the slicer wrote it. What is asked for stays
+    plain text: a backslash in it is a backslash."""
+    asked = ("Don't remove the following keywords! These keywords are used in the \"compatible printer\" condition of "
+             "the print and filament profiles to link the particular print and filament profiles to this printer "
+             "profile.\nPRINTER_MODEL_MK4IS\nPG")
+    found = {"printer_notes": PRINTER_NOTES_AS_WRITTEN, "start_gcode": r"M17 ; enable steppers\nG28",
+             "post_process_notes": r"C:\\tools\\run.bat"}
+    intent = {"printer_notes": asked, "start_gcode": "M17 ; enable steppers\nG28", "post_process_notes": r"C:\tools\run.bat"}
+    assert {f.key: f.severity for f in check.check(found, intent, "t")} == {
+        "printer_notes": "ok", "start_gcode": "ok", "post_process_notes": "ok"}
+    assert check.check({"start_gcode": r"M17\nG28"}, {"start_gcode": "M17\nG29"}, "t")[0].severity == "error"
+
+
 def test_private_keys_are_never_checked_or_echoed():
     findings = check.check({"printhost_apikey": "secret"}, {"printhost_apikey": "x"}, "t")
     assert findings == []
