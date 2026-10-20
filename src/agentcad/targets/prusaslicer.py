@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agentcad import printers
+from agentcad.gcode import slicer_strings
 from agentcad.targets import Job, OutputTarget, TargetError, Written, canonical, generic, layer_native
 from agentcad.targets import prusaslicer_3mf as project
 from agentcad.targets import prusaslicer_config as pconfig
@@ -132,18 +133,22 @@ def _text(key: str, spec: Any, base: Dict[str, str], notes: List[str]) -> Option
     if value is None:
         notes.append(f"{key}: a range or a reason without a value is a check for gcode check, not a setting; not written")
         return None
-    return _spelled_like(canonical(value), base[key])
+    return _spelled_like(key, value, base[key])
 
 
-def _spelled_like(text: str, base_value: str) -> str:
-    """``text`` in the form the base configuration writes this setting. PrusaSlicer writes a list-of-strings
-    setting (filament_notes, filament_settings_id, ...) with each value quoted and a quote or backslash inside it
-    escaped: a value written bare there, the empty one above all, reads as an empty list and the slice fails where
-    the start G-code indexes it. A value already quoted, or a setting the base writes bare, is written as given."""
-    quoted = len(base_value) >= 2 and base_value.startswith('"') and base_value.endswith('"')
-    if not quoted or (len(text) >= 2 and text.startswith('"') and text.endswith('"')):
-        return text
-    return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
+def _spelled_like(key: str, value: Any, base_value: str) -> str:
+    """``value`` as PrusaSlicer spells this setting. A list of strings (filament_notes, filament_settings_id, ...;
+    agentcad.gcode.slicer_strings) is written as its items, one per element of a TOML list or the one value, each
+    quoted and escaped only when it needs to be: written bare, an empty value reads as no items and the slice fails
+    where the start G-code indexes it. A value given already quoted, and any other setting, are written as given."""
+    if not slicer_strings.is_string_list(key, base_value):
+        return canonical(value)
+    if isinstance(value, (list, tuple)):
+        return slicer_strings.join_list([canonical(v) for v in value])
+    text = canonical(value)
+    if len(text) >= 2 and text.startswith('"') and text.endswith('"'):
+        return text                                    # already in the slicer's own spelling
+    return slicer_strings.join_list([text])
 
 
 def resolve(job: Job, base: Dict[str, str]) -> Resolved:

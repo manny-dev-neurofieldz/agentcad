@@ -219,6 +219,17 @@ def test_a_setting_the_base_writes_quoted_is_written_quoted_the_empty_value_too(
     assert targets.get_target(PRUSA).read_settings(project)["filament_notes"] == '""'
 
 
+def test_a_list_of_strings_is_written_item_by_item_the_way_the_slicer_saves_it(tmp_path, stl):
+    """A TOML list becomes one item per element, joined by semicolons and quoted only where the slicer quotes; a
+    one-word value of a list setting is written bare, as the slicer writes it, even over a bare base."""
+    base = tf.write_ini(tmp_path / "lists.ini", tf.synthetic_config(filament_notes='"the base note"'))
+    native = {"filament_notes": ["first note", "second"], "filament_type": "PETG"}
+    settings = ps.resolve(job_for(stl, base, native=native), pconfig.load(base)).settings
+    assert settings["filament_notes"] == '"first note";second' and settings["filament_type"] == "PETG"
+    empty = ps.resolve(job_for(stl, base, native={"filament_type": ""}), pconfig.load(base)).settings
+    assert empty["filament_type"] == '""'                    # bare it would read as no items at all
+
+
 def test_a_native_value_over_the_intent_wins_and_is_reported_with_both_values(tmp_path, stl, base):
     intent = {"layer_height": 0.15, "supports": True, "walls": 3}
     native = {"layer_height": 0.2, "support_material": True, "perimeters": 3.0}
