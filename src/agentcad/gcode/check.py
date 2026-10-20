@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from agentcad.config import tomllib
 from agentcad.findings import FIX_DIFFERS, FIX_MISSING, Finding   # Finding: callers import it from here too
-from agentcad.gcode import bgcode
+from agentcad.gcode import bgcode, slicer_strings
 
 #: Settings worth printing when a project declares no intent.
 KEY_SETTINGS = (
@@ -166,18 +166,7 @@ def _num(v: Any) -> Optional[float]:
         return None
 
 
-_ESCAPES = {"n": "\n", "r": "\r", "t": "\t"}
-
-
-def _unescape(s: str) -> str:
-    out, chars = [], iter(s)
-    for c in chars:
-        if c == "\\":
-            nxt = next(chars, "")
-            out.append(_ESCAPES.get(nxt, nxt))
-        else:
-            out.append(c)
-    return "".join(out)
+_unescape = slicer_strings.unescape
 
 
 def _quoted(s: str) -> bool:
@@ -196,6 +185,8 @@ def _text(value: Any, written: bool = False) -> str:
 
 
 def _same(found: str, want: Any) -> bool:
+    if isinstance(want, (list, tuple)) and want and all(isinstance(w, str) for w in want):
+        return slicer_strings.split_list(str(found)) == list(want)     # a list of strings, item by item
     if isinstance(want, bool):
         want = int(want)
     a, b = _num(found), _num(want)
