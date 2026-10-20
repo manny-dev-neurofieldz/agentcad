@@ -244,6 +244,14 @@ def test_a_multi_line_single_string_is_written_the_way_the_slicer_saves_it(tmp_p
         "start_gcode": "ok", "end_gcode": "ok"}
 
 
+def test_a_value_ending_in_an_escaped_backslash_is_written_as_given(tmp_path, stl, base):
+    """Only a backslash that escapes nothing is refused; one copied from a configuration as \\\\ is a backslash."""
+    settings = ps.resolve(job_for(stl, base, native={"end_gcode": "M84 ; C:\\\\"}), pconfig.load(base)).settings
+    assert settings["end_gcode"] == "M84 ; C:\\\\"
+    with pytest.raises(TargetError, match="end_gcode ends in a lone backslash"):
+        ps.resolve(job_for(stl, base, native={"end_gcode": "M84 ; C:\\\\\\"}), pconfig.load(base))
+
+
 def test_a_native_value_over_the_intent_wins_and_is_reported_with_both_values(tmp_path, stl, base):
     intent = {"layer_height": 0.15, "supports": True, "walls": 3}
     native = {"layer_height": 0.2, "support_material": True, "perimeters": 3.0}
