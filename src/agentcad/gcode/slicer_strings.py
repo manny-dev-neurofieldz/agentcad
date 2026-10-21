@@ -31,11 +31,15 @@ STRING_LISTS = frozenset({
     "extruder_colour", "filament_start_gcode", "filament_end_gcode", "filament_ramming_parameters",
     "compatible_printers", "compatible_prints"})
 
-#: Settings PrusaSlicer keeps as one string (the G-code templates and the notes), as the golden pair's embedded
-#: configuration writes them: bare, never as a list. Such a value that starts and ends with a quote holds those quotes.
+#: Settings PrusaSlicer keeps as one string (the G-code templates, the notes, the output file name), as the golden
+#: pair's embedded configuration writes them: bare, never as a list. Such a value that starts and ends with a quote
+#: holds those quotes. The list is pinned to the golden pair's keys (tests/test_slicer_strings.py); left out there:
+#: binary_gcode and thumbnails_format (a switch and a choice, not text), post_process (never written or checked),
+#: and start_filament_gcode and end_filament_gcode (lists, one item per extruder).
 SINGLE_STRINGS = frozenset({
     "start_gcode", "end_gcode", "before_layer_gcode", "layer_gcode", "toolchange_gcode", "between_objects_gcode",
-    "color_change_gcode", "pause_print_gcode", "template_custom_gcode", "printer_notes", "notes"})
+    "color_change_gcode", "pause_print_gcode", "template_custom_gcode", "printer_notes", "notes",
+    "output_filename_format"})
 
 
 def unescape(text: str) -> str:
@@ -117,5 +121,8 @@ def join_list(items: List[str]) -> str:
 
 def is_string_list(key: str, written: str) -> bool:
     """Whether a setting is a list of strings: a key PrusaSlicer keeps as one, or a value written with a quoted
-    item. A semicolon alone says nothing: a single string such as start_gcode carries G-code comments."""
+    item. A semicolon alone says nothing: a single string such as start_gcode carries G-code comments. A single
+    string never is one, even quoted: ``end_gcode = "; done"`` holds its quotes."""
+    if key in SINGLE_STRINGS:
+        return False
     return key in STRING_LISTS or written.strip().startswith('"')
