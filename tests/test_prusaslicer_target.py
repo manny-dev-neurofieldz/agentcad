@@ -252,6 +252,15 @@ def test_a_value_ending_in_an_escaped_backslash_is_written_as_given(tmp_path, st
         ps.resolve(job_for(stl, base, native={"end_gcode": "M84 ; C:\\\\\\"}), pconfig.load(base))
 
 
+def test_a_single_string_over_a_quoted_base_is_written_bare_and_checks_ok(tmp_path, stl):
+    """A base holding end_gcode quoted whole (the slicer holds those quotes) does not make end_gcode a list: the
+    text asked for is written as given, not quoted as a list item, and gcode check finds what was asked."""
+    base = tf.write_ini(tmp_path / "quoted_end.ini", tf.synthetic_config(end_gcode='"; MARK3 quoted whole"'))
+    settings = ps.resolve(job_for(stl, base, native={"end_gcode": "G28 X"}), pconfig.load(base)).settings
+    assert settings["end_gcode"] == "G28 X"
+    assert check.check(settings, {"end_gcode": "G28 X"}, "t")[0].severity == "ok"
+
+
 def test_a_native_value_over_the_intent_wins_and_is_reported_with_both_values(tmp_path, stl, base):
     intent = {"layer_height": 0.15, "supports": True, "walls": 3}
     native = {"layer_height": 0.2, "support_material": True, "perimeters": 3.0}
