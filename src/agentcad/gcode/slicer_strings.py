@@ -31,6 +31,12 @@ STRING_LISTS = frozenset({
     "extruder_colour", "filament_start_gcode", "filament_end_gcode", "filament_ramming_parameters",
     "compatible_printers", "compatible_prints"})
 
+#: Settings PrusaSlicer keeps as one string (the G-code templates and the notes), as the golden pair's embedded
+#: configuration writes them: bare, never as a list. Such a value that starts and ends with a quote holds those quotes.
+SINGLE_STRINGS = frozenset({
+    "start_gcode", "end_gcode", "before_layer_gcode", "layer_gcode", "toolchange_gcode", "between_objects_gcode",
+    "color_change_gcode", "pause_print_gcode", "template_custom_gcode", "printer_notes", "notes"})
+
 
 def unescape(text: str) -> str:
     """Backslash escapes read: \\n and \\r as their characters, any other escaped character (\\t included) as
