@@ -93,8 +93,9 @@ def _files(with_marketplace: bool) -> Dict[str, bytes]:
 
 
 def _clear(out: Path) -> None:
-    """Make ``out`` ready for an export: missing or empty, or an earlier export, which is removed. Anything else in
-    it is refused by name, so an export never deletes what it did not write."""
+    """Make ``out`` ready for an export: missing or empty, or an earlier export, which is removed. At the top of
+    ``out`` an export owns only the four entries it writes, and anything else there is refused by name; inside
+    those entries everything is the export's, so a file added there by hand is removed with the rest."""
     if not out.exists():
         return
     if not out.is_dir():
@@ -117,13 +118,15 @@ def _clear(out: Path) -> None:
 
 
 def export(out: Union[str, Path], target: str = "claude-code", with_marketplace: bool = False) -> List[Path]:
-    """Write the plugin for ``target`` into ``out``; the files written, in order. PluginError says what is wrong
-    before anything is removed or written."""
+    """Write the plugin for ``target`` into ``out``; the files written, in order. A refusal (PluginError) is said
+    before anything is removed or written; a failure while writing (a full disk) can leave a partial export, which
+    the next export replaces. A folder ``out`` that already existed keeps its own mode."""
     if target not in TARGETS:
         raise PluginError(f"no plugin target {target!r} (there is: {', '.join(TARGETS)})")
     out = Path(out)
     files = _files(with_marketplace)
     _clear(out)
+    created = not out.exists()
     written = []
     for rel in sorted(files):
         path = out / rel
@@ -131,10 +134,9 @@ def export(out: Union[str, Path], target: str = "claude-code", with_marketplace:
         path.write_bytes(files[rel])
         path.chmod(0o644)
         written.append(path)
-    for folder in sorted({p.parent for p in written} | {out}):
-        while True:
-            folder.chmod(0o755)
-            if folder == out or folder.parent == folder:
-                break
-            folder = folder.parent
+    inside = {parent for p in written for parent in p.relative_to(out).parents if str(parent) != "."}
+    for folder in sorted(inside):
+        (out / folder).chmod(0o755)
+    if created:
+        out.chmod(0o755)
     return written

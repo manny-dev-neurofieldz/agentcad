@@ -74,6 +74,21 @@ def test_an_earlier_export_is_replaced_whole_so_a_stale_skill_does_not_survive(t
     plugin.export(out)
     assert not stale.exists() and not (out / ".claude-plugin/marketplace.json").exists()
     assert (out / "skills" / _shipped_skills()[0] / "SKILL.md").is_file()
+    (out / "agents" / "my-agent.md").write_text("added by hand")   # inside the four entries everything is the export's
+    plugin.export(out)
+    assert not (out / "agents" / "my-agent.md").exists()
+
+
+def test_a_folder_that_already_exists_keeps_its_own_mode(tmp_path):
+    out = tmp_path / "plug"
+    out.mkdir(mode=0o700)
+    out.chmod(0o700)
+    plugin.export(out)
+    assert stat.S_IMODE(out.stat().st_mode) == 0o700
+    assert stat.S_IMODE((out / "skills").stat().st_mode) == 0o755
+    fresh = tmp_path / "fresh"
+    plugin.export(fresh)
+    assert stat.S_IMODE(fresh.stat().st_mode) == 0o755
 
 
 @pytest.mark.parametrize("setup,said", [

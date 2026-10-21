@@ -51,7 +51,7 @@ An export holds no code, no command, no permission rule and no server. The skill
 
 `agentcad plugin export --target claude-code -o DIR` writes the plugin into `DIR` (`-o` and `--output` are the same flag); `--target` is required and `claude-code` is the only target. `--marketplace` adds the marketplace manifest. It prints the files written and the commands that check and load the plugin.
 
-`DIR` may be missing, empty, or an earlier export: an earlier export (only the four entries above, its `plugin.json` naming `agentcad`) is removed and written again, so a stale skill never survives a re-export. A folder holding anything else is refused by name, as is a folder whose files look like an export but whose manifest names another plugin: an export never deletes what it did not write. A refusal is one `Error:` line on stderr, exit status 2, and nothing is removed or written.
+`DIR` may be missing, empty, or an earlier export: an earlier export (only the four entries above, its `plugin.json` naming `agentcad`) is removed and written again, so a stale skill never survives a re-export. Everything inside those four entries belongs to the export, so a file added there by hand is removed with the rest (section 5). Anything else at the top of `DIR` is refused by name, as is a folder whose files look like an export but whose manifest names another plugin, so an export never deletes a file beside its own. A refusal is one `Error:` line on stderr, exit status 2, and nothing is removed or written; a failure while writing (a full disk) can leave a partial export, which the next export replaces. A `DIR` that already existed keeps its own mode.
 
 ## 3 Checking and Using It
 
