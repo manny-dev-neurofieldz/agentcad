@@ -768,6 +768,7 @@ EXEMPT = {
     ("config-show",): "reads no input (the current folder's config)",
     ("printers",): "reads no input",
     ("targets",): "reads no input",
+    ("plugin", "export"): "reads no input: it writes the package's own skills and agent; held in test_plugin_export",
     ("policy", "list"): "reads no input",
     ("policy", "navigate"): "one kind of input: a policy name",
     ("policy", "read"): "one kind of input: a policy name",
