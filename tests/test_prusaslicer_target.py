@@ -520,15 +520,16 @@ def test_stage_writes_a_project_and_reports_conflicts_and_what_it_did_not_map(tm
     assert "prusaslicer" in out and "write_job, slice, read_output, map_intent, printer_config" in out
 
 
-def test_stage_writes_an_assembly_as_named_objects_with_their_quantities(tmp_path, monkeypatch, capsys, base):
-    from agentcad.gcode import supports
+def staged_assembly(tmp_path, monkeypatch, capsys, parts):
+    """A finalized assembly of fake box parts, ``parts`` as (name, "x, y, z" size, quantity), for the synthetic
+    200 x 180 mm printer."""
     monkeypatch.setattr(cli, "_engine_for", lambda name, cfg: FakeBoxEngine())
     parent = tmp_path / "designs" / "asm"
     parent.mkdir(parents=True)
     (parent / "agentcad.toml").write_text(
         f'[project]\nname = "asm"\nengine = "fake"\nparts = ["parts/*"]\n[output]\nbase_dir = "{tmp_path}"\n'
         'sub_dir = "designs"\n' + SMALL_PRINTER + '[qc]\nprinter = "synth"\n[print]\nlayer_height = 0.15\n')
-    for part, size, quantity in (("lid", "30, 20, 5", 1), ("peg", "8, 8, 20", 3)):
+    for part, size, quantity in parts:
         folder = parent / "parts" / part
         folder.mkdir(parents=True)
         (folder / "agentcad.toml").write_text(
@@ -539,12 +540,37 @@ def test_stage_writes_an_assembly_as_named_objects_with_their_quantities(tmp_pat
                      ["session", "finalize", str(folder)]):
             cli.main(argv)
     capsys.readouterr()
+    return parent
+
+
+def test_stage_writes_an_assembly_as_named_objects_with_their_quantities(tmp_path, monkeypatch, capsys, base):
+    from agentcad.gcode import supports
+    parent = staged_assembly(tmp_path, monkeypatch, capsys, (("lid", "30, 20, 5", 1), ("peg", "8, 8, 20", 3)))
     rc, out, err = run_cli(capsys, "stage", parent, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged")
     assert rc == 0 and "2 part(s), 4 instance(s)" in out, err
     objects = p3mf.read_model_config(tmp_path / "staged" / "asm.3mf")
     assert [(o["name"], o["instances"]) for o in objects.values()] == [("lid", 1), ("peg", 3)]
     assert [i["name"] for i in read_plate(tmp_path / "staged" / "asm.3mf")] == ["lid", "peg", "peg", "peg"]
     assert sorted(supports.load_placement(tmp_path / "staged" / "asm.placement.json")) == ["lid", "peg", "peg (2)", "peg (3)"]
+
+
+def test_an_assemblys_row_is_laid_edge_to_edge_and_centred_on_the_bed(tmp_path, monkeypatch, capsys, base):
+    """Parts of an assembly go in a row along y, 10 mm apart edge to edge, the whole row centred on the bed: a
+    150 mm deep lid and an 8 mm peg fit the 180 mm deep bed (150 + 10 + 8 = 168), where centring the first part
+    alone and stepping by its whole depth put the peg off the bed."""
+    parent = staged_assembly(tmp_path, monkeypatch, capsys, (("lid", "30, 150, 5", 1), ("peg", "8, 8, 20", 1)))
+    rc, out, err = run_cli(capsys, "stage", parent, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged")
+    assert rc == 0, err
+    spans = {}
+    for item, size in zip(read_plate(tmp_path / "staged" / "asm.3mf"), ((30, 150, 5), (8, 8, 20))):
+        T = item["transform"]
+        ys = [sum(T[1][j] * v for j, v in enumerate((x, y, z, 1.0)))
+              for x in (0, size[0]) for y in (0, size[1]) for z in (0, size[2])]
+        spans[item["name"]] = (min(ys), max(ys))
+    (lid0, lid1), (peg0, peg1) = spans["lid"], spans["peg"]
+    assert peg0 - lid1 == pytest.approx(10.0, abs=1e-6)                     # edge to edge, the stated gap
+    assert (lid0 + peg1) / 2 == pytest.approx(90.0, abs=1e-6)               # the row centred on the 180 mm bed
+    assert 0.0 <= lid0 and peg1 <= 180.0
 
 
 def test_stage_refuses_in_one_line_and_exit_status_2(tmp_path, monkeypatch, capsys, base):
