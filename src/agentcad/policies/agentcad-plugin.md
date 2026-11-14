@@ -1,4 +1,4 @@
-# Plugin Export: agentcad's Skills, Reviewer and Hooks in an Agent Harness
+# Plugin Export: agentcad's Know-How Written Out for an Agent Harness
 
 **Type**: Capability Policy (distribution)
 **Scope**: Any agent or person making agentcad's skills and reviewer agent available in an agent harness
@@ -7,13 +7,18 @@
 
 ## Purpose
 
-agentcad ships its know-how in the package: policies read through `agentcad policy`, skills that walk a workflow, and a reviewer agent. A harness finds skills and agents only where it looks for them. `agentcad plugin export` lays the shipped skills and the reviewer out as a plugin that a harness loads, so a session with no memory of agentcad can run its workflows. This policy says what the export holds, what its hooks tell or refuse a session, what it leaves to the installed command, and how to check it.
+agentcad ships its know-how in the package: policies read through `agentcad policy`, skills that walk a workflow, and a reviewer agent. A harness finds skills and agents only where it looks for them. `agentcad plugin export` writes that know-how out in a harness's own layout, so a session with no memory of agentcad can run its workflows: a plugin for Claude Code, a policy root for the MacEff framework (https://github.com/cversek/MacEff), an `AGENTS.md`, or tool definitions for a model API. Every target is generated from one bundle of the package's commands, policies, skills, reviewer agent and hooks, so the targets cannot disagree about what agentcad is. This policy says what the export holds, what its hooks tell or refuse a session, what it leaves to the installed command, and how to check it.
 
 ## CEP Navigation Guide
 
 **1 What an Export Holds**
 - Which files does an export write, and where do they come from?
 - What does an export never hold?
+
+**1.1 The Other Targets**
+- What does the policy root for MacEff hold, and which folder is mounted?
+- What does the AGENTS.md carry of a policy, and what does it leave in the command?
+- How does a tool call become a command line?
 
 **2 Exporting**
 - Which targets are there, and what does each flag do?
@@ -53,11 +58,19 @@ For the `claude-code` target an export writes:
 
 An export holds no agentcad code, no permission rule and no server; its one script, the runner, only calls the installed command. The skills call the `agentcad` command and read its policies, so the policies are never copied into the plugin, where they would go stale beside the installed ones. The same package always writes the same bytes: files in name order, JSON with sorted keys, files mode 0644 (the runner 0755) and folders 0755.
 
+### 1.1 The Other Targets
+
+Each of these also writes `agentcad-export.json` (the package's name, the target and the version), which is how a later export knows the folder is its own.
+
+- **`maceff`**: `policies/`, holding every policy the package ships, byte for byte, and a `README.md` beside it. `policies/` is the folder MacEff mounts as a policy root (`MACEFF_POLICY_ROOTS=agentcad=DIR/policies`); the note stays outside it so the root holds nothing but policies. The export is a copy and goes stale; the command also prints the installed package's own policy folder, which can be mounted where MacEff runs under the same Python and never goes stale.
+- **`agents-md`**: one `AGENTS.md` naming every skill with its moment, every command with its one-line help, and for every policy its commands and its navigation guide: the questions, not the answers. The answers stay in the command (`agentcad policy read NAME --section N`), so the file cannot contradict the install it points at.
+- **`api-tools`**: `tools.json`, one tool definition per leaf command (`name`, `description`, `input_schema`), and a `README.md` that says how a call becomes a command line. A tool's name is the command with underscores (`agentcad_probe_rays`); each property is one argument, named as the command names it, and its description ends with the option it stands for or `(positional)`. A boolean set true adds its option; a list repeats the option per item where the option repeats; positionals come last. `agentcad.bundle.argv_for` does this and refuses a name the command lacks or a required one left out. The definitions say what a command takes; when to use it is in the policies.
+
 ## 2 Exporting
 
-`agentcad plugin export --target claude-code -o DIR` writes the plugin into `DIR` (`-o` and `--output` are the same flag); `--target` is required and `claude-code` is the only target. `--marketplace` adds the marketplace manifest. It prints the files written and the commands that check and load the plugin.
+`agentcad plugin export --target claude-code -o DIR` writes the plugin into `DIR` (`-o` and `--output` are the same flag); `--target` is required: `claude-code`, `maceff`, `agents-md` or `api-tools`. `--marketplace` adds the marketplace manifest and belongs to `claude-code` only; with another target it is refused. The command prints the files written and how to check or use them.
 
-`DIR` may be missing, empty, or an earlier export: an earlier export (only the entries above, its `plugin.json` naming `agentcad`) is removed and written again, so a stale skill never survives a re-export. Everything inside those entries belongs to the export, so a file added there by hand is removed with the rest (section 5). Anything else at the top of `DIR` is refused by name, as is a folder whose files look like an export but whose manifest names another plugin, so an export never deletes a file beside its own. A refusal is one `Error:` line on stderr, exit status 2, and nothing is removed or written; a failure while writing (a full disk) can leave a partial export, which the next export replaces. A `DIR` that already existed keeps its own mode.
+`DIR` may be missing, empty, or an earlier export for the same target: an earlier export (only the entries that target writes, its `plugin.json` or its `agentcad-export.json` naming `agentcad` and the target) is removed and written again, so a stale skill never survives a re-export. Everything inside those entries belongs to the export, so a file added there by hand is removed with the rest (section 5). Anything else at the top of `DIR` is refused by name, as is a folder whose files look like an export but whose manifest names another plugin or another target, so an export never deletes a file beside its own. A refusal is one `Error:` line on stderr, exit status 2, and nothing is removed or written; a failure while writing (a full disk) can leave a partial export, which the next export replaces. A `DIR` that already existed keeps its own mode.
 
 ## 3 Checking and Using It
 
@@ -65,7 +78,9 @@ An export holds no agentcad code, no permission rule and no server; its one scri
 
 The hooks show in such a session's events: a `hook_response` for SessionStart, and a refused edit comes back to the model as the tool's error with the library's practice in it. A check started from inside another harness session also loads that session's own user-level hooks, which then act on the check; `--setting-sources project,local` leaves them out.
 
-The plugin is only as current as the `agentcad` command where it runs: install agentcad there, at the version the plugin's manifest names, and re-export after upgrading.
+A `maceff` export is checked by mounting it: with the variable set, `macf_tools policy list` shows the `agentcad-` policies under their root and `macf_tools policy navigate agentcad:NAME` reads one. An `api-tools` export is checked by passing a tool's input through `agentcad.bundle.argv_for` and running the result.
+
+An export is only as current as the `agentcad` command where it runs: install agentcad there, at the version the plugin's manifest names, and re-export after upgrading.
 
 ## 4 The Hooks
 
@@ -100,7 +115,8 @@ Where no `agentcad` command is on PATH the runner says so once, at session start
 
 - **Editing an export**: an edit is lost at the next export and differs from what the package ships; change the skill in agentcad.
 - **A plugin without the command**: the skills name `agentcad` commands; without the install they fail at their first step.
-- **Copying policies into the plugin**: a copy stops changing when agentcad does.
+- **Copying policies into the plugin**: a copy stops changing when agentcad does. The `maceff` copy has the same weakness, said in its own note; mount the installed folder where that is possible.
+- **Treating a tool definition as guidance**: a schema says what a command accepts, not when it is the right command; a model given the tools without the policies will call them plausibly and wrongly.
 - **Reading the guard as protection**: it refuses an edit tool, not a program; a library that must not change needs file permissions or review.
 
 ## 7 Evolution and Feedback
