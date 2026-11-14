@@ -6,8 +6,12 @@ import sys
 from agentcad import policy as pol
 
 
+#: The policy an arriving agent reads first: agentcad by goal. ``policy list`` prints it before the others.
+FIRST = pol.PREFIX + "start"
+
+
 def cmd_policy_list(args):
-    policies = pol.all_policies()
+    policies = sorted(pol.all_policies(), key=lambda p: p.name != FIRST)
     if args.json:
         print(json.dumps([{"name": p.name, "title": p.title, "type": p.header.get("Type", ""),
                            "status": p.header.get("Status", ""),
@@ -22,7 +26,8 @@ def cmd_policy_list(args):
         governs = ", ".join(" ".join(c) for c in p.commands) or "(practice; no command)"
         print(f"{p.name:<{width}}  {p.title}")
         print(f"{'':<{width}}  governs: {governs}")
-    print("\nNext: agentcad policy navigate NAME (its questions), then agentcad policy read NAME --section N")
+    print("\nNew here: agentcad policy navigate start (agentcad by goal). Then agentcad policy navigate NAME "
+          "(its questions), then agentcad policy read NAME --section N")
     return 0
 
 

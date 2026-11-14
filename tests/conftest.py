@@ -22,6 +22,14 @@ _IMPORTED = Path(agentcad.__file__).resolve()
 if (_HERE / "agentcad").is_dir() and _HERE not in _IMPORTED.parents:
     pytest.exit(f"these tests belong to {_HERE.parent} but import agentcad from {_IMPORTED.parent}; "
                 f"set PYTHONPATH={_HERE} (or reinstall from this checkout) and run again", returncode=4)
+# The engines build in worker processes, which start in the working folder of the command. A relative PYTHONPATH
+# (PYTHONPATH=src) does not reach them from a scratch folder, and they then import whatever agentcad the user site
+# holds, another checkout's. Give them this tree by its absolute path.
+if (_HERE / "agentcad").is_dir():
+    import os
+
+    _paths = [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p and Path(p).resolve() != _HERE]
+    os.environ["PYTHONPATH"] = os.pathsep.join([str(_HERE)] + _paths)
 
 # One minimal parametric source per engine. Each takes a `size` parameter so
 # the contract test can prove that `-D size=...` reaches the model.

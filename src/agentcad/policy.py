@@ -157,3 +157,117 @@ def line_range(text: str, spec: str) -> Tuple[int, List[str]]:
 
 def numbered(first: int, lines: List[str]) -> str:
     return "\n".join(f"{n:4d}| {line}" for n, line in enumerate(lines, first))
+
+
+# --- the enabling pattern: sections every policy carries, and the recipes CI runs ---------------
+
+#: The heading above the navigation guide that says when to reach for a capability (shown by navigate).
+REACHING = "Reaching for It"
+#: The two numbered content sections the enabling pattern adds, in this order, before integration.
+PATTERN_SECTIONS = ("Recipes", "Constraints to Probe")
+#: The first line of a fenced ``console`` block that is a recipe, and the workspaces a recipe may name.
+RECIPE_MARK = "# recipe:"
+WORKSPACES = ("examples", "empty")
+#: Diagram kinds a policy may draw in a ``mermaid`` block (the ones a code host renders).
+MERMAID_KINDS = ("flowchart", "graph", "sequenceDiagram", "stateDiagram-v2", "stateDiagram")
+
+
+@dataclass
+class Step:
+    """One command of a recipe: the words after ``$ agentcad``, the exit status it must end with, and the lines
+    its output must show, in order (``...`` inside a line stands for any text)."""
+    argv: List[str]
+    exit: int = 0
+    expect: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Recipe:
+    policy: str
+    line: int
+    workspace: str
+    steps: List[Step]
+
+
+def _fences(text: str) -> List[Tuple[int, str, List[str]]]:
+    """(line number of the opening fence, info string, body lines) of every fenced block."""
+    out, lines, i = [], text.split("\n"), 0
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith("```") or line.startswith("~~~"):
+            marker, info, body, j = line[:3], line[3:].strip(), [], i + 1
+            while j < len(lines) and not lines[j].startswith(marker):
+                body.append(lines[j])
+                j += 1
+            out.append((i + 1, info, body))
+            i = j + 1
+        else:
+            i += 1
+    return out
+
+
+def recipes(policy: Policy) -> List[Recipe]:
+    """The recipes in a policy: ``console`` blocks whose first line is ``# recipe: WORKSPACE``. A ``$ agentcad``
+    line is a step; the lines under it until the next step are what its output must show, except ``# exit N``
+    (the status it must end with, 0 when not said) and other ``#`` lines, which are commentary. The output a step
+    is matched against is its stdout followed by its stderr, so a refusal's message comes after any printed lines.
+    A malformed
+    recipe is a PolicyError naming the policy and line, so a recipe that would test nothing cannot pass."""
+    import shlex
+
+    found = []
+    for at, info, body in _fences(policy.text):
+        if not body or not body[0].startswith(RECIPE_MARK):
+            continue
+        if info != "console":           # a recipe under another fence would be skipped, and test nothing
+            raise PolicyError(f"{policy.name} line {at}: a recipe goes in a `console` fence, not {info or 'a bare'!r}")
+        workspace = body[0][len(RECIPE_MARK):].strip()
+        if workspace not in WORKSPACES:
+            raise PolicyError(f"{policy.name} line {at}: recipe workspace {workspace!r} is not one of "
+                              f"{', '.join(WORKSPACES)}")
+        steps: List[Step] = []
+        for n, line in enumerate(body[1:], at + 2):
+            if line.startswith("$ "):
+                words = shlex.split(line[2:])
+                if not words or words[0] != "agentcad":
+                    raise PolicyError(f"{policy.name} line {n}: a recipe step runs agentcad, not {line[2:]!r}")
+                steps.append(Step(words[1:]))
+            elif not steps:
+                if line.strip() and not line.startswith("#"):
+                    raise PolicyError(f"{policy.name} line {n}: output before the first step")
+            elif line.startswith("# exit "):
+                said = line[len("# exit "):].strip()
+                if not said.isdigit():
+                    raise PolicyError(f"{policy.name} line {n}: '# exit' takes a number, not {said!r}")
+                steps[-1].exit = int(said)
+            elif line.strip() and not line.startswith("#"):
+                if not line.replace("...", "").strip():
+                    raise PolicyError(f"{policy.name} line {n}: an expected line of only '...' matches any output")
+                steps[-1].expect.append(line.strip())
+        if not steps:
+            raise PolicyError(f"{policy.name} line {at}: a recipe with no step")
+        if not any(s.expect for s in steps):
+            raise PolicyError(f"{policy.name} line {at}: a recipe that expects no output tests nothing")
+        found.append(Recipe(policy.name, at, workspace, steps))
+    return found
+
+
+def mermaid_blocks(policy: Policy) -> List[Tuple[int, List[str]]]:
+    """(line, body) of every ``mermaid`` block in a policy."""
+    return [(at, body) for at, info, body in _fences(policy.text) if info == "mermaid"]
+
+
+def expect_matches(expected: List[str], output: str) -> Optional[str]:
+    """None when every expected line matches an output line, in order; else the first that does not."""
+    import re
+
+    lines = output.split("\n")
+    i = 0
+    for want in expected:
+        pattern = re.compile(".*".join(re.escape(part) for part in want.split("...")))
+        while i < len(lines) and not pattern.search(lines[i]):
+            i += 1
+        if i == len(lines):
+            return want
+        i += 1
+    return None
