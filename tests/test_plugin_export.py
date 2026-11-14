@@ -28,17 +28,23 @@ def _shipped_skills():
                   if e.is_dir() and not e.name.startswith(("_", ".")))
 
 
-def test_an_export_holds_the_manifest_the_skills_the_reviewer_and_no_hooks(tmp_path):
+def test_an_export_holds_the_manifest_the_skills_the_reviewer_and_the_hooks(tmp_path):
     out = tmp_path / "plug"
     written = plugin.export(out)
     rel = sorted(str(p.relative_to(out)) for p in written)
-    assert rel == sorted([".claude-plugin/plugin.json", "hooks/hooks.json", "agents/design-reviewer.md"]
+    assert rel == sorted([".claude-plugin/plugin.json", "hooks/hooks.json", "hooks/run.sh", "agents/design-reviewer.md"]
                          + [f"skills/{s}/SKILL.md" for s in _shipped_skills()])
     assert len(_shipped_skills()) >= 6
     meta = json.loads((out / ".claude-plugin/plugin.json").read_text())
     assert meta["name"] == "agentcad" and meta["version"] == agentcad.__version__
     assert meta["description"] and meta["author"]["name"]
-    assert json.loads((out / "hooks/hooks.json").read_text()) == {"hooks": {}}
+    hooked = json.loads((out / "hooks/hooks.json").read_text())["hooks"]
+    assert sorted(hooked) == ["PostToolUse", "PreToolUse", "SessionStart"]
+    assert hooked["PostToolUse"][0]["matcher"] == "Bash" and "matcher" not in hooked["SessionStart"][0]
+    assert hooked["PreToolUse"][0]["matcher"].split("|") == ["Edit", "Write", "MultiEdit", "NotebookEdit"]
+    for event, entries in hooked.items():
+        (hook,) = entries[0]["hooks"]
+        assert hook["type"] == "command" and hook["command"].startswith('"${CLAUDE_PLUGIN_ROOT}/hooks/run.sh" ')
     for s in _shipped_skills():
         shipped = (resources.files("agentcad") / "skills" / s / "SKILL.md").read_bytes()
         assert (out / "skills" / s / "SKILL.md").read_bytes() == shipped, f"{s} copied byte for byte"
@@ -53,7 +59,8 @@ def test_the_same_package_exports_the_same_bytes_and_modes(tmp_path):
     assert _tree(a) == _tree(b)
     modes = {mode for mode, data in _tree(a).values() if data is not None}
     folders = {mode for mode, data in _tree(a).values() if data is None}
-    assert modes == {0o644} and folders == {0o755}
+    assert modes == {0o644, 0o755} and folders == {0o755}
+    assert [p for p, (mode, data) in _tree(a).items() if data is not None and mode == 0o755] == ["hooks/run.sh"]
 
 
 def test_a_marketplace_offers_the_plugin_from_its_own_folder(tmp_path):
