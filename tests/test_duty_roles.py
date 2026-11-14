@@ -21,20 +21,20 @@ AS_OF = json.loads((LIBRARY / "expected_duties.json").read_text())["as_of"]
 STAND_IN = r'''#!/usr/bin/env python3
 import json, os, sys
 store = os.environ["ROLE_STORE"]
-state = json.load(open(store)) if os.path.exists(store) else {"id": "r1", "title": "Keeper", "duties": []}
+state = json.load(open(store)) if os.path.exists(store) else {"id": "r1-keeper", "title": "Keeper", "duties": []}
 argv = sys.argv[1:]
 fail = os.environ.get("ROLE_FAIL", "")
 if argv[:2] == ["role", "show"]:
-    if fail == "show" or argv[2] != "r1":
+    if fail == "show" or not "r1-keeper".startswith(argv[2]):
         print("no role " + argv[2], file=sys.stderr); sys.exit(1)
     assert argv[3:] == ["--all", "--json"], argv
-    print("not json" if fail == "garbage" else json.dumps({"id": "r1"} if fail == "shape" else state))
+    print("not json" if fail == "garbage" else json.dumps({"id": "r1-keeper"} if fail == "shape" else state))
 elif argv[:3] == ["role", "duty", "add"]:
     if fail == "add":
         print("refused: a duty needs a title", file=sys.stderr); sys.exit(2)
     role, title, flag, body = argv[3:7]
     assert flag == "--body" and len(argv) == 7, argv
-    state["duties"].append({"id": "d%d" % (len(state["duties"]) + 1), "title": title, "body": body, "state": "open"})
+    state["duties"].append({"id": "d%d" % (len(state["duties"]) + 1), "title": title, "body": body, "state": "pending"})
     json.dump(state, open(store, "w"))
 else:
     print("unexpected: " + " ".join(argv), file=sys.stderr); sys.exit(64)
@@ -89,7 +89,7 @@ def test_a_dry_run_shows_what_is_missing_and_changes_nothing(library, role, caps
     owed = _owed(library)
     rc, out, err = _cli(capsys, "duties", library, "--as-of", AS_OF, "--declare-on", "r1")
     assert rc == 0 and not role.exists(), "nothing was declared"
-    assert f"Role r1: {len(owed)} to declare, 0 already declared, 0 declared earlier and no longer owed." in out
+    assert f"Role r1-keeper: {len(owed)} to declare, 0 already declared, 0 closed and owed again, 0 declared earlier and no longer owed." in out
     assert all(f"would declare: {d.title}  [{d.key}]" in out for d in owed) and "Add --apply" in out
 
 
@@ -97,7 +97,7 @@ def test_apply_declares_each_owed_duty_once_and_a_second_run_declares_nothing(li
     owed = _owed(library)
     assert len(owed) >= 4
     rc, out, _ = _cli(capsys, "duties", library, "--as-of", AS_OF, "--declare-on", "r1", "--apply")
-    assert rc == 0 and f"Role r1: {len(owed)} to declare" in out and "  declared: " in out
+    assert rc == 0 and f"Role r1-keeper: {len(owed)} to declare" in out and "  declared: " in out
     stored = json.loads(role.read_text())["duties"]
     assert [d["title"] for d in stored] == [d.title for d in owed]
     assert [duty_roles.key_of(d["body"]) for d in stored] == [d.key for d in owed]
@@ -106,7 +106,8 @@ def test_apply_declares_each_owed_duty_once_and_a_second_run_declares_nothing(li
     report = json.loads(out)["roles"]
     assert rc == 0 and role.read_text() == before, "applying twice changes nothing"
     assert report["declared"] == 0 and report["declare"] == [] and len(report["present"]) == len(owed)
-    assert report["applied"] is True and report["lapsed"] == []
+    assert report["applied"] is True and report["lapsed"] == [] and report["reopened"] == []
+    assert report["role"] == "r1-keeper", "the role is reported as the roles command resolved the name given"
 
 
 def test_work_no_longer_owed_is_reported_for_its_holder_and_never_closed_here(library, role, capsys):
@@ -122,16 +123,30 @@ def test_work_no_longer_owed_is_reported_for_its_holder_and_never_closed_here(li
     assert "no longer owed by the records: duty d" in out and "record_verdict:job=2026-02-01_mk4_pla_clip" in out
     state = json.loads(before)
     lapsed = next(d for d in state["duties"] if "2026-02-01_mk4_pla_clip" in d["body"])
-    lapsed["state"] = "done"
+    lapsed["state"] = "done"           # its holder closed it
     role.write_text(json.dumps(state))
     rc, out, _ = _cli(capsys, "duties", library, "--as-of", AS_OF, "--declare-on", "r1")
     assert "0 declared earlier and no longer owed" in out, "a duty its holder closed is not reported again"
 
 
+def test_work_owed_again_whose_duty_was_closed_is_its_own_list_and_is_not_reopened_here(library, role, capsys):
+    _cli(capsys, "duties", library, "--as-of", AS_OF, "--declare-on", "r1", "--apply")
+    state = json.loads(role.read_text())
+    closed = state["duties"][0]
+    for gone in ("done", "deferred"):
+        closed["state"] = gone
+        role.write_text(json.dumps(state))
+        before = role.read_text()
+        rc, out, _ = _cli(capsys, "duties", library, "--as-of", AS_OF, "--declare-on", "r1", "--apply")
+        assert rc == 0 and role.read_text() == before, "nothing declared again and nothing reopened"
+        assert "1 closed and owed again" in out and f"owed again, but its duty is {gone}: duty d1" in out
+        assert f"{len(state['duties']) - 1} already declared" in out
+
+
 def test_duties_declared_by_hand_are_left_out_of_every_count(library, role, capsys):
-    role.write_text(json.dumps({"id": "r1", "duties": [{"id": "h1", "title": "By hand", "body": "", "state": "open"}]}))
+    role.write_text(json.dumps({"id": "r1-keeper", "duties": [{"id": "h1", "title": "By hand", "body": "", "state": "pending"}]}))
     rc, out, _ = _cli(capsys, "duties", library, "--as-of", AS_OF, "--declare-on", "r1")
-    assert rc == 0 and "0 already declared, 0 declared earlier" in out and "h1" not in out
+    assert rc == 0 and "0 already declared, 0 closed and owed again, 0 declared earlier" in out and "h1" not in out
 
 
 @pytest.mark.parametrize("fail, said", [("show", "role show r1 failed"), ("garbage", "did not give a role with duties"),

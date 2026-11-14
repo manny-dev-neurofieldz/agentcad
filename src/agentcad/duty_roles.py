@@ -7,9 +7,10 @@ role's duties and declares the ones that are missing, through MacEff's own comma
 by writing its store.
 
 A declared duty carries the owed item's stable key on the last line of its body (``agentcad-duty: KEY``); that
-line is how a later run knows the duty is already there. So declaring twice changes nothing, and a duty whose
-key the records no longer give is reported as no longer owed, for its holder to close with the evidence: this
-adapter never closes, edits or removes a duty.
+line is how a later run knows the duty is already there. So declaring twice changes nothing. Two cases are
+reported for the duty's holder and never acted on: a duty still open whose key the records no longer give (no
+longer owed), and a duty closed (done or deferred) whose key the records give again (owed again). This adapter
+never closes, reopens, edits or removes a duty.
 
 Every duty is declared without a date. A due date needs a horizon, and a horizon is the declarer's own
 reasoning about lead time, which a generator cannot supply; a planned day stays in the duty's text.
@@ -18,12 +19,14 @@ import json
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from agentcad.duties import Duty
 
 KEY_PREFIX = "agentcad-duty: "
 TOOL = "macf_tools"
+#: A duty in one of these states is on its holder's open list (MacEff roles: pending, active, done, deferred).
+OPEN = ("pending", "active")
 
 
 class RoleError(Exception):
@@ -32,10 +35,11 @@ class RoleError(Exception):
 
 @dataclass
 class Plan:
-    role: str
+    role: str                        # the role's id, as the roles command resolved the name given
     declare: List[Duty]              # owed, and no duty on the role carries its key
-    present: List[Dict[str, str]]    # owed, already declared: {"key", "id", "state"}
-    lapsed: List[Dict[str, str]]     # declared earlier, still open, no longer owed by the records
+    present: List[Dict[str, str]]    # owed, declared and open: {"key", "id", "state"}
+    reopened: List[Dict[str, str]]   # owed, but its duty is closed (done or deferred): in nobody's open list
+    lapsed: List[Dict[str, str]]     # declared, still open, no longer owed by the records
 
 
 def body(duty: Duty) -> str:
@@ -63,29 +67,38 @@ def _run(argv: Sequence[str], tool: str) -> subprocess.CompletedProcess:
         raise RoleError(f"{tool} {' '.join(argv[:3])} did not run: {e}") from e
 
 
-def existing(role: str, tool: str = TOOL) -> List[Dict[str, str]]:
-    """The role's duties that carry a key: {"key", "id", "state"} each. A role the tool does not know, or an
-    answer that is not the JSON it documents, is an error and never an empty list: an empty list would declare
-    every duty again."""
+def existing(role: str, tool: str = TOOL) -> Tuple[str, List[Dict[str, str]]]:
+    """The role's id as the tool resolved ``role`` (a name or prefix may be given), and its duties that carry a
+    key: {"key", "id", "state"} each. A role the tool does not know, or an answer that is not the JSON it
+    documents, is an error and never an empty list: an empty list would declare every duty again."""
     done = _run(["role", "show", role, "--all", "--json"], tool)
     if done.returncode != 0:
         raise RoleError(f"{tool} role show {role} failed (exit {done.returncode}): {done.stderr.strip()[:300]}")
     try:
-        duties = json.loads(done.stdout)["duties"]
+        shown = json.loads(done.stdout)
+        role_id, duties = str(shown["id"]), shown["duties"]
         found = [{"key": key_of(d.get("body", "")), "id": str(d["id"]), "state": str(d.get("state", ""))}
                  for d in duties]
     except (ValueError, KeyError, TypeError, AttributeError) as e:
         raise RoleError(f"{tool} role show {role} --json did not give a role with duties ({type(e).__name__}: {e})")
-    return [f for f in found if f["key"]]
+    return role_id, [f for f in found if f["key"]]
 
 
 def plan(role: str, owed: Sequence[Duty], declared: Sequence[Dict[str, str]]) -> Plan:
-    by_key = {d["key"]: d for d in declared}
+    by_key: Dict[str, List[Dict[str, str]]] = {}
+    for d in declared:
+        by_key.setdefault(d["key"], []).append(d)
     owed_keys = {d.key for d in owed}
-    return Plan(role=role,
-                declare=[d for d in owed if d.key not in by_key],
-                present=[by_key[d.key] for d in owed if d.key in by_key],
-                lapsed=[d for d in declared if d["key"] not in owed_keys and d["state"] not in ("done", "retired")])
+    present, reopened = [], []
+    for d in owed:
+        held = by_key.get(d.key, [])
+        open_ = [h for h in held if h["state"] in OPEN]
+        if open_:
+            present += open_
+        elif held:
+            reopened += held
+    return Plan(role=role, declare=[d for d in owed if d.key not in by_key], present=present, reopened=reopened,
+                lapsed=[d for d in declared if d["key"] not in owed_keys and d["state"] in OPEN])
 
 
 def declare(role: str, duty: Duty, tool: str = TOOL) -> None:
@@ -105,10 +118,12 @@ def apply(p: Plan, tool: str = TOOL) -> int:
 
 def summary(p: Plan, applied: bool) -> List[str]:
     lines = [f"Role {p.role}: {len(p.declare)} to declare, {len(p.present)} already declared, "
-             f"{len(p.lapsed)} declared earlier and no longer owed."]
+             f"{len(p.reopened)} closed and owed again, {len(p.lapsed)} declared earlier and no longer owed."]
     verb = "declared" if applied else "would declare"
     lines += [f"  {verb}: {d.title}  [{d.key}]" for d in p.declare]
     lines += [f"  present:  duty {d['id']} ({d['state']})  [{d['key']}]" for d in p.present]
+    lines += [f"  owed again, but its duty is {d['state']}: duty {d['id']}  [{d['key']}]; its holder decides whether "
+              f"to reactivate it" for d in p.reopened]
     lines += [f"  no longer owed by the records: duty {d['id']} ({d['state']})  [{d['key']}]; its holder closes it "
               f"with the evidence" for d in p.lapsed]
     if p.declare and not applied:

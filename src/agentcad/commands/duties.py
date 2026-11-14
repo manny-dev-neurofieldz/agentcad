@@ -42,14 +42,15 @@ def cmd_duties(args):
                   file=sys.stderr)
             return 2
         try:
-            plan = duty_roles.plan(args.declare_on, owed, duty_roles.existing(args.declare_on))
+            role_id, declared_duties = duty_roles.existing(args.declare_on)
+            plan = duty_roles.plan(role_id, owed, declared_duties)
             declared = duty_roles.apply(plan) if args.apply else 0
         except duty_roles.RoleError as e:
             print(f"Error: --declare-on {args.declare_on}: {e}", file=sys.stderr)
             return 2
         report["roles"] = {"role": plan.role, "applied": bool(args.apply), "declared": declared,
                            "declare": [asdict(d) for d in plan.declare], "present": plan.present,
-                           "lapsed": plan.lapsed}
+                           "reopened": plan.reopened, "lapsed": plan.lapsed}
         lines = lines + [""] + duty_roles.summary(plan, bool(args.apply))
     print(json.dumps(report, indent=2) if args.json else "\n".join(lines))
     return 0
