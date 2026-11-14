@@ -9,6 +9,13 @@
 
 A build123d program can build, report a valid solid and render plausibly while doing something other than what was asked: a fillet that never built, a vent that stops short of the wall, two bodies that only touch. The kernel does not know the intent, so the program has to carry it: knobs that mean something, values derived from the knobs instead of written twice, and a check after every feature. This policy collects the construction practice that keeps a build123d part honest, and the pitfalls that have each cost real time.
 
+## Reaching for It
+
+- Writing or revising a build123d program: sections 1 and 3 before the first feature; section 2 when a construction (a fillet, a revolve, a sketch, a loft, two bodies that meet) is about to be written.
+- A fillet that refuses, a render that comes back empty, a census that does not add up: section 2, then the construction probes (`agentcad-probe-construction`).
+- Choosing build123d at all: `agentcad-engines` says when another engine is the better one.
+- The posture and the order of work for any engine: `agentcad-design-practice`.
+
 ## CEP Navigation Guide
 
 **1 The Program**
@@ -40,13 +47,19 @@ A build123d program can build, report a valid solid and render plausibly while d
 **4 Reading Drawings**
 - How is an unlabelled rounded section read?
 
-**5 Integration with Other Policies**
+**5 Recipes**
+- How are a program's knobs checked for life, as commands?
+
+**6 Constraints to Probe**
+- Which command shows each pitfall, before it ships?
+
+**7 Integration with Other Policies**
 - Which policies hold the engine, the probes and the review this practice relies on?
 
-**6 Anti-Patterns**
+**8 Anti-Patterns**
 - Which habits make a program lie?
 
-**7 Evolution and Feedback**
+**9 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -57,7 +70,7 @@ Write the part as `build(**params)` (`agentcad-engines`, section 2). The paramet
 
 A number two features must agree on is written once and the other derived from it; the program then asserts the derived value. Written twice, it is a coupling nobody enforces: one copy moves, the part still builds valid, and a vent becomes a blind pocket or an outline loses its tangency. To check, perturb the first value and watch the second feature keep doing its job.
 
-Count the knobs and look for dead ones: `agentcad probe knobs` perturbs each and names those that move nothing measurable. A dead knob is a derived value posing as a parameter, or a feature that has stopped depending on what it should.
+Count the knobs and look for dead ones: `agentcad probe knobs SOURCE --knob NAME=DELTA` (repeated, one per knob) perturbs each knob named both ways and says which move nothing measurable (section 5). A dead knob is a derived value posing as a parameter, or a feature that has stopped depending on what it should.
 
 Cutters overshoot the faces they cut; a cut or a join that ends exactly on a face leaves coplanar faces the kernel resolves unpredictably. A height or a length that exists only to make an operation work (an intersect prism, a cutting box) is derived from what it must clear, not chosen. Assert what must stay true (one solid, a wall above its minimum, a feature present) so that a parameter value that breaks the geometry fails loudly instead of returning a valid-looking part.
 
@@ -95,8 +108,49 @@ The tray reads these for every session iteration (`agentcad-session`, section 2.
 
 An unlabelled rounded section with two symmetry axes is a stadium of circle arcs, not an ellipse; drawings label ellipses. Read the drawing's numbers into the spec, then read the spec against the build: the build can contradict numbers the spec already holds.
 
-## 5 Integration with Other Policies
+## 5 Recipes
 
+Every knob of the hook, perturbed both ways in one call: each should change the part, and each by what it means.
+
+```console
+# recipe: examples
+$ agentcad probe knobs examples/j_hook/source/j_hook.py --knob reach=2 --knob peg_len=2 --knob bend_r=1
+1 solid(s); 7 builds (1 base + 2 per knob)
+knob reach: base 30, delta 2
+bbox +2 +0 +0, solids +0
+live: both sides change the part
+knob peg_len: base 6, delta 2
+bbox +0 +0 +2, solids +0
+live: both sides change the part
+knob bend_r: base 6, delta 1
+live: both sides change the part
+```
+
+Each knob moves the box along the axis it should and only that one, and none splits the part. A knob reported dead is a derived value posing as a parameter, or a feature that has stopped depending on it (section 1).
+
+The program's contract read back: a misspelt knob is refused before anything builds, with the names the program takes.
+
+```console
+# recipe: examples
+$ agentcad render examples/j_hook/source/j_hook.py -D reech=40 --views iso -o look
+# exit 2
+-D reech: j_hook.py has no such parameter (it has: bend_r, drop, lip, peg_d, peg_len, reach, wire_d)
+```
+
+Next: iterate the program in a session and read every feature's delta (section 3).
+
+## 6 Constraints to Probe
+
+- A knob that moves nothing (section 1): `agentcad probe knobs SOURCE --knob NAME=DELTA` says live or dead for each.
+- A fillet or chamfer that never built (sections 2.1, 3): `agentcad session iterate` prints the face census and its change; the faces it should add are counted there.
+- Two bodies that only touch, or a part in pieces (sections 2.5, 3): `agentcad session iterate` prints the solid count and warns when it is not one.
+- A sliver that the mesher refuses (section 2.5): `agentcad session iterate` prints the shortest edge and the count under the limit; an empty render beside a sound volume is the same defect.
+- A twisted loft (section 2.4): `agentcad session iterate` warns of twisted faces; `[engine.build123d] shading = "flat"` shows it in the render.
+- A section that is not the size the drawing says (section 4): `agentcad probe section SOURCE --planes ...` gives its loops and arcs (`agentcad-probe-recover`).
+
+## 7 Integration with Other Policies
+
+- `agentcad-start`: where building in build123d sits among the goals.
 - `agentcad-engines`: the program contract and the build123d engine's settings.
 - `agentcad-session`: the loop and the tray that read every feature.
 - `agentcad-probe-construction` and `agentcad-probe-inspect`: the probes for fillets, draft, rays and knobs.
@@ -104,7 +158,7 @@ An unlabelled rounded section with two symmetry axes is a stadium of circle arcs
 - `agentcad-design-review`: what a reviewer looks for in a program.
 - `agentcad-policies`: how this policy is found and read.
 
-## 6 Anti-Patterns
+## 8 Anti-Patterns
 
 - **A derived value posing as a knob**: it goes wrong silently when its neighbour moves.
 - **A number written twice**: two copies drift; derive one and assert it.
@@ -112,6 +166,6 @@ An unlabelled rounded section with two symmetry axes is a stadium of circle arcs
 - **A swallowed failure**: an operation in a bare `except` never built and nobody knows.
 - **Features bolted onto a revolve**: put them in the profile.
 
-## 7 Evolution and Feedback
+## 9 Evolution and Feedback
 
 This policy changes as builds teach new pitfalls; a pitfall is added here when it has cost time on a real part and its cause is understood.

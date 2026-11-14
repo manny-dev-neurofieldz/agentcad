@@ -9,6 +9,14 @@
 
 agentcad measures everything an iteration produces, but the measurements answer only the questions asked of them. A design goes wrong in the questions: a function stated in the wrong words, a prediction never written down, a number trusted because it passed, a mate assumed instead of tested. This policy states the posture a design is approached with, the order of work that makes each iteration evidence, and the habits that keep a part's numbers true statements about it.
 
+## Reaching for It
+
+- Before the first line of a new part: sections 1 to 3 (what the part is faithful to, the spec reconciled, the pins written down).
+- After every iteration, before the next edit: section 4, and the probe each practice names in section 9.
+- A number that two features share, a face that may already have a job, a feature that may not have built: section 5.
+- A part that mates with another, or a fit that depends on the material: section 6, then `agentcad fit` (`agentcad-fit`).
+- How the commands themselves run: the command policies (`agentcad policy list`); this policy says what to ask of them.
+
 ## CEP Navigation Guide
 
 **1 Posture**
@@ -38,13 +46,19 @@ agentcad measures everything an iteration produces, but the measurements answer 
 **7 Orientation and Process**
 - How is a print orientation decided?
 
-**8 Integration with Other Policies**
+**8 Recipes**
+- How is a feature's delta asserted, and a load-bearing dimension pinned, as commands?
+
+**9 Constraints to Probe**
+- Which command answers each practice, so that it is checked instead of trusted?
+
+**10 Integration with Other Policies**
 - Which policies carry out each step?
 
-**9 Anti-Patterns**
+**11 Anti-Patterns**
 - Which habits let a design pass while being wrong?
 
-**10 Evolution and Feedback**
+**12 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -91,8 +105,54 @@ As-printed is not nominal: a material and a process take their own share of a cl
 
 Argue the print orientation in writing: what touches the bed, how large the first layer is, how the material warps, where supports land and what they will scar, which way the layers run through a part that bends. An orientation asserted ("plate down") is not one argued; a reviewer will ask for the argument, and the printer will test it. State it as intent (`agentcad-print-intent`) and check it against the process (`agentcad-qc`).
 
-## 8 Integration with Other Policies
+## 8 Recipes
 
+A feature is a delta: lengthen the hook's peg by 4 mm and check that the part changed by exactly a cylinder of the peg's diameter, 4 mm long, and nothing else.
+
+```console
+# recipe: examples
+$ agentcad session start examples/j_hook
+Session started
+$ agentcad session iterate examples/j_hook examples/j_hook/source/j_hook.py
+Iteration v1 recorded
+counts     solids 1, faces 10
+$ agentcad session iterate examples/j_hook examples/j_hook/source/j_hook.py -D peg_len=10
+Report v2 vs v1:
+volume     1518 (+120.8, +8.64%)
+bbox       [35.6, 6.2, 37.5] (+0, +0, +4)
+counts     solids 1 (+0), faces 10 (+0)
+```
+
+The prediction, written before the iterate: pi x 3.1^2 x 4 = 120.8 mm^3, +4 mm in z, the same faces, one solid. The report says exactly that, so the peg grew and nothing else moved. A delta that differs from its prediction is the finding, even when the part is valid.
+
+Pin the load-bearing dimension, not only the aggregates: the peg's diameter measured across the part, at its nominal and at a clearance variant.
+
+```console
+# recipe: examples
+$ agentcad probe rays examples/j_hook/source/j_hook.py --line 0,-10,3:0,1,0 --length 20
+material 6.2000 in 1 run(s)
+$ agentcad probe rays examples/j_hook/source/j_hook.py --line 0,-10,3:0,1,0 --length 20 -D peg_d=6.4
+material 6.4000 in 1 run(s)
+```
+
+The ray crosses the peg 3 mm above its base and finds one run of material exactly the diameter asked for. Next: the same probe on the mating hole, or the fit check with both bodies (`agentcad-fit`).
+
+## 9 Constraints to Probe
+
+Each practice of this policy, with the command that checks it:
+
+- One solid for a single part (sections 3, 4): `agentcad session iterate` prints the solid count every iteration and warns when it is not the expected one.
+- A feature did what was asked (section 5): `agentcad session iterate` prints the change since the last iteration in volume, box, faces and census; compare it with the prediction.
+- A knob is live and not a derived value posing as one (section 5): `agentcad probe knobs SOURCE --knob NAME=DELTA` perturbs it both ways and says whether the part changes.
+- A wall, a width or a seat is the size asked for (sections 3, 4): `agentcad probe rays SOURCE --line ...` measures the material along a line.
+- A replica is faithful where it matters (section 1): `agentcad compare ORIGINAL CANDIDATE --planes ...`, with the loop counts as the gate.
+- A mate is right with both bodies (section 6): `agentcad fit A B --mate NAME`.
+- A clearance holds in the real material (section 6): `agentcad export SOURCE --variants KNOB=v1,v2,...` writes the plate to print.
+- An orientation survives the process (section 7): `agentcad qc PROJECT` judges the part posed as stated.
+
+## 10 Integration with Other Policies
+
+- `agentcad-start`: where this practice sits among the goals.
 - `agentcad-session`: the loop every iteration runs in.
 - `agentcad-build123d`: the construction practice for build123d programs.
 - `agentcad-compare`, `agentcad-probe-inspect`, `agentcad-probe-recover`: the instruments that make an iteration evidence.
@@ -101,7 +161,7 @@ Argue the print orientation in writing: what touches the bed, how large the firs
 - `agentcad-print-intent` and `agentcad-qc`: stating and checking how the part prints.
 - `agentcad-policies`: how this policy is found and read.
 
-## 9 Anti-Patterns
+## 11 Anti-Patterns
 
 - **Engineering too early**: tolerancing a form that will change.
 - **Copying a defect for fidelity**: matching a file's mistakes because the file has them.
@@ -109,6 +169,6 @@ Argue the print orientation in writing: what touches the bed, how large the firs
 - **The render as the verdict**: connectivity, walls and sizes are measured, not seen.
 - **A mate never tested with both bodies**: a relation derived from the wrong datum passes every single-part check.
 
-## 10 Evolution and Feedback
+## 12 Evolution and Feedback
 
 This policy changes as designs and reviews teach; a practice is added here when it has held across more than one part.

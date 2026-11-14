@@ -9,6 +9,14 @@
 
 Every agentcad command works on a project: a folder whose `agentcad.toml` names the engine, the views, the print intent, the checks and the mates of one part or one assembly. This policy says what a project folder holds, how a command finds one, where a session writes, how a project is created or an existing folder made into one, how to see what a command will use, and which policy governs each table of the file.
 
+## Reaching for It
+
+- A new part with nowhere to live yet: `agentcad new-project NAME` (in the designs directory, or `-b BASE`).
+- A folder you already keep the part in: `agentcad config-init` there, which makes it a project in place.
+- Which settings a command will really use here: `agentcad config-show` (from this folder upward), or `agentcad status PROJECT` with its file counts.
+- Where a project is, by name: `agentcad open NAME`; which projects exist: `agentcad projects`.
+- What happened in a project's design: its session (`agentcad session status`, `agentcad-session`), not these commands.
+
 ## CEP Navigation Guide
 
 **1 What a Project Is**
@@ -35,13 +43,19 @@ Every agentcad command works on a project: a folder whose `agentcad.toml` names 
 - Which tables does the file hold, and which policy governs each?
 - Which values does the template state that the designer has not chosen?
 
-**5 Integration with Other Policies**
+**5 Recipes**
+- How is a project made where you want it, and its settings read back?
+
+**6 Constraints to Probe**
+- Which of a project's settings are checked by a command before a session relies on them?
+
+**7 Integration with Other Policies**
 - Which policies govern the work done inside a project?
 
-**6 Anti-Patterns**
+**8 Anti-Patterns**
 - Which ways of placing or configuring a project mislead?
 
-**7 Evolution and Feedback**
+**9 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -93,20 +107,64 @@ An assembly lists its parts in `[project] parts`: globs, relative to its folder,
 
 The template states a `[print]` table with a material, a layer height, an infill, a supports flag and a printer. Once in the file those values are the project's stated intent and reach the print manifest, whether or not anyone chose them: set them to what the part needs, or delete the lines that are not decided yet.
 
-## 5 Integration with Other Policies
+## 5 Recipes
 
+A project made under a base folder you choose, then read back:
+
+```console
+# recipe: empty
+$ agentcad new-project bracket -e build123d -d "a wall bracket" -b .
+Created project: mechanical_designs/bracket
+agentcad.toml - project config (engine: build123d)
+$ agentcad status mechanical_designs/bracket
+Name: bracket
+Engine: build123d
+Description: a wall bracket
+source/  : 0 files
+```
+
+`status` takes the path because a project under another base is not in the designs directory, where a name is looked up (section 1). Next: put the source in `source/`, set the `[print]` lines to what the part needs (section 4), and start a session.
+
+The folder you are in, made a project in place, and what a command will use there:
+
+```console
+# recipe: empty
+$ agentcad config-init -n tray
+Created ...agentcad.toml
+$ agentcad config-show
+Name: tray
+Engine: openscad
+Material: PLA
+$ agentcad config-init
+# exit 1
+agentcad.toml already exists. Use --force to overwrite.
+```
+
+`Material: PLA` is the template speaking, not a decision: set the `[print]` table or delete its lines before a print (section 4). Next: change `[project] engine` if the part is not OpenSCAD.
+
+## 6 Constraints to Probe
+
+- A name is looked up only in the designs directory: `agentcad projects` lists what a name can reach; pass a path for a project kept anywhere else.
+- A project outside the designs directory writes its session where its `[output]` table says: `agentcad config-show` prints the output folder before a session writes there (section 1.1).
+- An existing `agentcad.toml` is never overwritten by accident: `agentcad config-init` refuses with exit 1 unless `--force`.
+- The template states print values nobody chose: `agentcad config-show` prints them as the project's material, layer height and printer until the `[print]` table is edited.
+- An assembly's parts are found by its `parts` globs: `agentcad projects` lists each project's parts under it, so a glob that matches nothing shows as a project without parts.
+
+## 7 Integration with Other Policies
+
+- `agentcad-start`: where making a project sits among the goals.
 - `agentcad-session`: the design loop that runs inside a project.
 - `agentcad-engines`: the engine a project names and its `[engine.<name>]` settings.
 - `agentcad-print-intent`, `agentcad-qc`, `agentcad-fit`: the tables that state how the part prints, what it is checked against and how it mates.
 - `agentcad-viewer`: the page a project's sessions produce, and the gallery of projects.
 - `agentcad-policies`: how this policy is found and read.
 
-## 6 Anti-Patterns
+## 8 Anti-Patterns
 
 - **A project outside the designs directory without `[output]`**: its sessions write to another folder; the two lines of section 1.1 keep them in the project.
 - **Template values left as intent**: a `[print]` table nobody edited states a material and a layer height nobody chose.
 - **Looking up an unlisted project by name**: `projects` and `open` see only the designs directory; pass a path.
 
-## 7 Evolution and Feedback
+## 9 Evolution and Feedback
 
 This policy ships with agentcad and changes with the project commands and the configuration file; a new table or key updates this policy in the same pull request.

@@ -122,3 +122,27 @@ def test_export_variants_writes_one_file_per_value(monkeypatch, capsys, tmp_path
     assert (tmp_path / "cube_size-8.stl").stat().st_size > 0
     assert (tmp_path / "cube_size-10p5.stl").stat().st_size > 0
     assert "size=8" in out and "size=10.5" in out
+
+
+def test_an_output_named_without_an_extension_gets_the_formats(monkeypatch, capsys, tmp_path):
+    """`-o plate` names the file; the format names its extension, for one export and for each variant."""
+    if not get_engine("openscad").available():
+        pytest.skip("OpenSCAD not available")
+    src = tmp_path / "cube.scad"
+    src.write_text("size = 10;\ncube(size);\n")
+    _run(monkeypatch, ["export", str(src), "-e", "openscad", "-o", str(tmp_path / "single")])
+    _run(monkeypatch, ["export", str(src), "-e", "openscad", "-o", str(tmp_path / "plate"), "--variants", "size=8,9"])
+    assert (tmp_path / "single.stl").stat().st_size > 0 and not (tmp_path / "single").exists()
+    assert (tmp_path / "plate_size-8.stl").is_file() and (tmp_path / "plate_size-9.stl").is_file()
+    assert "single.stl" in capsys.readouterr().out
+
+
+def test_a_session_at_its_cap_names_the_commands_that_go_on(tmp_path):
+    from agentcad.session import DesignSession
+
+    session = DesignSession.__new__(DesignSession)
+    session.max_iterations, session.iterations, session._finalized, session.defines = 0, [], False, {}
+    with pytest.raises(RuntimeError) as e:
+        session.iterate(str(tmp_path / "x.scad"))
+    said = str(e.value)
+    assert "agentcad session finalize" in said and "--max-iter" in said and "session.finalize()" not in said

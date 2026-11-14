@@ -9,6 +9,14 @@
 
 A design session is agentcad's unit of design work: a numbered sequence of iterations of one part, each rendered and measured, with notes, frozen tags for review, and a final set of exports, a print manifest and a viewer. This policy says how to run one so that every iteration is looked at and measured before the next, and so that what was decided can be found again.
 
+## Reaching for It
+
+- Designing, revising or replicating a part over more than one attempt: a session. Each iterate renders, measures and records; the history explains the design later.
+- One look at a source, with nothing to keep: `agentcad render` (`agentcad-render-export`).
+- A set of variants of one knob side by side: `agentcad export --variants` (`agentcad-render-export`), then iterate the one that wins.
+- Two parts that must fit: still a session per part, then `agentcad fit` with both bodies (`agentcad-fit`).
+- A finished part headed for a printer: finalize, then `agentcad qc` (`agentcad-qc`).
+
 ## CEP Navigation Guide
 
 **1 The Session Loop**
@@ -47,13 +55,20 @@ A design session is agentcad's unit of design work: a numbered sequence of itera
 **5 Session Status**
 - How is a session's state inspected?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- What does a session look like from start to finalize, as commands?
+- How is a revision frozen for a reviewer while work continues?
+
+**7 Constraints to Probe**
+- Which of a session's limits are found by a command before they cost an iteration?
+
+**8 Integration with Other Policies**
 - Which policies govern what happens after a session?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - What mistakes does the loop exist to prevent?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -63,6 +78,20 @@ A design session is agentcad's unit of design work: a numbered sequence of itera
 A session holds one part's design history in its project folder: every iteration's source copy, renders, measured metadata and notes, under `_work/`. Use a session whenever a part takes more than one attempt, which is almost always; `agentcad render` is for a single look at a source.
 
 The order of work is fixed: start, then for each attempt iterate, read the renders and the tray, note what was learned; tag a revision before handing it to a reviewer; finalize when the design is accepted.
+
+```mermaid
+flowchart TD
+    S["session start PROJECT"] --> I["session iterate PROJECT SOURCE"]
+    I --> R{"tray and renders read"}
+    R -- "something to change" --> N["session note: what and why"]
+    N --> E["edit the source, or -D a knob"]
+    E --> I
+    R -- "ready for a reviewer" --> T["session tag PROJECT NAME"]
+    T --> E
+    R -- "accepted" --> F["session finalize PROJECT"]
+    F -- "more to do" --> O["session reopen PROJECT"]
+    O --> I
+```
 
 ### 1.1 Starting a Session
 
@@ -124,19 +153,89 @@ Finalize also fits every mate the project declares between two parts it can name
 
 `agentcad session status PROJECT` prints the session's state: the engine, the iteration count against the maximum, each iteration's status with its notes, and where the session was finalized if it was. Per-iteration defines are in the session record and the viewer's Parameters tab; tags are folders under `tags/`.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+A session from start to finalize on the hex tray example: two iterations, the second turning a knob without editing the source, a note on why, and the finalize.
+
+```console
+# recipe: examples
+$ agentcad session start examples/hex_tray
+Session started for project 'hex_tray'
+Max iter:    10
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+Rendered 4 view(s)
+bbox       [66, 50.57, 12]
+counts     solids 1
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad -D rows=2
+Iteration v2 recorded
+Report v2 vs v1:
+bbox       [66, 36.71, 12] (+0, -13.86, +0)
+counts     solids 1 (+0)
+$ agentcad session note examples/hex_tray "two rows: the tray now fits a 40 mm drawer"
+Note added to v2
+$ agentcad session finalize examples/hex_tray
+Session finalized.
+HTML viewer: ...index.html
+Iterations:  2
+```
+
+The second report is read against the first: one solid still, and 13.86 mm less depth, which is what dropping a row of pockets should do. Before the note, each iteration's four renders are opened and described (section 2.2). Next: `agentcad qc examples/hex_tray` for a print, or `agentcad viewer` to show it (`agentcad-viewer`).
+
+Freezing a revision for a reviewer while work continues, and coming back to a finished session:
+
+```console
+# recipe: examples
+$ agentcad session start examples/hex_tray
+Session started
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+$ agentcad session tag examples/hex_tray review-1 --note "pocket count settled"
+Tagged v1 as 'review-1'
+$ agentcad session tag examples/hex_tray review-1
+# exit 1
+tag 'review-1' already exists at ...; tags are frozen
+$ agentcad session finalize examples/hex_tray
+Session finalized.
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+# exit 1
+Session already finalized; `agentcad session reopen` to continue it
+$ agentcad session reopen examples/hex_tray
+the next iteration is v2
+$ agentcad session status examples/hex_tray
+Iterations: 1/10
+```
+
+The reviewer reads `tags/review-1/`, which no later iterate changes (`agentcad-design-review`). Next: iterate on from v2.
+
+## 7 Constraints to Probe
+
+- A session already running on the project is not replaced by accident: `agentcad session start PROJECT` refuses with the record's iteration count and the three ways on; `agentcad session status PROJECT` shows the session first.
+- A `-D` name must be a parameter of the source: `agentcad session iterate PROJECT SOURCE -D name=value` refuses a misspelt name before anything renders and lists the names the source takes.
+- A session holds at most its `--max-iter` iterations (default 10): `agentcad session status PROJECT` shows the count against the cap; past it, iterate refuses, and the way on is finalize, or `agentcad session start PROJECT --force --max-iter N`, which archives the record.
+- A finalized session takes no iteration: `agentcad session iterate` refuses and names `agentcad session reopen`.
+- A tag never changes once written: `agentcad session tag PROJECT NAME` refuses an existing name; pick a new one per revision.
+- What a render cannot show (connectivity, wall thickness, a feature's size) is in the tray: `agentcad session iterate` prints the solid count and the box, and `agentcad probe` measures the rest (`agentcad-probe-inspect`).
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where a session sits among the goals.
+- `agentcad-engines`: which engine a session builds with, and what each measures.
+- `agentcad-render-export`: a single render or export outside a session, and variants of a knob.
+- `agentcad-viewer`: the viewer finalize writes.
+- `agentcad-design-review`: what a reviewer does with a tag.
+- `agentcad-qc`: judging a finalized part against its printer.
 - `agentcad-gcode`: reading the sliced file a finalized part was printed from.
 - `agentcad-fit`: declaring mates and testing them with both bodies; finalize runs the declared ones.
 - `agentcad-policies`: how this and every other policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **Iterating blind**: editing again before reading the tray and the renders of the last iteration.
 - **Trusting the render for connectivity**: a part that renders whole can be three solids; the tray's count is the gate.
 - **Reviewing a moving target**: handing a reviewer the live project instead of a tag.
 - **Restarting to hide history**: `start --force --no-archive` discards the record that explains the design; archive instead.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy ships with agentcad and changes with the commands it governs; a change to a session command's behaviour updates this policy in the same pull request.

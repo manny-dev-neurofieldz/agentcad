@@ -197,8 +197,9 @@ class DesignSession:
         n = self.iteration_count + 1
         if n > self.max_iterations:
             raise RuntimeError(
-                f"Max iterations ({self.max_iterations}) exceeded. "
-                f"Call session.finalize() or increase max_iterations."
+                f"the session holds at most {self.max_iterations} iteration(s) and has them all: finalize it "
+                f"(`agentcad session finalize`), or start again with a higher cap (`agentcad session start "
+                f"--force --max-iter N`, which archives this record)"
             )
 
         # Save source to work dir. Files already carrying this number belong
