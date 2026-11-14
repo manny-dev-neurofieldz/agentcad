@@ -1,6 +1,6 @@
 # Walkthrough: a peg and its plate, checked with both bodies
 
-A plate with three holes and the peg that presses into them, built from one source with a `part` parameter. Each part on its own measures as designed at every step below; only a check with both bodies says whether they fit. This walkthrough sizes the peg's clearance in three tries. Every command runs in CI exactly as printed, and the pictures are rebuilt from it.
+A plate with three holes and the peg that presses into them, built from one source with a `part` parameter. Each part on its own measures as designed at every step below; only a check with both bodies says whether they fit. This walkthrough sizes the peg's clearance in three tries. Every command runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
 
 **Skill**: fit-check (see `agentcad policy navigate start`).
 **Policies read**: `fit` (declaring a mate, posing the pair, windows, verdicts, the insertion sweep), `design-practice` (a mate is a hypothesis until both bodies are posed; as-printed is not nominal), `render-export` (a clearance plate).

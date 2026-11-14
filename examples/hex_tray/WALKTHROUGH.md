@@ -1,6 +1,6 @@
 # Walkthrough: a hex tray in OpenSCAD, from a defect to a part that prints
 
-A tray of hexagonal pockets for small parts. The source in `source/` looks reasonable and renders, and it has a defect a printer would find. This walkthrough is one design session as an agent lives it: look at each iteration, measure what looking suggests, change the source, and look again until the part is right. Every command below runs in CI exactly as printed, and the pictures are rebuilt from it.
+A tray of hexagonal pockets for small parts. The source in `source/` looks reasonable and renders, and it has a defect a printer would find. This walkthrough is one design session as an agent lives it: look at each iteration, measure what looking suggests, change the source, and look again until the part is right. Every command below runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
 
 **Skill**: design-session, then render-gate and print-prep (`agentcad plugin export --target claude-code`, see `agentcad policy navigate start`).
 **Policies read**: `start` (goal: design a part), `engines` (why OpenSCAD: a parametric family of plain CSG), `session` (the loop and the render gate), `qc` (the printer's design rules).

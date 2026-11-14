@@ -7,7 +7,7 @@ A design loop for an AI agent and parametric CAD: write the part as code, render
 | <img src="docs/images/hex_tray/v3_iso.png" width="190" alt="A hex pocket tray in OpenSCAD"> | <img src="docs/images/j_hook/v4_front.png" width="190" alt="A pegboard hook in build123d"> | <img src="docs/images/gyroid_support_plug/v1_iso.png" width="190" alt="A gyroid support plug in VoxelCAD"> | <img src="docs/images/peg_plate/try1_section.png" width="190" alt="A fit check, overlap in red"> |
 | OpenSCAD: a tray, fixed in three iterations | build123d: a hook, and when to stop | VoxelCAD: a lattice, judged on the right printer | a fit with both bodies: the overlap in red |
 
-Each picture comes from a [walkthrough](#walkthroughs) that CI runs as printed.
+Each picture comes from a [walkthrough](#walkthroughs) that runs as printed, replayed by `python examples/build_walkthroughs.py`.
 
 ## Start here
 
@@ -62,7 +62,7 @@ flowchart LR
 
 ## Walkthroughs
 
-Each walkthrough is one session as an agent lives it: the goal, the skill and the policies read, the commands as typed, every iteration's pictures with what was seen and what was changed. CI runs every command in them and rebuilds the pictures with `python examples/build_walkthroughs.py`.
+Each walkthrough is one session as an agent lives it: the goal, the skill and the policies read, the commands as typed, every iteration's pictures with what was seen and what was changed. `python examples/build_walkthroughs.py` runs every command in them and rebuilds the pictures; `--verify` checks them without writing.
 
 - [A hex tray in OpenSCAD](examples/hex_tray/WALKTHROUGH.md): pockets that meet at their corners, found by looking and measured by QC, fixed in two steps; then staged and its slice checked.
 - [A pegboard hook in build123d](examples/j_hook/WALKTHROUGH.md): three print orientations tried, a quiet QC report that broke the peg's fit, and a decision.

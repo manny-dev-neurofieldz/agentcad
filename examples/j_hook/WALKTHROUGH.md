@@ -1,6 +1,6 @@
 # Walkthrough: a pegboard hook in build123d, and when to stop changing the part
 
-A J-shaped hook swept from a round section, with a peg that plugs a pegboard hole. The design question here is how it prints. This walkthrough is one session that tries three answers, measures each, and ends on a decision rather than on a quiet QC report. Every command below runs in CI exactly as printed, and the pictures are rebuilt from it.
+A J-shaped hook swept from a round section, with a peg that plugs a pegboard hole. The design question here is how it prints. This walkthrough is one session that tries three answers, measures each, and ends on a decision rather than on a quiet QC report. Every command below runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
 
 **Skill**: design-session, then render-gate and print-prep (see `agentcad policy navigate start`).
 **Policies read**: `engines` (why build123d: a swept B-rep with exact faces to measure), `design-practice` (pin the load-bearing dimension, a feature is a delta), `qc` (overhangs, the print pose, suppressions with a reason), `probe-inspect` (rays).

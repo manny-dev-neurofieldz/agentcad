@@ -1,6 +1,6 @@
 # Walkthrough: a plate rebuilt from its STEP, numbers recovered rather than guessed
 
-An original part known only as a STEP file: a plate with a row of holes. The goal is a parametric program for it, with each number recovered by a probe, so the rebuild can be revised. This walkthrough starts the way a rebuild often starts, from numbers read off a picture, and lets the comparison say which are wrong. Every command runs in CI exactly as printed, and the pictures are rebuilt from it.
+An original part known only as a STEP file: a plate with a row of holes. The goal is a parametric program for it, with each number recovered by a probe, so the rebuild can be revised. This walkthrough starts the way a rebuild often starts, from numbers read off a picture, and lets the comparison say which are wrong. Every command runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
 
 **Skill**: reverse-engineer (see `agentcad policy navigate start`).
 **Policies read**: `reverse-engineering` (the order of work), `probe-inspect` (the inventory and its axes), `probe-recover` (sections read as arcs), `compare` (the gate, then the windows, then the deviation).

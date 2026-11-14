@@ -1,6 +1,6 @@
 # Walkthrough: a gyroid support plug in VoxelCAD, judged against the right printer
 
-A flexible gyroid body under a friction-fit plug, built on a voxel grid. The lattice's sheets are meant to be thin. This walkthrough is one session that first judges the part against the wrong printer, then the right one, then makes two changes and looks at what each costs. It ends with a decision left to the designer, as a real session often does. Every command runs in CI exactly as printed, and the pictures are rebuilt from it.
+A flexible gyroid body under a friction-fit plug, built on a voxel grid. The lattice's sheets are meant to be thin. This walkthrough is one session that first judges the part against the wrong printer, then the right one, then makes two changes and looks at what each costs. It ends with a decision left to the designer, as a real session often does. Every command runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
 
 **Skill**: design-session, then render-gate (see `agentcad policy navigate start`).
 **Policies read**: `engines` (why VoxelCAD: a lattice is a field, not faces; what `resolution_mm` means), `qc` (the printer the rules come from), `session` (the tray's solid count).
