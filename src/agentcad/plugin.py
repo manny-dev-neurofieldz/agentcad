@@ -1,10 +1,18 @@
-"""agentcad as a Claude Code plugin: the skills and the reviewer agent that ship in the package, laid out where
-Claude Code looks for them.
+"""agentcad's know-how written out for an agent harness: every target is generated from one bundle
+(agentcad.bundle), so a harness added later reads the package through the same door.
 
-The export holds no agentcad code and no permission rules. The skills call the ``agentcad`` command, which must be
-installed where the plugin is used; the policies they read come from that install (``agentcad policy``), and so do
-the hooks (agentcad.plugin_hooks). The layout, checked with ``claude plugin validate --strict`` (Claude Code
-2.1.302):
+    claude-code   a Claude Code plugin: the skills, the reviewer agent and the hooks, laid out where Claude Code
+                  looks for them (checked with ``claude plugin validate --strict``)
+    maceff        the policies as a policy root for the MacEff framework (https://github.com/cversek/MacEff):
+                  a folder it mounts through its MACEFF_POLICY_ROOTS variable
+    agents-md     one AGENTS.md for harnesses that read that file: the commands, each policy's navigation guide,
+                  the skills
+    api-tools     tool definitions for a model API, one per leaf command, with the mapping from a tool call back
+                  to a command line
+
+No export holds agentcad code or permission rules. The skills and tools call the ``agentcad`` command, which must
+be installed where the export is used; the policies they read come from that install (``agentcad policy``), and so
+do the hooks (agentcad.plugin_hooks). The claude-code layout:
 
     .claude-plugin/plugin.json        name, version (the package's), description, author, license
     .claude-plugin/marketplace.json   with ``marketplace``: a local marketplace offering this plugin from "./"
@@ -18,18 +26,19 @@ The same package always exports the same bytes: files in name order, JSON with s
 """
 import json
 import shutil
-from email.utils import parseaddr
-from importlib import metadata, resources
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import Callable, Dict, List, Optional, Union
 
-import agentcad
+from agentcad import bundle as bundles
+from agentcad.bundle import Bundle, Hook
 
-NAME = "agentcad"
-TARGETS = ("claude-code",)
-#: What an export writes at the top of its folder; an earlier export holds only these.
+NAME = bundles.NAME
+TARGETS = ("claude-code", "maceff", "agents-md", "api-tools")
+#: What a claude-code export writes at the top of its folder; an earlier export holds only these.
 WRITTEN = (".claude-plugin", "agents", "hooks", "skills")
-
+#: The file that marks every other target's export as agentcad's, so a re-export may replace it.
+MARKER = "agentcad-export.json"
+MACEFF_LINK = "https://github.com/cversek/MacEff"
 
 #: The harness events the plugin hooks, each with the tools it listens to (None: every occurrence) and the
 #: ``agentcad plugin hook`` event that answers it (agentcad.plugin_hooks).
@@ -59,123 +68,234 @@ class PluginError(Exception):
     pass
 
 
-def hooks() -> Dict[str, object]:
-    """hooks.json: each event handed to the runner, which hands it to ``agentcad plugin hook``."""
-    out: Dict[str, list] = {}
-    for harness_event, matcher, event in HOOKS:
-        entry: Dict[str, object] = {"hooks": [{"type": "command",
-                                               "command": f'"${{CLAUDE_PLUGIN_ROOT}}/{RUNNER}" {event}'}]}
-        if matcher:
-            entry["matcher"] = matcher
-        out[harness_event] = [entry]
-    return {"hooks": out}
+def collect() -> Bundle:
+    """The installed package as a bundle, with the hooks this module answers."""
+    return bundles.collect(hooks=tuple(Hook(*h) for h in HOOKS))
 
 
-def runner() -> bytes:
-    missing = json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": (
-        f"The agentcad plugin is loaded, but no agentcad command is on PATH here. Its skills call that command "
-        f"and will fail at their first step: install agentcad {agentcad.__version__} (pip install agentcad), "
-        f"then start the session again.")}}, sort_keys=True)
-    if "'" in missing:
-        raise PluginError("the runner's message holds a quote the shell script cannot carry")
-    return RUN_SH.format(version=agentcad.__version__, missing=missing).encode("ascii")
+def _json(value) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-def _metadata() -> Dict[str, str]:
-    try:
-        meta = metadata.metadata(NAME)
-    except metadata.PackageNotFoundError:
-        return {}
-    return {k: meta.get(k) or "" for k in ("Summary", "Author", "Author-email", "License-Expression", "License")}
+# --- claude-code ------------------------------------------------------------------------------------
 
-
-def _author(meta: Dict[str, str]) -> Dict[str, str]:
-    """The package's author as its metadata states it, else the package's name."""
-    name, email = parseaddr(meta.get("Author-email", ""))
-    name = name or meta.get("Author") or NAME
-    return {"name": name, "email": email} if email else {"name": name}
-
-
-def manifest() -> Dict[str, object]:
+def manifest(b: Optional[Bundle] = None) -> Dict[str, object]:
     """plugin.json: what the installed package's metadata says about itself."""
-    meta = _metadata()
-    out = {"name": NAME, "version": agentcad.__version__, "description": meta.get("Summary") or NAME,
-           "author": _author(meta)}
-    licence = meta.get("License-Expression") or meta.get("License")
-    if licence:
-        out["license"] = licence
+    b = b or collect()
+    out = {"name": b.name, "version": b.version, "description": b.description, "author": dict(b.author)}
+    if b.license:
+        out["license"] = b.license
     return out
 
 
-def marketplace() -> Dict[str, object]:
-    meta = manifest()
-    return {"name": NAME, "description": f"A local marketplace offering the {NAME} plugin", "owner": meta["author"],
-            "plugins": [{"name": NAME, "source": "./", "description": meta["description"],
+def marketplace(b: Optional[Bundle] = None) -> Dict[str, object]:
+    meta = manifest(b)
+    return {"name": meta["name"], "description": f"A local marketplace offering the {meta['name']} plugin",
+            "owner": meta["author"],
+            "plugins": [{"name": meta["name"], "source": "./", "description": meta["description"],
                          "version": meta["version"]}]}
 
 
-def _shipped(folder: str) -> list:
-    root = resources.files(NAME) / folder
-    return sorted((e for e in root.iterdir() if not e.name.startswith(("_", "."))), key=lambda e: e.name) \
-        if root.is_dir() else []
+def hooks(b: Optional[Bundle] = None) -> Dict[str, object]:
+    """hooks.json: each event handed to the runner, which hands it to ``agentcad plugin hook``."""
+    out: Dict[str, list] = {}
+    for hook in (b or collect()).hooks:
+        entry: Dict[str, object] = {"hooks": [{"type": "command",
+                                               "command": f'"${{CLAUDE_PLUGIN_ROOT}}/{RUNNER}" {hook.event}'}]}
+        if hook.matcher:
+            entry["matcher"] = hook.matcher
+        out[hook.harness_event] = [entry]
+    return {"hooks": out}
 
 
-def _files(with_marketplace: bool) -> Dict[str, bytes]:
-    """Every file of the export, by its path inside the export folder."""
-    def as_json(value) -> bytes:
-        return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+def runner(b: Optional[Bundle] = None) -> bytes:
+    b = b or collect()
+    missing = json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": (
+        f"The agentcad plugin is loaded, but no agentcad command is on PATH here. Its skills call that command "
+        f"and will fail at their first step: install agentcad {b.version} (pip install agentcad), "
+        f"then start the session again.")}}, sort_keys=True)
+    if "'" in missing:
+        raise PluginError("the runner's message holds a quote the shell script cannot carry")
+    return RUN_SH.format(version=b.version, missing=missing).encode("ascii")
 
-    files = {".claude-plugin/plugin.json": as_json(manifest()), "hooks/hooks.json": as_json(hooks()),
-             RUNNER: runner()}
+
+def claude_code(b: Bundle, with_marketplace: bool = False) -> Dict[str, bytes]:
+    files = {".claude-plugin/plugin.json": _json(manifest(b)), "hooks/hooks.json": _json(hooks(b)),
+             RUNNER: runner(b)}
     if with_marketplace:
-        files[".claude-plugin/marketplace.json"] = as_json(marketplace())
-    for skill in _shipped("skills"):
-        if skill.is_dir():
-            for entry in sorted(skill.iterdir(), key=lambda e: e.name):
-                if entry.is_file() and not entry.name.startswith(("_", ".")):
-                    files[f"skills/{skill.name}/{entry.name}"] = entry.read_bytes()
-    for agent in _shipped("agents"):
-        if agent.is_file() and agent.name.endswith(".md"):
-            files[f"agents/{agent.name}"] = agent.read_bytes()
-    if not any(p.startswith("skills/") for p in files):
+        files[".claude-plugin/marketplace.json"] = _json(marketplace(b))
+    for skill in b.skills:
+        for filename, data in skill.files:
+            files[f"skills/{skill.name}/{filename}"] = data
+    for agent in b.agents:
+        files[f"agents/{agent.filename}"] = agent.data
+    if not b.skills:
         raise PluginError("this agentcad ships no skills; the install is incomplete")
     return files
 
 
-def _clear(out: Path) -> None:
-    """Make ``out`` ready for an export: missing or empty, or an earlier export, which is removed. At the top of
-    ``out`` an export owns only the four entries it writes, and anything else there is refused by name; inside
-    those entries everything is the export's, so a file added there by hand is removed with the rest."""
+# --- maceff -----------------------------------------------------------------------------------------
+
+def _marker(b: Bundle, target: str) -> bytes:
+    return _json({"name": b.name, "target": target, "version": b.version})
+
+
+def maceff(b: Bundle) -> Dict[str, bytes]:
+    """The policies as a policy root: ``policies/`` is the folder to mount; the note beside it says how."""
+    if not b.policies:
+        raise PluginError("this agentcad ships no policies; the install is incomplete")
+    readme = f"""# {b.name} {b.version}: policies for MacEff
+
+The {len(b.policies)} files in `policies/` are {b.name}'s policies, byte for byte as the package ships them. They
+are written in the policy format MacEff reads ({MACEFF_LINK}), so MacEff can mount this folder as one more
+policy root, beside its own:
+
+    MACEFF_POLICY_ROOTS={b.name}=/path/to/this/folder/policies
+
+After that, `macf_tools policy list` shows them and `macf_tools policy navigate {b.name}:<name>` reads one.
+MacEff refuses a root that anyone but its own user can write.
+
+This folder is a copy, taken from {b.name} {b.version}. It stops changing when {b.name} does. Where MacEff runs
+with the same Python that has {b.name} installed, mount the installed folder instead and nothing goes stale;
+`{b.name} plugin export --target maceff` prints that folder when it runs. Export again after upgrading.
+"""
+    files = {MARKER: _marker(b, "maceff"), "README.md": readme.encode("ascii")}
+    for p in b.policies:
+        files[f"policies/{p.name}.md"] = p.text.encode("utf-8")
+    return files
+
+
+# --- agents-md --------------------------------------------------------------------------------------
+
+def _navigation(text: str) -> str:
+    """A policy's navigation guide: the questions under its guide heading, up to the boundary."""
+    from agentcad import policy
+
+    lines, _ = policy.navigation(text)
+    start = next((i for i, line in enumerate(lines) if line.strip() == "## CEP Navigation Guide"), None)
+    if start is None:
+        return ""
+    return "\n".join(lines[start + 1:]).strip()
+
+
+def agents_md(b: Bundle) -> Dict[str, bytes]:
+    out = [f"# {b.name} {b.version}", "", b.description, "",
+           f"This file was written by `{b.name} plugin export --target agents-md`. It names what {b.name} can do "
+           f"and where its know-how lives; the know-how itself stays in the installed command, so read it there "
+           f"and export again after upgrading.", "",
+           "## How to use it", "",
+           f"- Every capability is a command: `{b.name} --help`, then `{b.name} <command> --help`.",
+           f"- Every command has a policy that says what it means and how to use it. Before using a command, find "
+           f"its policy below, pick the question you have, and read that section: "
+           f"`{b.name} policy read <name> --section <number>`. `{b.name} policy navigate <name>` shows a guide "
+           f"again.",
+           "- The skills are workflows that read the policies in the right order; follow one when its moment "
+           "comes.", "",
+           "## Skills", ""]
+    for skill in b.skills:
+        out.append(f"- **{skill.name}**: {skill.description or 'see the skill file'}")
+    out += ["", "## Commands", ""]
+    for tool in b.tools:
+        out.append(f"- `{tool.command}`: {tool.help}")
+    out += ["", "## Policies: what to ask of each", ""]
+    for p in b.policies:
+        out += [f"### {p.name}: {p.title}", ""]
+        if p.commands:
+            out += ["Commands: " + ", ".join(f"`{c}`" for c in p.commands), ""]
+        guide = _navigation(p.text)
+        out += [guide or "(this policy has no navigation guide)", ""]
+    return {MARKER: _marker(b, "agents-md"), "AGENTS.md": ("\n".join(out).rstrip("\n") + "\n").encode("utf-8")}
+
+
+# --- api-tools --------------------------------------------------------------------------------------
+
+def api_tools(b: Bundle) -> Dict[str, bytes]:
+    if not b.tools:
+        raise PluginError("this agentcad has no commands to offer as tools")
+    readme = f"""# {b.name} {b.version}: tool definitions for a model API
+
+`tools.json` holds {len(b.tools)} tool definitions, one per {b.name} command: a `name`, a `description` and an
+`input_schema` (JSON Schema). Pass the list as the `tools` of a model API request.
+
+A tool only names a command line; your program runs it. From a tool call to the command:
+
+1. The tool's name is the command with underscores: `{b.name}_probe_rays` is `{b.name} probe rays`, and
+   `{b.name}_new_project` is `{b.name} new-project`. Each description ends with the exact command.
+2. Each input property is one argument; its description ends with the option it stands for, or `(positional)`.
+3. A boolean set true adds its option; false or absent adds nothing. A value adds the option and the value. A
+   list adds the option once per item where the option repeats, else the option followed by the items.
+   Positionals come last, in the schema's order.
+
+`{b.name}.bundle.argv_for(tool, values)` does exactly this for a tool of `{b.name}.plugin.collect().tools`, and
+refuses a name the command does not have or a required one left out. Run the result with the installed command,
+return its output and exit status as the tool result, and treat a non-zero status as the tool's error.
+
+The definitions say what a command takes, not when to use it. That is in the policies: `{b.name} policy list`.
+"""
+    return {MARKER: _marker(b, "api-tools"), "README.md": readme.encode("ascii"),
+            "tools.json": _json([bundles.tool_schema(t) for t in b.tools])}
+
+
+WRITERS: Dict[str, Callable[[Bundle], Dict[str, bytes]]] = {
+    "maceff": maceff, "agents-md": agents_md, "api-tools": api_tools}
+
+
+def files_for(b: Bundle, target: str, with_marketplace: bool = False) -> Dict[str, bytes]:
+    """Every file of an export of ``b`` for ``target``, by its path inside the export folder."""
+    if target not in TARGETS:
+        raise PluginError(f"no plugin target {target!r} (there is: {', '.join(TARGETS)})")
+    if target == "claude-code":
+        return claude_code(b, with_marketplace)
+    if with_marketplace:
+        raise PluginError(f"only the claude-code target has a marketplace manifest, not {target}")
+    return WRITERS[target](b)
+
+
+def _earlier(out: Path, target: str) -> bool:
+    """Whether ``out`` holds an earlier agentcad export for the same target."""
+    try:
+        if target == "claude-code":
+            return json.loads((out / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8")).get("name") == NAME
+        mark = json.loads((out / MARKER).read_text(encoding="utf-8"))
+        return mark.get("name") == NAME and mark.get("target") == target
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def _clear(out: Path, target: str, written: tuple) -> None:
+    """Make ``out`` ready for an export: missing or empty, or an earlier export for the same target, which is
+    removed. At the top of ``out`` an export owns only the entries it writes, and anything else there is refused by
+    name; inside those entries everything is the export's, so a file added there by hand is removed with the
+    rest."""
     if not out.exists():
         return
     if not out.is_dir():
         raise PluginError(f"{out} is a file, not a folder")
-    other = sorted(e.name for e in out.iterdir() if e.name not in WRITTEN)
+    other = sorted(e.name for e in out.iterdir() if e.name not in written)
     if other:
         raise PluginError(f"{out} holds files an export does not write ({', '.join(other[:5])}); "
                           f"give an empty folder or an earlier export")
     present = [e for e in out.iterdir()]
     if present:
-        try:
-            earlier = json.loads((out / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            earlier = None
-        if not isinstance(earlier, dict) or earlier.get("name") != NAME:
-            raise PluginError(f"{out} is not an earlier agentcad export (no .claude-plugin/plugin.json naming "
+        if not _earlier(out, target):
+            where = ".claude-plugin/plugin.json" if target == "claude-code" else MARKER
+            raise PluginError(f"{out} is not an earlier agentcad export (no {where} naming "
                               f"{NAME}); give an empty folder")
         for entry in present:
             shutil.rmtree(entry) if entry.is_dir() and not entry.is_symlink() else entry.unlink()
 
 
-def export(out: Union[str, Path], target: str = "claude-code", with_marketplace: bool = False) -> List[Path]:
-    """Write the plugin for ``target`` into ``out``; the files written, in order. A refusal (PluginError) is said
+def export(out: Union[str, Path], target: str = "claude-code", with_marketplace: bool = False,
+           bundle: Optional[Bundle] = None) -> List[Path]:
+    """Write the export for ``target`` into ``out``; the files written, in order. A refusal (PluginError) is said
     before anything is removed or written; a failure while writing (a full disk) can leave a partial export, which
     the next export replaces. A folder ``out`` that already existed keeps its own mode."""
     if target not in TARGETS:
         raise PluginError(f"no plugin target {target!r} (there is: {', '.join(TARGETS)})")
     out = Path(out)
-    files = _files(with_marketplace)
-    _clear(out)
+    files = files_for(bundle or collect(), target, with_marketplace)
+    written_top = WRITTEN if target == "claude-code" else tuple(sorted({rel.split("/")[0] for rel in files}))
+    _clear(out, target, written_top)
     created = not out.exists()
     written = []
     for rel in sorted(files):
