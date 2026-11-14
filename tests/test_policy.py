@@ -186,13 +186,69 @@ def test_policy_lints(name):
     assert guide_numbers == content_numbers, "the navigation guide numbers its topics like the content"
 
 
+# --- the enabling pattern --------------------------------------------------------------
+
+#: Policies not yet written in the enabling pattern (agentcad-policies, section 2.2). This list only shrinks: a
+#: policy upgraded while still listed fails below, so the list cannot hide a policy that is done.
+NOT_YET_UPGRADED = {
+    "agentcad-build123d", "agentcad-compare", "agentcad-design-practice", "agentcad-design-review", "agentcad-fit",
+    "agentcad-gcode", "agentcad-plugin", "agentcad-print-intent", "agentcad-printer-hosts", "agentcad-printers",
+    "agentcad-probe-construction", "agentcad-probe-inspect", "agentcad-probe-recover", "agentcad-projects",
+    "agentcad-prusaslicer", "agentcad-qc", "agentcad-records", "agentcad-render-export",
+    "agentcad-reverse-engineering", "agentcad-session", "agentcad-targets", "agentcad-viewer",
+}
+UPGRADED = [n for n in POLICIES if n not in NOT_YET_UPGRADED]
+
+
+def _top_headings(text):
+    """(number, title) of each top-level numbered content heading, in order."""
+    content = text.split(pol.BOUNDARY, 1)[1]
+    return [(m.group(1), m.group(2).strip()) for m in re.finditer(r"^## (\d+)\.? (.+)$", content, flags=re.M)]
+
+
+def test_the_not_yet_upgraded_list_names_only_policies_that_exist_and_are_not_upgraded():
+    assert NOT_YET_UPGRADED <= set(POLICIES), f"no such policy: {sorted(NOT_YET_UPGRADED - set(POLICIES))}"
+    done = [n for n in NOT_YET_UPGRADED if f"## {pol.REACHING}" in pol.get_policy(n).text]
+    assert not done, f"upgraded, so remove them from NOT_YET_UPGRADED: {sorted(done)}"
+    assert {"agentcad-policies", "agentcad-engines", "agentcad-start"} <= set(UPGRADED)
+
+
+@pytest.mark.parametrize("name", UPGRADED)
+def test_an_upgraded_policy_says_when_to_reach_for_it_then_recipes_then_constraints_with_their_probes(name):
+    p = pol.get_policy(name)
+    guide = p.text.split(pol.BOUNDARY, 1)[0]
+    purpose, reach, nav = (guide.find(h) for h in ("## Purpose", f"## {pol.REACHING}", "## CEP Navigation Guide"))
+    assert -1 < purpose < reach < nav, f"## {pol.REACHING} comes after the Purpose and before the guide"
+    headings = _top_headings(p.text)
+    titles = [t for _, t in headings]
+    assert pol.PATTERN_SECTIONS[0] in titles and pol.PATTERN_SECTIONS[1] in titles, titles
+    at = titles.index(pol.PATTERN_SECTIONS[0])
+    assert titles[at + 1] == pol.PATTERN_SECTIONS[1], "Constraints to Probe follows Recipes"
+    assert any(t.startswith("Integration") for t in titles[at + 2:]), "both come before the integration section"
+    found = pol.recipes(p)
+    assert len(found) >= (2 if p.commands else 1), "a command policy carries two recipes, a practice policy one"
+    _, lines = pol.section(p.text, headings[at + 1][0])
+    items = [line for line in lines if line.startswith("- ")]
+    assert items, "the constraints are a list"
+    unprobed = [line for line in items if "`agentcad " not in line and "tests/" not in line]
+    assert not unprobed, f"each constraint names the command or test that probes it: {unprobed}"
+
+
+@pytest.mark.parametrize("name", POLICIES)
+def test_a_diagram_in_a_policy_is_a_mermaid_kind_a_code_host_renders(name):
+    for at, body in pol.mermaid_blocks(pol.get_policy(name)):
+        first = next((line.strip() for line in body if line.strip()), "")
+        assert first and first.split()[0] in pol.MERMAID_KINDS, f"{name} line {at}: {first!r}"
+
+
 # --- the command ---------------------------------------------------------------------
 
-def test_policy_list_names_each_policy(capsys):
+def test_policy_list_names_each_policy_with_the_map_by_goal_first(capsys):
     cli.main(["policy", "list"])
     out = capsys.readouterr().out
     for name in ("agentcad-policies", "agentcad-session", "agentcad-gcode"):
         assert name in out
+    assert out.split()[0] == "agentcad-start", "an arriving agent reads the map by goal first"
     cli.main(["policy", "list", "--json"])
     records = json.loads(capsys.readouterr().out)
     assert any("agentcad session iterate" in r["commands"] for r in records)
