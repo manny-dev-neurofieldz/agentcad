@@ -757,6 +757,9 @@ COMMANDS = (
                           "manifest": ("{D}/lib/projects/latch/exports/latch.print.json",)}, cells=(
         Cell("--as-of", ("--as-of", "2026-03-11"), CHANGES),
         Cell("--json", ("--json",), CHANGES),
+        # a role nobody has: refused where the roles command is installed, and where it is not
+        Cell("--declare-on", ("--declare-on", "no-such-role-for-the-flag-contract"), REFUSES),
+        Cell("--apply", ("--apply",), REFUSES),
     )),
 )
 
