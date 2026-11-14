@@ -38,6 +38,13 @@ A part library keeps its history in record files: what each part is and how it f
 - Which work do the records say is owed, and from which fields?
 - What makes two runs agree on the same duty?
 
+**5.1 Declaring Owed Work on a Role**
+- What does a dry run show, and what does applying change?
+- How is a duty that was declared before recognised?
+- What does the command never do to a role?
+- What is reported when a closed duty's work is owed again?
+- Why are the duties declared without dates?
+
 **6 Writing Structured Fields from Prose**
 - How is a structured field filled in from an older record without inventing anything?
 
@@ -133,13 +140,23 @@ One record file checked alone is checked for its own fields only: the parts and 
 
 ## 5 Owed Work
 
-`agentcad duties <path> [--as-of DATE] [--json]` reads the same records and lists the work they say is owed, from the structured fields alone:
+`agentcad duties <path> [--as-of DATE] [--json] [--declare-on ROLE [--apply]]` reads the same records and lists the work they say is owed, from the structured fields alone:
 
 - **Record a verdict**: a job that printed (`[outcome] date_printed`) and has no verdict, or a pending one. A job without a verdict of its own whose items all carry verdicts is judged by their sum (section 3.1).
 - **Print by the plan**: a job whose `[job] planned` day is before the day asked about (`--as-of`, default today), that has not printed and is not cancelled.
 - **Re-run a fit**: a fit whose sources have changed since it was recorded (a snapshot's SHA-256 differs from the file's now, or the file is gone), or one that recorded no snapshots and so cannot say whether it still holds. A fit recorded on both parts, the same two parts at the same time, is one duty.
 
 Each duty says what is owed, why, and the record files and keys it was read from. Each has a stable key (`record_verdict:job=<job>`, `print_by_plan:job=<job>`, `refit:<part>+<part>@<recorded>`): the same work owed on another day gives the same key, so a tool that files duties elsewhere can tell a new duty from one it filed before. The command exits 0 whatever is owed (owed work is not an error), and 2 when the path holds no records. When the records have errors it says so on stderr, since a duty read from a malformed field may be wrong, and still lists what it can read. `--json` prints the duties with the schema `agentcad.duties/1`. The command never edits a record and does not decide who owes the work.
+
+### 5.1 Declaring Owed Work on a Role
+
+Where the MacEff framework is installed (https://github.com/cversek/MacEff), the owed work can be held as duties on the standing role that keeps the library, so it is seen where that agent already looks. Who that role is, is the caller's to say: `--declare-on ROLE` names it on the command line, and nothing in a library or in agentcad records it.
+
+`agentcad duties <path> --declare-on ROLE` reads the role's duties through MacEff's own command (`macf_tools role show ROLE --all --json`) and prints four lists: owed work with no duty yet (to declare); owed work already declared and open; owed work whose duty was closed (done or deferred), which is in nobody's open list; and duties declared earlier, still open, that the records no longer give. A role named by a prefix is reported by the id the roles command resolved. Nothing is changed. With `--apply` each missing duty is declared (`macf_tools role duty add`), titled with what is owed; its body says why, names the record files and keys it was read from, and ends with the line `agentcad-duty: <key>`. That line is how a later run recognises the duty, so applying twice declares nothing the second time. `--apply` without `--declare-on` is refused, and so is `--apply` on records that have errors, since a duty read from a malformed field may be wrong. With `--json` the same lists are under `roles`.
+
+The command only reads and declares. It never closes, reopens, edits or removes a duty: work the records no longer give is reported for the duty's holder to close with the evidence, and work owed again under a closed duty is reported for the holder to reactivate or leave, as the role's own rules ask. A duty whose key line was edited out of its body is no longer recognised, and the work is declared again. Duties declared by hand, with no key line, are left out of every list. A role that cannot be read (no `macf_tools` on PATH, an unknown role, an answer that is not the documented JSON) is an error with exit 2, never an empty role, because an empty role would declare everything again.
+
+Every duty is declared without a due date. In MacEff a dated duty needs a horizon, the lead time at which it starts to press, and that is its declarer's reasoning about the work; a generator has none to give. A planned day stays in the duty's text, and its holder may date the duty.
 
 ## 6 Writing Structured Fields from Prose
 
