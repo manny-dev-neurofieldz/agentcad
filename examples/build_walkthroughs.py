@@ -19,8 +19,9 @@ Usage: python examples/build_walkthroughs.py [--only NAME ...] [--verify] [--roo
             the walkthroughs live in another checkout
   --images  the folder the pictures live in, <images>/<name>/DEST (default: <repo>/docs/images)
 
-A walkthrough whose engine is not installed is skipped with the reason, except under --verify with
-AGENTCAD_DOCS_STRICT=1 (CI), where that is an error. Exit status: 0 all good, 1 a problem, 2 a usage error.
+A walkthrough whose engine is not installed (or, for build123d and VoxelCAD, cannot render because PyVista is
+missing) is skipped with the reason, except under --verify with AGENTCAD_DOCS_STRICT=1, where that is an
+error; tests/test_repo_docs.py sets it on GitHub Actions. Exit status: 0 all good, 1 a problem, 2 a usage error.
 """
 
 import argparse
@@ -165,6 +166,16 @@ def missing_engines(wt: Walkthrough) -> List[str]:
     return [n for n in _engines_named(wt) if not get_engine(n).available()]
 
 
+def engines_without_pyvista(wt: Walkthrough) -> List[str]:
+    """The Python engines this walkthrough uses, when PyVista (which renders their pictures) is not
+    installed; the same rule as tests/test_recipes.py."""
+    import importlib.util
+
+    if importlib.util.find_spec("pyvista") is not None:
+        return []
+    return [n for n in _engines_named(wt) if n in ("build123d", "voxelcad")]
+
+
 def make_workspace(kind: str, scratch: Path) -> None:
     """The scratch workspace test_recipes.py gives a recipe: a copy of examples/ and, for `fixtures`,
     tests/data as ./fixtures."""
@@ -250,9 +261,10 @@ def save_image(src: Path, dest: Path) -> str:
 
 def process(wt: Walkthrough, images_root: Path, verify: bool, strict: bool) -> List[str]:
     """Build or verify one walkthrough. Returns the problems (empty when all is well); prints progress."""
-    absent = missing_engines(wt)
-    if absent:
-        reason = f"engine {', '.join(absent)} is not installed here"
+    absent, unrendered = missing_engines(wt), engines_without_pyvista(wt)
+    if absent or unrendered:
+        reason = (f"engine {', '.join(absent)} is not installed here" if absent else
+                  f"engine {', '.join(unrendered)} renders with PyVista, which is not installed here")
         if verify and strict:
             return [f"{wt.path}: {reason} (AGENTCAD_DOCS_STRICT=1)"]
         print(f"skip {wt.name}: {reason}")

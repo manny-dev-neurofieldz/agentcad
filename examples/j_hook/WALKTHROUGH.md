@@ -1,6 +1,6 @@
 # Walkthrough: a pegboard hook in build123d, and when to stop changing the part
 
-A J-shaped hook swept from a round section, with a peg that plugs a pegboard hole. The design question here is how it prints. This walkthrough is one session that tries three answers, measures each, and ends on a decision rather than on a quiet QC report. Every command below runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
+A J-shaped hook swept from a round section, with a peg that plugs a pegboard hole. The design question here is how it prints. This walkthrough is one session that tries three answers, measures each, and ends on a decision rather than on a quiet QC report. Every command below runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it. Each block runs in a workspace of its own, so it starts the session again and replays the iterations before it.
 
 **Skill**: design-session, then render-gate and print-prep (see `agentcad policy navigate start`).
 **Policies read**: `engines` (why build123d: a swept B-rep with exact faces to measure), `design-practice` (pin the load-bearing dimension, a feature is a delta), `qc` (overhangs, the print pose, suppressions with a reason), `probe-inspect` (rays).
@@ -60,9 +60,13 @@ qc: 0 error(s), 4 warning(s)
 # recipe: examples
 $ agentcad session start examples/j_hook
 Session started
-$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v3.py
+$ agentcad session iterate examples/j_hook examples/j_hook/source/j_hook.py
 Iteration v1 recorded
-# image: examples/j_hook/_work/v1/j_hook_v1_iso.png -> v3_iso.png
+$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v2.py
+Iteration v2 recorded
+$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v3.py
+Iteration v3 recorded
+# image: examples/j_hook/_work/v3/j_hook_v3_iso.png -> v3_iso.png
 $ agentcad qc examples/j_hook
 qc: 0 error(s), 0 warning(s)
 $ agentcad probe rays examples/j_hook/walkthrough/v3.py --line 0,-10,3:0,1,0 --length 20
@@ -81,9 +85,15 @@ material 4.8678 in 1 run(s)
 # recipe: examples
 $ agentcad session start examples/j_hook
 Session started
-$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v4.py
+$ agentcad session iterate examples/j_hook examples/j_hook/source/j_hook.py
 Iteration v1 recorded
-# image: examples/j_hook/_work/v1/j_hook_v1_front.png -> v4_front.png
+$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v2.py
+Iteration v2 recorded
+$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v3.py
+Iteration v3 recorded
+$ agentcad session iterate examples/j_hook examples/j_hook/walkthrough/v4.py
+Iteration v4 recorded
+# image: examples/j_hook/_work/v4/j_hook_v4_front.png -> v4_front.png
 $ agentcad qc examples/j_hook
 suppressed: max_overhang
 qc: 0 error(s), 0 warning(s)

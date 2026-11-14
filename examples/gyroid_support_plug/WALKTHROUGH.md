@@ -1,6 +1,6 @@
 # Walkthrough: a gyroid support plug in VoxelCAD, judged against the right printer
 
-A flexible gyroid body under a friction-fit plug, built on a voxel grid. The lattice's sheets are meant to be thin. This walkthrough is one session that first judges the part against the wrong printer, then the right one, then makes two changes and looks at what each costs. It ends with a decision left to the designer, as a real session often does. Every command runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it.
+A flexible gyroid body under a friction-fit plug, built on a voxel grid. The lattice's sheets are meant to be thin. This walkthrough is one session that first judges the part against the wrong printer, then the right one, then makes two changes and looks at what each costs. It ends with a decision left to the designer, as a real session often does. Every command runs exactly as printed (`python examples/build_walkthroughs.py --verify` replays it), and the pictures are rebuilt from it. Each block runs in a workspace of its own, so it starts the session again and replays the iterations before it.
 
 **Skill**: design-session, then render-gate (see `agentcad policy navigate start`).
 **Policies read**: `engines` (why VoxelCAD: a lattice is a field, not faces; what `resolution_mm` means), `qc` (the printer the rules come from), `session` (the tray's solid count).
@@ -18,7 +18,7 @@ counts     solids 1
 $ agentcad qc examples/gyroid_support_plug
 against Original Prusa MK4
 warning: max_overhang
-qc: 0 error(s)
+qc: 0 error(s), 521 warning(s)
 ```
 
 ![Iteration 1, iso view](../../docs/images/gyroid_support_plug/v1_iso.png)
@@ -38,6 +38,7 @@ against Formlabs Form 3
 warning: min_feature
 limits: min_wall_mm 0.4 (process default (resin)), min_feature_mm 0.3
 not measured: max_overhang (no overhang limit for this process
+qc: 0 error(s), 104 warning(s)
 ```
 
 **Measured**: the overhang rule does not apply to this process, and about a hundred warnings remain: slivers of sheet a few hundredths of a millimetre thick where the body's cylinder trims the lattice, under the resin process's 0.3 mm. (A project states its printer in `[qc] printer`; `--printer` tries one without editing the file.)
@@ -50,12 +51,14 @@ not measured: max_overhang (no overhang limit for this process
 # recipe: examples
 $ agentcad session start examples/gyroid_support_plug
 Session started
-$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/source/gyroid_support_plug.py -D wall=0.5
+$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/source/gyroid_support_plug.py
 Iteration v1 recorded
+$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/source/gyroid_support_plug.py -D wall=0.5
+Iteration v2 recorded
 the part is in pieces
-# image: examples/gyroid_support_plug/_work/v1/gyroid_support_plug_v1_iso.png -> v3_iso.png
+# image: examples/gyroid_support_plug/_work/v2/gyroid_support_plug_v2_iso.png -> v3_iso.png
 $ agentcad qc examples/gyroid_support_plug --printer form3
-qc: 0 error(s)
+qc: 0 error(s), 8 warning(s)
 ```
 
 ![Iteration 3, iso view: it looks whole](../../docs/images/gyroid_support_plug/v3_iso.png)
@@ -70,12 +73,16 @@ qc: 0 error(s)
 # recipe: examples
 $ agentcad session start examples/gyroid_support_plug
 Session started
-$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/walkthrough/skin.py -D wall=0.5 -D skin=0.5
+$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/source/gyroid_support_plug.py
 Iteration v1 recorded
-counts     solids 1
-# image: examples/gyroid_support_plug/_work/v1/gyroid_support_plug_v1_iso.png -> v4_iso.png
+$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/source/gyroid_support_plug.py -D wall=0.5
+Iteration v2 recorded
+$ agentcad session iterate examples/gyroid_support_plug examples/gyroid_support_plug/walkthrough/skin.py -D wall=0.5 -D skin=0.5
+Iteration v3 recorded
+counts     solids 1 (-2)
+# image: examples/gyroid_support_plug/_work/v3/gyroid_support_plug_v3_iso.png -> v4_iso.png
 $ agentcad qc examples/gyroid_support_plug --printer form3
-qc: 0 error(s)
+qc: 0 error(s), 4 warning(s)
 ```
 
 ![Iteration 4, iso view: the lattice closed into a cup](../../docs/images/gyroid_support_plug/v4_iso.png)

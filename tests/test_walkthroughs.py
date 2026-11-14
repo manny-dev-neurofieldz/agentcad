@@ -139,6 +139,20 @@ def test_a_walkthrough_whose_engine_is_missing_is_skipped_unless_strict(tree, ca
     assert run(root, images) == 0, "building still skips: strict is a verify rule"
 
 
+def test_a_python_engine_without_pyvista_is_skipped_with_that_reason(tree, capsys, monkeypatch):
+    root, images, write = tree
+    write(TINY)
+    monkeypatch.setattr(bw, "_engines_named", lambda wt: ["voxelcad"])
+    monkeypatch.setattr(bw, "missing_engines", lambda wt: [])
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "pyvista" else real(name, *a))
+    assert run(root, images, "--verify") == 0
+    assert "skip tiny: engine voxelcad renders with PyVista, which is not installed here" in capsys.readouterr().out
+    monkeypatch.setenv("AGENTCAD_DOCS_STRICT", "1")
+    assert run(root, images, "--verify") == 1
+    assert "PyVista" in capsys.readouterr().err
+
+
 def test_only_names_a_walkthrough_and_an_unknown_name_is_an_error(tree):
     root, images, write = tree
     write("# nothing\n")
