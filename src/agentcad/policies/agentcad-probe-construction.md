@@ -9,6 +9,13 @@
 
 Two construction questions recur and cannot be answered from the finished part. A fillet that fails was asked of edges that existed at the moment of the call, often next to a tiny step left by an earlier operation, and later operations may remove those edges before anyone looks. A part meant to leave a mold, a die or a support needs every side face leaning the right way, and a render does not show a degree. `agentcad probe fillet` stops a program at the call that fails and reports the edges as they were; `agentcad probe draft` measures the draft of every face against a pull direction. This policy says what each reports and how to act on it.
 
+## Reaching for It
+
+- A fillet or chamfer that fails, or builds in one revision and not the next: `agentcad probe fillet`, which stops the program at that call and reports the edges as they were.
+- Whether a part leaves a mold, a die or a support: `agentcad probe draft` against the pull direction.
+- A fillet that built but may not be there: the face census and its change after the feature (`agentcad-build123d`, section 3).
+- A width, an axis or a knob: `agentcad-probe-inspect`.
+
 ## CEP Navigation Guide
 
 **1 Why a Fillet Fails**
@@ -24,13 +31,19 @@ Two construction questions recur and cannot be answered from the finished part. 
 - Which faces are not judged, and why?
 - How is a minimum draft enforced?
 
-**3 Integration with Other Policies**
+**3 Recipes**
+- What does a fillet probe and a draft check look like, as commands?
+
+**4 Constraints to Probe**
+- Which limits of the construction probes are found by a command first?
+
+**5 Integration with Other Policies**
 - Which policies cover the construction these probes diagnose?
 
-**4 Anti-Patterns**
+**6 Anti-Patterns**
 - Which ways of handling a failing fillet or a draft check mislead?
 
-**5 Evolution and Feedback**
+**7 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -59,19 +72,53 @@ A fillet that fails is pointing at an artifact. The usual one is a step or a lin
 
 `--min-draft DEG` judges the side faces: those whose smallest draft is under it are listed as UNDERCUT, no draft or too little, worst first (up to `--show` lines, default 12; without `--min-draft` nothing is listed, and `--show` is named on stderr as ignored), and the command exits 1 when there is any. `-o`/`--output` writes the record as JSON, and `-D`/`--define` overrides a program's parameters (named as ignored for a STEP file). An STL is refused by name: draft is read on exact faces.
 
-## 3 Integration with Other Policies
+## 3 Recipes
 
+The peg's chamfer, probed at the call that makes it: the edge it was asked of, and the sizes that would still build.
+
+```console
+# recipe: examples
+$ agentcad probe fillet examples/peg_plate/source/peg_plate.py --at chamfer -D part=peg
+chamfer call 0 in examples/peg_plate/source/peg_plate.py: 1 edge(s) selected, size 0.5
+edge 0: circle 15.394 mm
+whole selection at 1.0: ok
+watertight: yes
+```
+
+One circular edge, the peg's top, and every size tried builds: the chamfer is safe to grow to 1 mm. A program with no such call is refused with the count it saw:
+
+```console
+# recipe: examples
+$ agentcad probe fillet examples/peg_plate/source/peg_plate.py -D part=peg
+# exit 2
+no fillet call number 0 (saw 0)
+$ agentcad probe draft examples/peg_plate/source/peg_plate.py -D part=peg
+2 side face(s), draft +0.000 .. +45.000 deg; 2 perpendicular to the pull (not judged)
+```
+
+Pulled along +z the peg's wall has no draft (0 degrees) and its chamfer 45; top and bottom are perpendicular and not judged. A mold for this peg would drag on its wall: add draft, or pull it another way.
+
+## 4 Constraints to Probe
+
+- Only a program can be stopped at a call: `agentcad probe fillet` refuses a STEP or a mesh by name, and a program with fewer calls than `--index` with the count it saw.
+- A shape's own fillet method is not intercepted: `agentcad probe fillet` reports no call for it; call build123d's `fillet` function to probe it.
+- A face square to the pull is not judged: `agentcad probe draft` lists such faces as perpendicular rather than folding them into a number.
+- The draft is measured at a grid of points: `agentcad probe draft SOURCE --samples N` at a finer grid shows a curved face's true range.
+
+## 5 Integration with Other Policies
+
+- `agentcad-start`: where these probes sit among the goals.
 - `agentcad-build123d`: the construction practice that keeps fillets building.
 - `agentcad-probe-inspect`: rays, knobs and the inventory, for the rest of a part's inspection.
 - `agentcad-qc`: design rules judged against a printer before staging.
 - `agentcad-policies`: how this policy is found and read.
 
-## 4 Anti-Patterns
+## 6 Anti-Patterns
 
 - **Probing the finished part for a fillet that failed earlier**: later cuts removed the edges; stop at the call.
 - **A bare except around a fillet**: the failure ships silently on every revision while the part still reads valid; let it fail and probe it.
 - **A draft check with no pull direction thought through**: the answer depends on the direction; state it from how the part leaves its mold or support.
 
-## 5 Evolution and Feedback
+## 7 Evolution and Feedback
 
 This policy ships with agentcad and changes with these probes; a change to either updates this policy in the same pull request.

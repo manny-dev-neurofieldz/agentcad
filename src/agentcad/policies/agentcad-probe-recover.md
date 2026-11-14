@@ -9,6 +9,14 @@
 
 A part to be rebuilt keeps its construction in the curves of its sections. In a body made of exact edges the arcs and lines can be read directly; in a mesh-converted body they survive only as hundreds of short edges whose vertices lie on them. The recover commands read those curves back as what a designer would have drawn (lines, arcs, which arc is tangent to which) and label every number with where it came from. The sketches of a design dump say what was drawn, which the finished solid does not; `probe sketches` reads them and says which drawn dimensions the part still carries. This policy says how to use these commands to recover a construction without inventing one.
 
+## Reaching for It
+
+- The loops of a part's section, read back as exact lines and arcs with their fit: `agentcad probe section --arcs`.
+- One loop written out as a list of segments a program can build from: `agentcad probe section --chain N`.
+- What a design's own sketches drew, and which of those numbers the part still carries: `agentcad probe sketches DUMP --against PART`.
+- A width or an axis rather than a curve: `agentcad probe rays` and `agentcad probe inventory` (`agentcad-probe-inspect`).
+- The order of work for a replication: `agentcad-reverse-engineering`.
+
 ## CEP Navigation Guide
 
 **1 What Recovery Is For**
@@ -67,13 +75,19 @@ A part to be rebuilt keeps its construction in the curves of its sections. In a 
 - How is a dimension matched against a part, and with what tolerance?
 - Which sketches cannot be matched, and what does the output say then?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- How is a part's outline recovered as a chain a program can build from?
+
+**7 Constraints to Probe**
+- Which limits of a recovered curve are found by a command before it is built from?
+
+**8 Integration with Other Policies**
 - Which policies govern what follows a recovery?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - Which readings of these reports are wrong?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -232,12 +246,50 @@ Every number read from the dump is DRAWN: the radius of each circle and arc, the
 
 A dimension compared and not found is printed `absent from the section`: it was drawn and the part does not have it. A later feature may have changed it, or the curve may only ever have been construction; the timeline says which features follow the sketch. A sketch whose plane is not along an axis, or that has no usable origin and directions, is not compared; the output says why and its dimensions stay DRAWN only. Without the build123d backend `--against` says so on stderr and leaves every dimension DRAWN only.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+The hook's outline in its own plane, written as the chain a build123d program builds from: every segment ends where the next begins, and arcs come back with their centres and radii.
+
+```console
+# recipe: examples
+$ agentcad probe section examples/j_hook/source/j_hook.py --planes y=0 --chain 1
+18 segment(s) (14 line, 4 arc), counter-clockwise; coordinates are (x, z) in mm: build on Plane.XZ
+LOOP = [
+("arc", (6.0000, -19.0000), 8.5000, (-2.5000, -19.0000), (6.0000, -27.5000), "ccw"),
+("arc", (6.0000, -19.0000), 3.5000, (6.0000, -22.5000), (2.5000, -19.0000), "cw"),
+```
+
+Two arcs share a centre at (6, -19) with radii 8.5 and 3.5: the bend's outer and inner faces, 5 mm apart, which is the wire's diameter. That is the relation to write into a program (bend radius plus and minus half the wire), not the two radii as numbers. Next: build the chain on the plane it names and compare (`agentcad-compare`).
+
+A mesh's section is polylines; `--arcs` reads each back with its fit:
+
+```console
+# recipe: examples
+$ agentcad export examples/peg_plate/source/peg_plate.py -D part=plate -o plate.stl
+Exported:
+$ agentcad probe section plate.stl --planes z=0 --arcs
+loops are polylines from triangle-plane intersection
+loop 2: length 15.71, 126 line; fits a circle r 2.5
+r 2.5000  center (15.0000, -0.0000)  sweep 360.00 deg
+```
+
+The fit's rms is a few tenths of a micron, so the 126 lines are one circle. Next: check the joints the reading reports before trusting a tangency (section 3.1).
+
+## 7 Constraints to Probe
+
+- A loop read from a mesh is the tessellation's, not the part's: `agentcad probe section` says so on its first line, and its arcs carry the rms of their fit.
+- A circle fitted across two curves fits badly: `agentcad probe section --arcs` reports each fit's rms and maximum; a large one is two features (section 3.2).
+- A chain must close on itself to make a face: `agentcad probe section --chain N` reports the slivers it merged and every joint; a program built from it is checked by its solid count (`agentcad session iterate`).
+- A sketch's number is the part's only if the part still carries it: `agentcad probe sketches DUMP --against PART` marks each APPLIED or not.
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where recovering a part sits among the goals.
+- `agentcad-reverse-engineering`: the order of work these probes serve.
 - `agentcad-session`: a program built from a chain is iterated, read and noted like any other. The measured solid count and face census say whether the rebuild closed and which faces it has.
 - `agentcad-policies`: how this and every other policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **A radius without its evidence**: building on a fitted number without reading `rms`, `max` and `n`.
 - **Reading tangency from the verdict word alone**: `tangent` with a gap near the tolerance is a joint to measure again; `kinked` is a joint to look at, not an error.
@@ -248,6 +300,6 @@ A dimension compared and not found is printed `absent from the section`: it was 
 - **Reading APPLIED as proof of intent**: a drawn length that equals an unrelated edge's length is APPLIED too; the loop named in the label says where.
 - **Recovering a part that is a polygon**: a faceted body with many small turns is read as a circle. Check `n` and the sweep per vertex.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy ships with agentcad and changes with the commands it governs; a change to the behaviour of `probe section` or `probe sketches` updates this policy in the same pull request.

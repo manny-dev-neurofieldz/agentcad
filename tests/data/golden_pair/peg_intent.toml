@@ -1,0 +1,5 @@
+# The intent the golden pair's peg was meant to print with, for the recipes in the print policies:
+# the slice has 0.2 mm layers, so this file's 0.15 mm disagrees with it on purpose.
+[print]
+material = "ASA"
+layer_height = 0.15

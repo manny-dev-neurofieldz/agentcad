@@ -71,7 +71,7 @@ def embedded_config(path: Union[str, Path]) -> Dict[str, str]:
         return dict(bgcode.read(path).metadata.get("slicer_metadata", {}))
     if is_3mf(path):
         return config_from_3mf(path)
-    return config_from_text(path.read_text(encoding="utf-8", errors="replace"))
+    return config_from_text(bgcode.plain_text(path))
 
 
 def _comments(text: str):

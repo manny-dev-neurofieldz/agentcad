@@ -9,6 +9,13 @@
 
 An existing part is a record of decisions: a hub radius, a fillet family, an offset by a beam width. Reverse engineering recovers those decisions so the new part can be built from them, rather than tracing the old part's outline to a tolerance and inheriting its accidents. agentcad's probes read the evidence (sketches where they survive, exact section curves, polylines that were arcs) and its comparison judges the result feature by feature. This policy gives the order of work, how each kind of evidence is read, and how an edit to a solid with no source is made safely.
 
+## Reaching for It
+
+- A part that exists only as a STEP, a mesh or a design record, to be replicated or revised: this practice, with the reverse-engineer skill.
+- A part whose source you have: change the source in a session instead (`agentcad-session`).
+- Removing one feature from a solid with no source, without rebuilding it: section 7.
+- Only measuring a part, not rebuilding it: the probes on their own (`agentcad-probe-inspect`, `agentcad-probe-recover`).
+
 ## CEP Navigation Guide
 
 **1 Before Starting**
@@ -37,16 +44,34 @@ An existing part is a record of decisions: a hub radius, a fillet family, an off
 - How is a feature removed from a solid that has no parametric source?
 - How is such an edit verified and recorded?
 
-**8 Integration with Other Policies**
+**8 Recipes**
+- What does recovering a part from its STEP and judging the rebuild look like, as commands?
+- How are a mesh's polylines read back as arcs?
+
+**9 Constraints to Probe**
+- Which step of the method is checked by which command?
+
+**10 Integration with Other Policies**
 - Which commands carry out each step?
 
-**9 Anti-Patterns**
+**11 Anti-Patterns**
 - Which shortcuts recover the wrong intent?
 
-**10 Evolution and Feedback**
+**12 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
+
+```mermaid
+flowchart TD
+    A["decide: may the source be read; faithful to outline or intent"] --> B["archaeology: probe sketches --against"]
+    B --> C["probe inventory: census and axes"]
+    C --> D["probe section --planes --arcs: loops as arcs and lines"]
+    D --> E["build forward in a session"]
+    E --> F{"compare: loop counts, then windows, then deviation"}
+    F -- "a count or a window differs" --> D
+    F -- "matches" --> G["finalize, the comparison kept"]
+```
 
 ## 1 Before Starting
 
@@ -93,8 +118,54 @@ When the parametric source is lost or locked and only a STEP remains, a small ed
 
 Measure such a solid on its tessellation: a bounding box of an untessellated spline surface can bound its control points, not the surface. A volume integrated from the solid is exact and is the cross-check. And a feature is not its most visible face; enumerate the faces of the region before classifying them.
 
-## 8 Integration with Other Policies
+## 8 Recipes
 
+A plate known only by its STEP: its census and axes say how it was made, a section through it gives the loops as exact lines and arcs, and the program rebuilt from those numbers is judged against it. (The STEP is written first here only so the recipe has an original to read.)
+
+```console
+# recipe: examples
+$ agentcad export examples/peg_plate/source/peg_plate.py -f step -D part=plate -o original.step
+Exported:
+$ agentcad probe inventory original.step
+bbox_size [60.0, 20.0, 6.0]
+census {'plane': 6, 'cylinder': 3
+cylinder r 2.5: axis through (-15, 0, -4) along (0, 0, 1)
+cylinder r 2.5: axis through (15, 0, -4) along (0, 0, 1)
+$ agentcad probe section original.step --planes z=0 --arcs
+z=0 (at 0): 4 loop(s)
+r 2.5000  center (-15.0000, 0.0000)  sweep 360.00 deg
+$ agentcad compare original.step examples/peg_plate/source/peg_plate.py --planes z=0 -D part=plate
+z=0: loops 4 vs 4 ok
+deviation candidate->original p95 0
+```
+
+The census says a block with three through holes and no fillets; the axes give their pitch (15 mm) and the section their radius (2.5 mm) as exact numbers, so the program states them as parameters rather than traced curves. The rebuild's loop counts match on the plane, and its deviation sits at the sampling floor. Next: a window per feature that matters (`agentcad-compare`).
+
+The same plate as a mesh: each hole is 126 short lines, and `--arcs` reads them back as the circle they approximate, with how well it fits.
+
+```console
+# recipe: examples
+$ agentcad export examples/peg_plate/source/peg_plate.py -D part=plate -o original.stl
+Exported:
+$ agentcad probe section original.stl --planes z=0 --arcs
+loops are polylines from triangle-plane intersection
+loop 2: length 15.71, 126 line; fits a circle r 2.5
+1 arc  ccw convex  r 2.5000  center (15.0000, -0.0000)  sweep 360.00 deg
+```
+
+A fit's rms is read before its radius: a circle fitted across two curves (an edge and its fillet) fits badly, and that is the warning that the loop holds two features (section 4). Next: the recovered numbers into the program, then compare against the STEP if there is one.
+
+## 9 Constraints to Probe
+
+- What the design's own record still carries (section 2): `agentcad probe sketches DUMP --against PART.step` marks each drawn number APPLIED or not.
+- How the part was made (section 3): `agentcad probe inventory PART.step` gives the face census and every cylinder's and cone's axis.
+- Which curves a loop is made of (section 4): `agentcad probe section PART --planes ... --arcs` recovers arcs and lines with their fit; a long chain is read whole with `--chain N`.
+- Whether the rebuild has every feature (section 6): `agentcad compare ORIGINAL REBUILD --planes ...` fails its gate on a missing or extra loop.
+- Whether a feature removed from a source-less solid is gone and nothing else changed (section 7): `agentcad compare` of the edited solid against the original, with a window on the removed feature and on its neighbours.
+
+## 10 Integration with Other Policies
+
+- `agentcad-start`: where recovering a part sits among the goals.
 - `agentcad-probe-recover`: `probe sketches`, `probe section --arcs` and `--chain`.
 - `agentcad-probe-inspect`: `probe inventory`, rays and knobs.
 - `agentcad-compare`: the gate, the windows and the deviation.
@@ -102,7 +173,7 @@ Measure such a solid on its tessellation: a bounding box of an untessellated spl
 - `agentcad-design-practice`: what the replication is faithful to.
 - `agentcad-policies`: how this policy is found and read.
 
-## 9 Anti-Patterns
+## 11 Anti-Patterns
 
 - **Tracing instead of recovering**: an outline matched to a tolerance carries every accident of the original and none of its parameters.
 - **A symmetry assumed**: two arms of a part can differ; read each.
@@ -110,6 +181,6 @@ Measure such a solid on its tessellation: a bounding box of an untessellated spl
 - **A capped loop count**: a listing that kept N loops hides loop N + 1.
 - **Cutting before matching**: a feature identified from the solid alone is a guess.
 
-## 10 Evolution and Feedback
+## 12 Evolution and Feedback
 
 This policy changes as replications teach; a step is added here when it has recovered intent on more than one part.

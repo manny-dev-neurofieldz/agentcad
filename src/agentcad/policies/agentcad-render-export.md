@@ -9,6 +9,14 @@
 
 Most design work runs in a session, which keeps every iteration and compares each with the last. Sometimes one look or one file is all that is needed: a quick render of a source someone sent, an STL of a finished program, a plate of test pieces that differ in one dimension. `agentcad render` and `agentcad export` do that on any source, with the engine its project names. This policy says what each produces, where, how a variant plate is made, and when a session is the better tool.
 
+## Reaching for It
+
+- One look at a source someone sent, or at a knob's effect, with nothing to keep: `agentcad render`.
+- One file of a finished program (STL for a slicer, STEP for another CAD tool): `agentcad export`.
+- A plate of one feature at several values, to find a material's real clearance: `agentcad export --variants`.
+- Anything that will be iterated: a session instead (`agentcad-session`), which compares each attempt with the last.
+- Measuring a width, a section or a knob's effect on a build123d or STEP part: the probes (`agentcad-probe-inspect`).
+
 ## CEP Navigation Guide
 
 **1 Rendering a Source**
@@ -26,13 +34,20 @@ Most design work runs in a session, which keeps every iteration and compares eac
 - How is one file written per value of a parameter?
 - What is a variant plate for?
 
-**3 Integration with Other Policies**
+**3 Recipes**
+- What does a quick look, with its report, look like as commands?
+- How is a clearance plate written?
+
+**4 Constraints to Probe**
+- Which limits of a render or an export are found by a command first?
+
+**5 Integration with Other Policies**
 - Which policies govern what a render shows and what an export becomes?
 
-**4 Anti-Patterns**
+**6 Anti-Patterns**
 - Which uses of a lone render or export mislead?
 
-**5 Evolution and Feedback**
+**7 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -51,7 +66,7 @@ Every render is still subject to the render gate: open the images and say what t
 
 ## 2 Exporting a Source
 
-`agentcad export SOURCE` writes the source as STL, or as the format `-f`/`--format` names; `agentcad info` lists the formats each engine writes, and a format the engine cannot write is refused before anything runs, naming `--format` and that list (exit 2). The file goes beside the source with the format's extension, or to `-o`/`--output`. The engine is chosen as for a render (`-e`/`--engine`), and `-D`/`--define VAR=VAL` overrides parameters. It prints the path, the format, the facet count where it applies and the time, and exits 1 on failure.
+`agentcad export SOURCE` writes the source as STL, or as the format `-f`/`--format` names; `agentcad info` lists the formats each engine writes, and a format the engine cannot write is refused before anything runs, naming `--format` and that list (exit 2). The file goes beside the source with the format's extension, or to `-o`/`--output`; an output path with no extension is given the format's. The engine is chosen as for a render (`-e`/`--engine`), and `-D`/`--define VAR=VAL` overrides parameters. It prints the path, the format, the facet count where it applies and the time, and exits 1 on failure.
 
 ### 2.1 Variant Plates
 
@@ -59,19 +74,62 @@ Every render is still subject to the render gate: open the images and say what t
 
 A variant plate is how a material's real clearance is found: print the same mating feature at several clearances side by side and keep the one that fits. As-printed is not nominal, and a single print at the nominal clearance says nothing about the margin either way.
 
-## 3 Integration with Other Policies
+## 3 Recipes
 
+A quick look at a knob's effect, with the measured report rather than the raw metadata:
+
+```console
+# recipe: examples
+$ agentcad render examples/j_hook/source/j_hook.py --views iso --report -o look
+Report:
+bbox       [35.6, 6.2, 33.5]
+counts     solids 1, faces 10
+valid      True
+Rendered 1 view(s)
+$ agentcad render examples/j_hook/source/j_hook.py -D reach=40 --views iso --report -o look_reach40
+bbox       [45.6, 6.2, 33.5]
+counts     solids 1
+```
+
+The box grew by the 10 mm the knob added and the part stayed one solid; the two images are then opened and compared (section 1.1). Next: if the change is wanted, iterate it in a session.
+
+A clearance plate: one file per peg diameter, each with the value in its name and its volume, ready to print side by side.
+
+```console
+# recipe: examples
+$ agentcad export examples/j_hook/source/j_hook.py --variants peg_d=6.0,6.2,6.4 -o plate.stl
+Exported: ...plate_peg_d-6p0.stl (peg_d=6.0, volume 1384)
+Exported: ...plate_peg_d-6p2.stl (peg_d=6.2, volume 1397)
+Exported: ...plate_peg_d-6p4.stl (peg_d=6.4, volume 1411)
+$ agentcad export examples/j_hook/source/j_hook.py --variants peg_dia=6.0,6.2
+# exit 2
+Error: --variants peg_dia: j_hook.py has no such parameter
+```
+
+The volume rises with the peg, by 13 then 14 mm^3: a little more each step, as the peg's section grows with the square of its diameter, which says each file differs only in the peg. Next: print them, keep the one that fits, and write its value into the source.
+
+## 4 Constraints to Probe
+
+- A `-D` or `--variants` name must be a parameter the source has: `agentcad render SOURCE -D name=value` refuses a misspelt name with exit 2 before anything runs and lists the names it has.
+- A format is written only by the engines that list it: `agentcad info` lists each engine's formats, and `agentcad export SOURCE -f FORMAT` refuses another with that list.
+- An OpenSCAD render measures only its facets: `agentcad render SOURCE --report` prints `n/a` for its box and volume; `agentcad export SOURCE` writes the mesh, and a session measures it.
+- A lone render keeps no history to compare against: `agentcad session iterate` is where the change lines come from.
+
+## 5 Integration with Other Policies
+
+- `agentcad-start`: where a quick look sits among the goals.
+- `agentcad-probe-inspect`: measuring what a render cannot show.
 - `agentcad-engines`: the engines, their formats and their settings.
 - `agentcad-session`: iterating a design, the tray and the render gate.
 - `agentcad-print-intent`: what an exported part needs before it is staged for a printer.
 - `agentcad-policies`: how this policy is found and read.
 
-## 4 Anti-Patterns
+## 6 Anti-Patterns
 
 - **Iterating with lone renders**: each look is unrelated to the last; nothing tells you the edit did not land.
 - **A render reported unseen**: a render that was not looked at is not evidence.
 - **One clearance printed and called the fit**: print a variant plate when the fit depends on the material.
 
-## 5 Evolution and Feedback
+## 7 Evolution and Feedback
 
 This policy ships with agentcad and changes with the render and export commands; a change to either updates this policy in the same pull request.

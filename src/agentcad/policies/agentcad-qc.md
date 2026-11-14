@@ -9,6 +9,13 @@
 
 Every print problem found after a print was a number that could have been read before it: a wall thinner than the nozzle can lay, a part taller than the printer. QC judges a part against the design rules of the printer it is meant for, before staging, and says in each finding what was measured, the limit, who set the limit, and the usual fix. This policy says how QC is configured, what it measures today, how its findings are read, and what its gate does at finalize.
 
+## Reaching for It
+
+- Before a finished part is staged or printed: `agentcad qc PROJECT` judges its latest iteration against its printer's design rules (walls, features, overhangs, bridges, the bed).
+- A rule that a feature breaks on purpose: declare the feature and its suppression in the program (`agentcad.annotate`, section 2) rather than ignoring the warning.
+- Which printer the rules come from: `agentcad printers` (`agentcad-printers`).
+- What the slicer will do with the part: the staged project and the sliced file are read later (`agentcad-print-intent`, `agentcad-gcode`).
+
 ## CEP Navigation Guide
 
 **1 What QC Judges**
@@ -55,13 +62,19 @@ Every print problem found after a print was a number that could have been read b
 - When does QC run at finalize, and when does it hold a part back?
 - What does a held part look like, and how does it continue?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- What does a QC pass over a finished part say, and how is it read?
+
+**7 Constraints to Probe**
+- Which limits of QC are found by a command before its verdict is trusted?
+
+**8 Integration with Other Policies**
 - Which policies govern the printers, the session and the engines around QC?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - Which readings of a QC report are wrong?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -178,14 +191,52 @@ QC runs at `agentcad session finalize` only in a project that declares a `[qc]` 
 
 With `[qc] gate = true`, an error holds the part back: finalize still writes the viewer, with a banner at the top saying why (kept in the session record, so a rebuilt viewer shows it too, until a finalize that is not held), but writes no print manifest, does not mark the session finalized, and exits 1. Fix the part and iterate again; no reopen is needed. A warning never holds a part back. `finalize --all` finalizes every part it can and exits 1 when any part was held back or could not be finalized, naming them.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+The hex tray example judged against the default printer. Its top view already shows pockets meeting corner to corner; QC puts numbers and places on it: walls of 0.56 mm between the offset rows against a 0.9 mm limit.
+
+```console
+# recipe: examples
+$ agentcad session start examples/hex_tray
+Session started
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+$ agentcad qc examples/hex_tray
+hex_tray v1 against Original Prusa MK4
+ok: build_volume
+warning: min_wall: a wall 0.564 mm thick
+limits: min_wall_mm 0.9
+qc: 0 error(s), 27 warning(s)
+```
+
+Each warning gives the wall, where it is in the part's frame, which layers it spans and the limit with the layer that set it. Here the cause is in the source: the hexagonal pockets have a vertex, not a flat, along the row, so neighbours nearly meet. Next: fix the source, iterate, and run QC again until the warnings that matter are gone.
+
+QC judges an iteration, so a project with no session has nothing to judge:
+
+```console
+# recipe: examples
+$ agentcad qc examples/j_hook
+# exit 2
+No session state at
+```
+
+Next: start a session and iterate the part (`agentcad-session`), then run QC.
+
+## 7 Constraints to Probe
+
+- QC judges the latest iteration, not the source as it is now: `agentcad session iterate` first, then `agentcad qc PROJECT`.
+- A width is read off the mesh only where the mesh can show it: `agentcad qc` lists the rules it could not measure at a VoxelCAD part's resolution (`agentcad-engines`).
+- The rules come from a printer: `agentcad qc` names the printer, its source and each limit's layer on its first and `limits:` lines; `agentcad printers` lists the choices.
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where QC sits on the way to a print.
 - `agentcad-printers`: the printers, their build volumes and process defaults.
 - `agentcad-session`: finalize, the viewer, and the tray's own findings.
 - `agentcad-engines`: the metadata an engine gives QC: the declarations of a program, and the resolution and frame of a voxel mesh.
 - `agentcad-policies`: how this policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **A clean report read as a printable part**: rules that are not measured are listed for a reason; a part QC passed can still have a wall too thin to print.
 - **Arguing with the wrong limit**: the finding names the layer that set it; change that layer, not a different one.
@@ -196,6 +247,6 @@ With `[qc] gate = true`, an error holds the part back: finalize still writes the
 - **A voxel part read as exact**: a wall measured on a voxel mesh is good to about the mesh's resolution, which its uncertainty states; a wall the report lists as not measured was not found thick, it was not looked at.
 - **A quote in an OpenSCAD annotation string**: OpenSCAD prints strings without escaping them, so a quote can end the string early; the declaration then fails with its line in the message, or reads shorter than written.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy ships with agentcad and changes with the command it governs; a change to QC's rules, limits, pose or gate updates this policy in the same pull request.

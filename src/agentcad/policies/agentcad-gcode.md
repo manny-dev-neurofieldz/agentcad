@@ -9,6 +9,14 @@
 
 The sliced file is the last artifact before plastic and the only one that records what the slicer decided: where supports go, which settings were really used, how much material each part takes. The `agentcad gcode` commands read it in pure Python, with no slicer installed. This policy says how to read one before a print, and how not to over-read what the commands report.
 
+## Reaching for It
+
+- What a sliced file is before it prints (its time, filament, layers, settings): `agentcad gcode summary`, for binary or plain G-code; `agentcad gcode info` for the header, blocks and metadata of a binary `.bgcode` only.
+- Whether the slicer used the settings the project asked for: `agentcad gcode check FILE --project PROJECT` (or `--intent` a TOML file).
+- Where supports touch the part: `agentcad gcode supports`; the toolpaths as a page: `agentcad gcode view`.
+- Two slices of one part side by side: `agentcad gcode compare A B`.
+- A file on a printer: fetch it first (`agentcad-printer-hosts`).
+
 ## CEP Navigation Guide
 
 **1 What the Commands Read**
@@ -50,13 +58,20 @@ The sliced file is the last artifact before plastic and the only one that record
 **7.2 Settings That Are Never Compared**
 - Which settings does the comparison leave out, and why?
 
-**8 Integration with Other Policies**
+**8 Recipes**
+- How is a sliced file read and checked against the intent it was meant to print with?
+- How are two slices compared?
+
+**9 Constraints to Probe**
+- Which limits of reading a sliced file are found by a command first?
+
+**10 Integration with Other Policies**
 - Where do sliced files meet the session and the manifest?
 
-**9 Anti-Patterns**
+**11 Anti-Patterns**
 - Which readings of these reports are wrong?
 
-**10 Evolution and Feedback**
+**12 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -115,12 +130,46 @@ The command gives no verdict. It exits 0 once both files are read, 1 when a file
 
 Settings that hold credentials or local paths (the print-host family and the post-processing scripts) are never compared, printed or put in the record. A plain file's settings are the ones inside its configuration block. The statistics and results it writes beside the block (filament used, estimated printing time, the highest layer, where the objects sit) are not settings and are not listed as such; a file without a block is read by name, since a setting's name has no spaces.
 
-## 8 Integration with Other Policies
+## 8 Recipes
 
+A real slice of the peg, read, then checked against an intent that asked for finer layers than it got:
+
+```console
+# recipe: fixtures
+$ agentcad gcode summary fixtures/golden_pair/peg.bgcode
+70 layers to z 14.0; filament 138.33 mm (0.37 g)
+$ agentcad gcode supports fixtures/golden_pair/peg.bgcode
+no support touches a part
+$ agentcad gcode check fixtures/golden_pair/peg.bgcode --intent fixtures/golden_pair/peg_intent.toml
+# exit 1
+ERROR: layer_height is 0.2 in the file; peg_intent.toml [slice] asks for 0.15
+1 error(s)
+```
+
+The file was sliced at 0.2 mm where 0.15 was intended: the error says which setting, both values and the likely cause. Next: re-slice from the project, and check again before it prints.
+
+The same slice written in both formats compares equal, the plain one gzipped:
+
+```console
+# recipe: fixtures
+$ agentcad gcode compare fixtures/golden_pair/peg.bgcode fixtures/golden_pair/peg.gcode.gz
+filament used (mm)         138.33  138.33     0.00
+layers                         70      70        0
+```
+
+## 9 Constraints to Probe
+
+- A plain G-code file may be gzipped: `agentcad gcode summary FILE` unpacks it by its first bytes, and refuses one that starts like gzip and does not unpack.
+- Without an intent there is no verdict: `agentcad gcode check FILE` lists the file's key settings and says no intent was declared; `--project` or `--intent` gives it one, and an intent file that cannot be read is refused by its flag.
+- Supports are found only where the slicer labelled them: `agentcad gcode supports FILE` names the contact distance it used.
+
+## 10 Integration with Other Policies
+
+- `agentcad-start`: where reading a slice sits on the way to a print.
 - `agentcad-session`: a finalized project's print manifest lists the sliced files found among its exports, with a toolpath page for each, and carries the project's `[slice]` intent.
 - `agentcad-policies`: how this policy is found and read.
 
-## 9 Anti-Patterns
+## 11 Anti-Patterns
 
 - **A clean check without intent**: no `[print]` or `[slice]` intent means no verdict, not a passing one.
 - **Bed coordinates as part coordinates**: without placement, a band's x and y say where on the plate it is, not where on the part.
@@ -130,6 +179,6 @@ Settings that hold credentials or local paths (the print-host family and the pos
 - **Comparing slices of differently named parts**: objects are matched by name, so two slices that name their parts differently share no object and every row reads "only in" one file. Compare slices of the same part.
 - **Using a difference from a file that contradicts itself**: when a file's own filament total and the total it states disagree, the comparison says so. Settle that before using any number from that file.
 
-## 10 Evolution and Feedback
+## 12 Evolution and Feedback
 
 This policy ships with agentcad and changes with the commands it governs; a change to a gcode command's behaviour updates this policy in the same pull request.

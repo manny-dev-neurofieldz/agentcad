@@ -167,7 +167,7 @@ REACHING = "Reaching for It"
 PATTERN_SECTIONS = ("Recipes", "Constraints to Probe")
 #: The first line of a fenced ``console`` block that is a recipe, and the workspaces a recipe may name.
 RECIPE_MARK = "# recipe:"
-WORKSPACES = ("examples", "empty")
+WORKSPACES = ("examples", "fixtures", "empty")
 #: Diagram kinds a policy may draw in a ``mermaid`` block (the ones a code host renders).
 MERMAID_KINDS = ("flowchart", "graph", "sequenceDiagram", "stateDiagram-v2", "stateDiagram")
 

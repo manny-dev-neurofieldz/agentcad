@@ -9,6 +9,14 @@
 
 agentcad ships its know-how in the package: policies read through `agentcad policy`, skills that walk a workflow, and a reviewer agent. A harness finds skills and agents only where it looks for them. `agentcad plugin export` writes that know-how out in a harness's own layout, so a session with no memory of agentcad can run its workflows: a plugin for Claude Code, a policy root for the MacEff framework (https://github.com/cversek/MacEff), an `AGENTS.md`, or tool definitions for a model API. Every target is generated from one bundle of the package's commands, policies, skills, reviewer agent and hooks, so the targets cannot disagree about what agentcad is. This policy says what the export holds, what its hooks tell or refuse a session, what it leaves to the installed command, and how to check it.
 
+## Reaching for It
+
+- An agent harness that loads plugins (skills, agents, hooks): `agentcad plugin export --target claude-code -o DIR`.
+- A harness that reads policies from a folder: `--target maceff`, then mount it (section 3).
+- A harness or repository that reads one `AGENTS.md`: `--target agents-md`.
+- Calling agentcad from a model API as tools: `--target api-tools`, and `agentcad.bundle.argv_for` to turn a call into a command line.
+- Which skill to use for a goal once the plugin is loaded: `agentcad-start`.
+
 ## CEP Navigation Guide
 
 **1 What an Export Holds**
@@ -35,13 +43,19 @@ agentcad ships its know-how in the package: policies read through `agentcad poli
 - What does the guard not see?
 - What happens where the agentcad command is missing or at another version?
 
-**5 Integration with Other Policies**
+**5 Recipes**
+- What does each export write, and how is it checked?
+
+**6 Constraints to Probe**
+- Which limits of an export are found by a command before a harness loads it?
+
+**7 Integration with Other Policies**
 - Which policies do the exported skills read?
 
-**6 Anti-Patterns**
+**8 Anti-Patterns**
 - Which uses of an export defeat it?
 
-**7 Evolution and Feedback**
+**9 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -104,14 +118,53 @@ The guard sees the edits the harness makes through those tools. It does not see 
 
 Where no `agentcad` command is on PATH the runner says so once, at session start, and stays silent for the other events, so a missing install does not fail every tool call.
 
-## 5 Integration with Other Policies
+## 5 Recipes
 
+The plugin for a harness that loads skills, agents and hooks:
+
+```console
+# recipe: empty
+$ agentcad plugin export --target claude-code -o plugin
+claude-code export of agentcad
+plugin/.claude-plugin/plugin.json
+plugin/agents/design-reviewer.md
+plugin/hooks/hooks.json
+plugin/skills/design-session/SKILL.md
+```
+
+Six skills, the reviewer agent and the hooks; no policy, because each skill reads the installed agentcad's policies when it runs. Next: load the folder in the harness and check the hooks run (`agentcad plugin hook session-start` with the plugin's version says nothing when they match).
+
+One file for a harness or a repository that reads `AGENTS.md`:
+
+```console
+# recipe: empty
+$ agentcad plugin export --target agents-md -o agents
+agents-md export of agentcad
+agents/AGENTS.md
+Use it: copy or link agents/AGENTS.md
+$ agentcad plugin export -o somewhere
+# exit 2
+the following arguments are required: --target
+```
+
+The target is always named: each writes a different thing, and none is a default.
+
+## 6 Constraints to Probe
+
+- An export names its target: `agentcad plugin export -o DIR` without `--target` is refused by the parser.
+- An export replaces only an earlier export of the same target: `agentcad plugin export --target T -o DIR` refuses a folder that holds something else, or another target's export.
+- A plugin goes stale when agentcad is upgraded: the session-start hook (`agentcad plugin hook session-start`) says when the plugin's version and the installed one differ.
+- A copied policy root goes stale too: `agentcad plugin export --target maceff` prints the installed package's own policy folder, which never does.
+
+## 7 Integration with Other Policies
+
+- `agentcad-start`: the goal this export serves, and the skill for each other goal.
 - `agentcad-policies`: how the skills find and read the policies they name.
 - `agentcad-design-review`: the review the exported reviewer agent carries out.
 - `agentcad-session`: the record the post-tool-use hook reads, and the render gate it repeats.
 - `agentcad-session`, `agentcad-render-export`, `agentcad-fit` and `agentcad-print-intent`: the workflows the skills walk.
 
-## 6 Anti-Patterns
+## 8 Anti-Patterns
 
 - **Editing an export**: an edit is lost at the next export and differs from what the package ships; change the skill in agentcad.
 - **A plugin without the command**: the skills name `agentcad` commands; without the install they fail at their first step.
@@ -119,6 +172,6 @@ Where no `agentcad` command is on PATH the runner says so once, at session start
 - **Treating a tool definition as guidance**: a schema says what a command accepts, not when it is the right command; a model given the tools without the policies will call them plausibly and wrongly.
 - **Reading the guard as protection**: it refuses an edit tool, not a program; a library that must not change needs file permissions or review.
 
-## 7 Evolution and Feedback
+## 9 Evolution and Feedback
 
 This policy ships with agentcad and changes with the plugin command and its targets; a change to either updates this policy in the same pull request.

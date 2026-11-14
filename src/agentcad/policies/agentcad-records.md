@@ -9,6 +9,12 @@
 
 A part library keeps its history in record files: what each part is and how it fits its neighbours, what each print job sent to which printer, and how each print came out. Most of a record is prose, written for the next person. A few fields are structured, so that a tool can rely on them without reading the prose: the day a job was staged and the day it printed, the verdict on a print, when a fit was measured, against which part, with what result and on which sources. Owed work follows from those fields alone: a fit to re-run because a source it measured has changed, a print whose planned day has passed, a print nobody has judged yet. This policy says which fields are structured, what each must hold, how prose and structure live side by side, and what `agentcad records check` reports.
 
+## Reaching for It
+
+- Whether a library's part and print-job records read as their contracts say: `agentcad records check LIBRARY`.
+- What the records say is owed (a verdict to record, a plan past its day, a fit to re-run): `agentcad duties LIBRARY`.
+- A fit record's content: `agentcad-fit`, section 6.
+
 ## CEP Navigation Guide
 
 **1 Record Files and Libraries**
@@ -48,13 +54,19 @@ A part library keeps its history in record files: what each part is and how it f
 **6 Writing Structured Fields from Prose**
 - How is a structured field filled in from an older record without inventing anything?
 
-**7 Integration with Other Policies**
+**7 Recipes**
+- How is a records library checked, and what does it say is owed?
+
+**8 Constraints to Probe**
+- Which limits of the records check are found by a command first?
+
+**9 Integration with Other Policies**
 - Which policies write or read these records?
 
-**8 Anti-Patterns**
+**10 Anti-Patterns**
 - Which ways of writing records defeat the tools that read them?
 
-**9 Evolution and Feedback**
+**11 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -168,15 +180,42 @@ An older record states its facts in prose: "PRINTED 2026-10-07; quality pending"
 - A snapshot is recorded only when the file is known to be the one the fit measured (for example, it has not changed since the fit's day); otherwise leave snapshots out, and the fit reads as not anchored to its sources.
 - Run the check after every batch of edits; a record the check reads cleanly is one a tool can rely on.
 
-## 7 Integration with Other Policies
+## 7 Recipes
 
+```console
+# recipe: fixtures
+$ agentcad records check fixtures/records_library
+2 part(s), 5 job(s) (3 printed, 2 without a verdict), 3 fit record(s)
+No problems: every structured field reads as its contract says.
+```
+
+```console
+# recipe: fixtures
+$ agentcad duties fixtures/records_library
+4 duty(ies) owed
+[record_verdict] record the verdict of job 2026-02-01_mk4_pla_clip
+[print_by_plan] print job 2026-03-01_mk4_petg_bracket_v2
+[refit] re-run the fit of bracket and clip
+```
+
+The check says the records are well formed; the duties say what they leave undone, each with the field it was read from. A `refit` duty appears when a source a fit measured has changed since the fit. Next: record the verdicts, then `agentcad duties` again.
+
+## 8 Constraints to Probe
+
+- A record is checked against its contract, not its sense: `agentcad records check LIBRARY` finds a malformed field; a verdict that is wrong but well formed reads as no problem.
+- A duty is owed as of a day: `agentcad duties LIBRARY` states the date it judged by, so a plan's lateness is read against it.
+- A part named by a job must be one the library knows: `agentcad records check` warns of a job item naming an unknown part.
+
+## 9 Integration with Other Policies
+
+- `agentcad-start`: where records sit after a print.
 - `agentcad-fit`: measuring a fit, and the fit records it writes into both projects' manifests.
 - `agentcad-print-intent`: the print manifest, where fit records are kept for a project.
 - `agentcad-targets`: staging a job for a printer or slicer; the job record says when it was staged.
 - `agentcad-gcode`: checking a sliced file, the evidence behind many verdicts.
 - `agentcad-policies`: how this policy is found and read.
 
-## 8 Anti-Patterns
+## 10 Anti-Patterns
 
 - **Prose in a structured field**: `verdict = "FITS at nominal, mostly"` cannot be read by a tool; write `verdict = "pass"` and put the sentence beside it.
 - **A guessed verdict**: marking an unjudged print `success` because nothing bad was reported hides the work of judging it.
@@ -185,6 +224,6 @@ An older record states its facts in prose: "PRINTED 2026-10-07; quality pending"
 - **A fit without snapshots**: it cannot say whether it still holds after either part changes.
 - **Fixing the check by deleting the record**: a record with an error is history to correct, not to remove.
 
-## 9 Evolution and Feedback
+## 11 Evolution and Feedback
 
 This policy ships with agentcad and changes with the record contract; a new structured field, enumeration or check updates this policy, the check and its tests in the same pull request.

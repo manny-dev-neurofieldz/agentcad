@@ -9,6 +9,13 @@
 
 How a part should print is decided once, by the designer, and should not be rewritten for every slicer. agentcad keeps the intent in neutral terms in the project, carries it into the print manifest, and lets each output target turn it into its own settings, with the target's native overrides beside it and every disagreement between the two reported. This policy says where intent is written, how native settings layer over it, and what `agentcad stage` does with both.
 
+## Reaching for It
+
+- Saying how a part should print, in terms any target understands: the `[print]` table (section 1).
+- Writing finished parts as a job for an output target: `agentcad stage PROJECT --target NAME`.
+- Which targets exist and what each can do: `agentcad targets` (`agentcad-targets`).
+- Reading what the slicer produced from a staged project: `agentcad gcode check` (`agentcad-gcode`).
+
 ## CEP Navigation Guide
 
 **1 Neutral Intent**
@@ -26,13 +33,19 @@ How a part should print is decided once, by the designer, and should not be rewr
 - How does a target that starts from the user's own configuration get it?
 - What does stage print besides the files, and how does a refusal look?
 
-**4 Integration with Other Policies**
+**4 Recipes**
+- How is a finished part staged for a target, and what is refused before anything is written?
+
+**5 Constraints to Probe**
+- Which limits of staging are found by a command before a job is written?
+
+**6 Integration with Other Policies**
 - Which policies govern the targets and the checks around staging?
 
-**5 Anti-Patterns**
+**7 Anti-Patterns**
 - Which ways of stating intent defeat it?
 
-**6 Evolution and Feedback**
+**8 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -55,8 +68,54 @@ With `--slice`, stage also slices what it wrote, headless, through the target (a
 
 It prints which printer placed the parts and where its bed came from, the files written, then one `note:` line for each thing the target left out or changed and why (and one when QC judged the parts against a printer with another build volume, naming the width, depth or height that differs), every `conflict:` between intent and native settings, and every `not mapped:` intent key with its reason. A target that does not write jobs is refused with its capabilities, and a part without an export of its latest iteration is refused with "finalize it first", before the target reads its base configuration. Any other refusal (a missing or incomplete base configuration, a native key the base configuration does not carry, a placement that leaves the bed) is one line on stderr beginning `Error:` with exit status 2, and no file is written.
 
-## 4 Integration with Other Policies
+## 4 Recipes
 
+Stage the finished hex tray for PrusaSlicer, taking the printer, filament and print settings from a file PrusaSlicer itself sliced (no slicer needs to run to stage):
+
+```console
+# recipe: fixtures
+$ agentcad session start examples/hex_tray
+Session started
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+$ agentcad session finalize examples/hex_tray
+Session finalized.
+$ agentcad stage examples/hex_tray --target prusaslicer --base-config fixtures/golden_pair/peg.bgcode -o staged
+staged hex_tray for prusaslicer on MK4IS (its bed from peg.bgcode): 1 part(s), 1 instance(s)
+staged/hex_tray.3mf
+note: base configuration: peg.bgcode (376 settings)
+```
+
+The part is placed on the bed the configuration describes, which is the bed the slicer will check. Next: open `staged/hex_tray.3mf` in the slicer, slice, and read the result with `agentcad gcode check` against the project's intent.
+
+What is refused before anything is written: a count of copies below one, and a target that needs a configuration without one.
+
+```console
+# recipe: examples
+$ agentcad session start examples/hex_tray
+Session started
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+$ agentcad session finalize examples/hex_tray
+Session finalized.
+$ agentcad stage examples/hex_tray --target generic --copies 0 -o staged
+# exit 2
+--copies 0: a count of copies is at least 1; nothing was staged
+$ agentcad stage examples/hex_tray --target prusaslicer -o staged
+# exit 2
+no base configuration: pass --base-config PATH
+```
+
+## 5 Constraints to Probe
+
+- Only a finalized part is staged: `agentcad stage PROJECT` refuses a part without an export of its latest iteration and says to finalize it.
+- A target that needs a configuration refuses without one: `agentcad stage PROJECT --target prusaslicer` names `--base-config` and what it accepts.
+- An assembly's row must fit the bed it is placed on: `agentcad stage` refuses a row deeper than the bed with both depths, before anything is written.
+- A count of copies is at least 1: `agentcad stage --copies N` refuses below that by name.
+
+## 6 Integration with Other Policies
+
+- `agentcad-start`: where staging sits on the way to a print.
 - `agentcad-targets`: the targets, their capabilities and the placement sidecar.
 - `agentcad-prusaslicer`: the base configuration, the mapping of the intent and what the project holds.
 - `agentcad-qc`: the printer, the pose and the checks to run before staging.
@@ -64,12 +123,12 @@ It prints which printer placed the parts and where its bed came from, the files 
 - `agentcad-records`: the job record a staged print keeps (the day staged, the day planned, the day printed, the verdict).
 - `agentcad-policies`: how this policy is found and read.
 
-## 5 Anti-Patterns
+## 7 Anti-Patterns
 
 - **Intent in prose**: a print plan in notes cannot be checked or staged; state it in `[print]`.
 - **The same setting in both tables without meaning it**: a native value that silently overrides the intent is a setting written twice; the conflict report exists to show it.
 - **Staging an unfinalized part**: the export of the latest iteration is what is staged; finalize first.
 
-## 6 Evolution and Feedback
+## 8 Evolution and Feedback
 
 This policy ships with agentcad and changes with the intent tables and the stage command; a change to either updates this policy in the same pull request.

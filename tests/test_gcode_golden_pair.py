@@ -77,3 +77,21 @@ def test_one_slice_summarizes_the_same_in_either_format(text_file):
     assert binary == text
     assert binary["filament_used_stated_mm"] == pytest.approx(binary["filament_used"]["filament_mm"], rel=0.01)
     assert binary["filament_used"]["mass_g"] is not None
+
+
+def test_a_gzipped_text_file_is_read_as_the_text_it_holds(text_file, tmp_path):
+    """The gzipped copy summarizes like the unpacked one; read raw, it looked like a file with no extrusion."""
+    gz = DATA / "peg.gcode.gz"
+    assert sliced.summary_record(sliced.load(gz)) == sliced.summary_record(sliced.load(text_file))
+    assert bgcode.gcode_text(gz) == text_file.read_text(encoding="utf-8", errors="replace")
+    broken = tmp_path / "broken.gcode"
+    broken.write_bytes(b"\x1f\x8b" + b"not a gzip stream")
+    with pytest.raises(ValueError, match="starts like a gzip file"):
+        sliced.load(broken)
+
+
+def test_an_intent_file_that_cannot_be_read_is_refused_by_its_flag_not_a_traceback(tmp_path, capsys):
+    from tests.gcode_fixtures import run_cli
+    rc, out, err = run_cli(capsys, "gcode", "check", BINARY, "--intent", tmp_path / "layer_height=0.2")
+    assert rc == 2 and "Traceback" not in err
+    assert "--intent" in err and "cannot read it as TOML" in err

@@ -9,6 +9,14 @@
 
 A finalized session leaves a viewer: one HTML page per project that shows every iteration's renders, mesh, source, parameters, notes, findings and print settings, so a reviewer sees the design history without running anything. The gallery gathers many projects' viewers behind one page of cards. This policy says what the viewer shows and how it is rebuilt from the files on disk, how a frozen tag or an artifact host gets its own page, what the page check can and cannot see, and how a gallery is built and verified.
 
+## Reaching for It
+
+- Showing a design's whole history to someone who will not run anything: the project's viewer, written by `agentcad session finalize`.
+- A page lost, or notes and settings changed since the finalize: `agentcad viewer PROJECT` rebuilds it from the files on disk.
+- A frozen revision for a reviewer: `agentcad viewer PROJECT --tag NAME`.
+- Many projects behind one page, to publish as a static site: `agentcad gallery build`, then `agentcad gallery check`.
+- Whether a page's scripts run: `agentcad check`; whether it shows the right part: open it and look (section 2).
+
 ## CEP Navigation Guide
 
 **1 The Project Viewer**
@@ -30,13 +38,19 @@ A finalized session leaves a viewer: one HTML page per project that shows every 
 **3.1 Checking a Gallery**
 - What makes a built gallery broken?
 
-**4 Integration with Other Policies**
+**4 Recipes**
+- How is a viewer rebuilt and a gallery built and checked, as commands?
+
+**5 Constraints to Probe**
+- What does a page or a gallery need before it is shown to anyone?
+
+**6 Integration with Other Policies**
 - Which policies produce what the viewer shows?
 
-**5 Anti-Patterns**
+**7 Anti-Patterns**
 - Which ways of presenting a design mislead?
 
-**6 Evolution and Feedback**
+**8 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -67,7 +81,50 @@ By default each viewer page and its renders are copied under the gallery, so the
 
 `agentcad gallery check DIR` verifies a built gallery: every link and thumbnail on its page resolves, no reference is an absolute path, and every image in each copied viewer resolves. It prints the problems and exits 1 when there are any. Run it before publishing a gallery anywhere.
 
-## 4 Integration with Other Policies
+## 4 Recipes
+
+From a finished session to a checked gallery of it:
+
+```console
+# recipe: examples
+$ agentcad session start examples/hex_tray
+Session started
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+$ agentcad session finalize examples/hex_tray
+HTML viewer: ...examples/hex_tray/index.html
+$ agentcad viewer examples/hex_tray
+Regenerated: examples/hex_tray/index.html
+$ agentcad gallery build -o site --projects examples/hex_tray --title "trays"
+Gallery: site/index.html (1 project(s))
+$ agentcad gallery check site
+Gallery check: clean
+```
+
+`viewer` rebuilt the page from the files alone, which is how a page with edited notes or settings is refreshed. A clean gallery check means every link and image resolves, not that the page shows the right part: open `site/index.html` and a viewer from it and look before publishing (section 2). Next: serve `site/` as static files.
+
+A page the files cannot make is refused, with what was looked for:
+
+```console
+# recipe: examples
+$ agentcad viewer examples/j_hook
+# exit 1
+No versioned files found in examples/j_hook
+$ agentcad viewer examples/hex_tray --tag review-1
+# exit 1
+no tag 'review-1'
+```
+
+Next: finalize a session first (`agentcad-session`), or tag the revision before asking for its page.
+
+## 5 Constraints to Probe
+
+- A viewer is built only from versioned files: `agentcad viewer PROJECT` refuses a folder without them and names the patterns it looked for.
+- A page can load clean and still show the wrong part: `agentcad check HTML` reports script errors only (and needs Playwright with a Chromium); opening the page is the rest of the check.
+- A gallery is portable only if every reference resolves where it is served: `agentcad gallery check DIR` lists each broken link, thumbnail and absolute path.
+- A large project may not be copied under the gallery: `agentcad gallery build` names on stderr each project it only listed because of `--max-mb`.
+
+## 6 Integration with Other Policies
 
 - `agentcad-session`: the iterations, findings and finalize that the viewer shows.
 - `agentcad-qc`: the gate whose banner the viewer carries.
@@ -75,12 +132,12 @@ By default each viewer page and its renders are copied under the gallery, so the
 - `agentcad-projects`: the designs directory and the `[output]` settings the viewer reads.
 - `agentcad-policies`: how this policy is found and read.
 
-## 5 Anti-Patterns
+## 7 Anti-Patterns
 
 - **A clean check called a review**: the check sees script errors, not whether the page shows the part.
 - **Publishing a gallery unchecked**: a link that resolves on the machine that built it may not resolve where it is served; `gallery check` first.
 - **Editing the page by hand**: the next finalize or rebuild overwrites it; change the notes, the settings or the files it is built from.
 
-## 6 Evolution and Feedback
+## 8 Evolution and Feedback
 
 This policy ships with agentcad and changes with the viewer, the page check and the gallery; a change to what the viewer shows updates this policy in the same pull request.

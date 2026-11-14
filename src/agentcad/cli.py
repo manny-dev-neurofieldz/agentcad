@@ -137,6 +137,8 @@ def cmd_export(args):
     engine = _engine_for(args.engine, cfg)
     fmt = args.format.lower()
     output = Path(args.output) if args.output else source.with_suffix(f".{fmt}")
+    if output.suffix.lower() != f".{fmt}":     # `-o plate` or `-o plate.v2` names the file; the format names its extension
+        output = output.with_name(output.name + f".{fmt}")
 
     defines = _parse_defines(args.define) if args.define else {}
     if fmt not in engine.supported_export_formats:
@@ -918,8 +920,12 @@ def cmd_probe_fillet(args):
               f"a program", file=sys.stderr)
         sys.exit(2)
     radii = [float(v) for v in args.radii.split(",")] if args.radii else (1.0, 0.6, 0.4, 0.25)
-    res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
-                             defines=_parse_defines(args.define) if args.define else None)
+    try:
+        res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
+                                 defines=_parse_defines(args.define) if args.define else None)
+    except LookupError as e:                    # fewer calls than --index: a refusal with the count, not a crash
+        print(f"Error: {e} (--index counts from 0; --at chooses fillet or chamfer)", file=sys.stderr)
+        sys.exit(2)
     print("\n".join(probe.render_fillet_probe(res)))
     if args.output:
         print(f"fillet.json: {probe.write_json(res, Path(args.output))}")
@@ -1021,6 +1027,11 @@ def cmd_gcode_check(args):
         intent, notes, conflicts = check.intent_for(source_path) if source_path else ({}, [], [])
     except TargetError as e:
         print(f"Error: {source_path}: {e}", file=sys.stderr)
+        return 2
+    except (OSError, ValueError) as e:          # a missing or unreadable file, or TOML that does not parse
+        flag = "--project" if args.project else "--intent"
+        print(f"Error: {flag} {source_path}: cannot read it as TOML ({e}); {flag} names a file with [print] or "
+              f"[slice] tables", file=sys.stderr)
         return 2
     label = f"{source_path.name} [slice]" if source_path else ""
     said = sys.stderr if args.json else sys.stdout          # with --json, stdout carries only the findings

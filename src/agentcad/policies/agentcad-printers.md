@@ -9,6 +9,12 @@
 
 A design rule means nothing without the machine it is for: a wall that prints on a resin printer fails on a 0.4 mm FDM nozzle, and a part that fits one bed overhangs another. agentcad keeps a registry of printers, each naming its process, its build volume and, for FDM, its nozzle, with the process defaults QC applies when nothing closer to the part sets a limit. This policy says what the registry holds, how a printer is added, and how to read the defaults.
 
+## Reaching for It
+
+- Which printers QC and staging know, with their build volumes and process: `agentcad printers`.
+- A printer of your own: a `[printers.NAME]` table in the project, or `printers.toml` in the user config folder (section 2).
+- What a printer host (the machine's own server) holds: `agentcad printer` (`agentcad-printer-hosts`), a different command for a different thing.
+
 ## CEP Navigation Guide
 
 **1 The Registry**
@@ -27,13 +33,19 @@ A design rule means nothing without the machine it is for: a wall that prints on
 **4 Printers from a Sliced File**
 - Which settings of a sliced file describe its printer?
 
-**5 Integration with Other Policies**
+**5 Recipes**
+- How are the known printers listed?
+
+**6 Constraints to Probe**
+- Which limits of the printer registry are found by a command first?
+
+**7 Integration with Other Policies**
 - Which policy uses the registry?
 
-**6 Anti-Patterns**
+**8 Anti-Patterns**
 - Which uses of the registry mislead?
 
-**7 Evolution and Feedback**
+**9 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -71,17 +83,46 @@ A table with an unknown process or a malformed build volume is reported on stder
 
 A slicer's printer configuration describes a printer too: the bed from `bed_shape` (its corner points), the height from `max_print_height`, the nozzle from `nozzle_diameter`. A sliced file carries all three in its embedded configuration, so the printer a file was sliced for can be compared with the one the part was judged against.
 
-## 5 Integration with Other Policies
+## 5 Recipes
 
+The printers built in, before any user or project table adds one:
+
+```console
+# recipe: empty
+$ agentcad printers
+mk4        Original Prusa MK4 (fdm, 0.4 mm nozzle), 250 x 210 x 220 mm; built in
+form3      Formlabs Form 3 (resin), 145 x 145 x 185 mm; built in
+```
+
+Each line says where the printer was defined (`built in`, a user file, a project). Next: `agentcad printers --json` gives each printer's process defaults, which QC's limits come from.
+
+```console
+# recipe: empty
+$ agentcad printers --json
+"name": "mk4"
+"process": "fdm"
+"build_volume": [
+```
+
+The record is what QC and staging read: the build volume the bed check uses, the bed origin, and the process whose defaults set the limits.
+
+## 6 Constraints to Probe
+
+- A printer named by a project must exist in one of the layers: `agentcad printers` lists every printer the current folder can see, with the layer it came from.
+- A process default is a default, not a measurement of your machine: `agentcad printers --json` shows the defaults QC will use; set your own in a `[printers.NAME]` table.
+
+## 7 Integration with Other Policies
+
+- `agentcad-start`: where printers sit on the way to a print.
 - `agentcad-qc`: judges a part against a printer from this registry.
 - `agentcad-policies`: how this policy is found and read.
 
-## 6 Anti-Patterns
+## 8 Anti-Patterns
 
 - **The default printer by accident**: a project judged against the MK4 because nothing named its printer; set `[qc] printer`.
 - **Defaults read as the machine's limits**: process defaults are generic; a material or nozzle that does better or worse belongs in the project's limits.
 - **Editing a built-in in place**: replace it by name in the user file or the project, where the change is visible.
 
-## 7 Evolution and Feedback
+## 9 Evolution and Feedback
 
 This policy ships with agentcad and changes with the command it governs; a change to the registry, its sources or its defaults updates this policy in the same pull request.

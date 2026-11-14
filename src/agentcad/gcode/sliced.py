@@ -57,7 +57,7 @@ def load(path: Union[str, Path]) -> Sliced:
         stated = dict(meta.get("printer_metadata", {}))
         stated.update(meta.get("print_metadata", {}))
         return Sliced(path, "bgcode", gm.parse(g.gcode()), dict(meta.get("slicer_metadata", {})), meta, stated)
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = bgcode.plain_text(path)
     block = check.config_block(text)
     config = block if block is not None else check.config_from_text(text)
     # statistics are read from the whole file: a slicer writes them before its configuration block, but a file
