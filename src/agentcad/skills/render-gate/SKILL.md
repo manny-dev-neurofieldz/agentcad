@@ -26,7 +26,7 @@ Run `agentcad policy navigate NAME` for each policy below. Read its Reaching for
 ## Workflow
 
 1. Open each image: what does it show, in words, and does that match what was intended?
-2. What can this image not show for this part, by the session policy's list? Read that from the tray, or run the probe: `agentcad probe rays SOURCE --line ...` for a width, `agentcad render SOURCE --report` for the solid count.
+2. What can this image not show for this part, by the session policy's list, and which instrument does that policy or probe-inspect name for it? Read it from the tray, or run that probe.
 3. For a page: `agentcad check PAGE`, then open it and look; what does it show that the check could not?
 4. What was looked at and what was measured? Say both before acting on the result or sending it on.
 

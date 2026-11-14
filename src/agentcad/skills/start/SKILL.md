@@ -1,6 +1,6 @@
 ---
 name: start
-description: Use when arriving at agentcad with a goal and no map of its commands, or when a task changes kind (from designing to fitting, from a finished part to a printer). Routes the goal to the skill and the policies that serve it.
+description: Use when asked which agentcad skill, workflow or command fits a goal, when arriving at agentcad with a goal and no map of its commands, or when a task changes kind (from designing to fitting, from a finished part to a printer). Routes the goal to the skill and the policies that serve it.
 ---
 
 Find the route for a goal before running any command: the skill that walks it, the policies behind it, the first command.

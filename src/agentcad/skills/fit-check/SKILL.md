@@ -29,11 +29,11 @@ Run `agentcad policy navigate NAME` for each policy below. Read its Reaching for
 ## Workflow
 
 1. Where does the other part's source state the relation this mate depends on, and is the mate declared in both parts?
-2. `agentcad fit A B --mate NAME -o DIR --sweep AXIS` for anything that slides in.
+2. `agentcad fit A B --mate NAME -o DIR`. Does the mate slide in, and if it does, along which axis does fit say to sweep (`--sweep AXIS`)?
 3. What do the interference, the windows, the contacts, the sweep and the pose notes say, and what do the views show (the render-gate skill)?
 4. Which part's relation is wrong? Change that, not the number, and run `agentcad fit` again.
 5. `agentcad fit A B --mate NAME --record`, or `agentcad session finalize PROJECT` for a project that declares the mate; in a library, `agentcad records check LIBRARY`.
-6. Does the material decide the clearance? `agentcad export SOURCE --variants KNOB=v1,v2,...` writes the plate to print.
+6. Does the material decide the clearance? `agentcad export SOURCE --variants KNOB=v1,v2,...`; what does render-export say to print and compare?
 
 ## Critical Meta-Pattern
 
