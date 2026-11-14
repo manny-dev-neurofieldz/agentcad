@@ -173,7 +173,7 @@ Reasons a point was not carried:
 | Settings against an intent table; no table, no verdict | `gcode 4`, `print-intent 2` |
 | Look at the toolpath page in a browser | `gcode 6`, `viewer 2` |
 | One job's observed numbers | not carried: part history |
-| Bands are in the bed frame; naming the feature needs the placement | `gcode 5`, `gcode 9` |
+| Bands are in the bed frame; naming the feature needs the placement | `gcode 5`, `gcode 11` |
 | A clean check without an intent table is not a pass | `gcode 4` |
 | One job note left unconfirmed | not carried: part history |
 | Proposal: an intent table keyed by the slicer's own settings for every job | `print-intent 1`, `print-intent 2` |

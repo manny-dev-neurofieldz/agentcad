@@ -218,11 +218,27 @@ def is_bgcode(path: Union[str, Path]) -> bool:
         return f.read(4) == MAGIC
 
 
+GZIP_MAGIC = b"\x1f\x8b"
+
+
+def plain_text(path: Union[str, Path]) -> str:
+    """A plain G-code file's text, unpacked first when it is gzipped (known by its first bytes, not its name)."""
+    data = Path(path).read_bytes()
+    if data[:2] == GZIP_MAGIC:
+        import gzip
+
+        try:
+            data = gzip.decompress(data)
+        except (OSError, EOFError) as e:
+            raise ValueError(f"{Path(path).name} starts like a gzip file but does not unpack: {e}") from None
+    return data.decode("utf-8", errors="replace")
+
+
 def gcode_text(path: Union[str, Path], verify: bool = True) -> str:
-    """G-code text from a .bgcode or a plain G-code file (plain files pass through unchanged)."""
+    """G-code text from a .bgcode or a plain G-code file, gzipped or not (plain text passes through unchanged)."""
     if is_bgcode(path):
         return read(path, verify).gcode()
-    return Path(path).read_text(encoding="utf-8", errors="replace")
+    return plain_text(path)
 
 
 # --- decompression -------------------------------------------------------------------------------------------

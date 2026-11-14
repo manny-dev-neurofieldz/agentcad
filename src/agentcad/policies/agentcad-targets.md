@@ -9,6 +9,12 @@
 
 A finished part reaches a machine through a tool: a slicer project, a plate file, a host's queue. Each tool wants its own format and settings, and the lab already has more than one. agentcad keeps a registry of output targets, each declaring what it can do, so that every target is used the same way and the next one needs no new command. This policy says what a target is, what the registry reports, how the generic target writes a plate, and how a placement is stated so that no tool reads it turned the wrong way.
 
+## Reaching for It
+
+- Which output targets are registered, and what each can do (write a job, slice, read its output, map the print intent): `agentcad targets`.
+- Writing a job for one: `agentcad stage` (`agentcad-print-intent`).
+- PrusaSlicer in particular: `agentcad-prusaslicer`.
+
 ## CEP Navigation Guide
 
 **1 Targets and Capabilities**
@@ -29,13 +35,19 @@ A finished part reaches a machine through a tool: a slicer project, a plate file
 **4 Adding a Target**
 - What does a new target implement, and what checks it?
 
-**5 Integration with Other Policies**
+**5 Recipes**
+- How are the registered targets and their capabilities listed?
+
+**6 Constraints to Probe**
+- Which limits of a target are found by a command first?
+
+**7 Integration with Other Policies**
 - Which policies use the targets?
 
-**6 Anti-Patterns**
+**8 Anti-Patterns**
 - Which uses of targets and placements mislead?
 
-**7 Evolution and Feedback**
+**9 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -74,20 +86,49 @@ A target subclasses the target base class, sets its name and the capabilities it
 
 A target that needs an input the job does not hold names it in `job_options` (the slicer targets name `base_config`); the command line passes it in the job's options and refuses one the target does not name. An input that is missing or unusable raises an error whose message says what to change, which commands print as one line.
 
-## 5 Integration with Other Policies
+## 5 Recipes
 
+```console
+# recipe: empty
+$ agentcad targets
+generic     : write_job, read_output
+prusaslicer : write_job, slice, read_output, map_intent, printer_config
+```
+
+`generic` writes a neutral project any slicer opens; `prusaslicer` also slices headless, maps the `[print]` intent onto its own settings and reads the printer from its configuration. Next: `agentcad stage PROJECT --target NAME`.
+
+As a record, with whether each target can run here:
+
+```console
+# recipe: empty
+$ agentcad targets --json
+"name": "generic"
+"available": true
+"name": "prusaslicer"
+```
+
+`available` says whether the target's program is installed: a target that slices can stage without it, and refuses only `--slice`.
+
+## 6 Constraints to Probe
+
+- A capability a target lacks is refused by name: `agentcad stage PROJECT --target generic --slice` says the target cannot slice; `agentcad targets` lists what each can do.
+- A target that slices needs its program installed: `agentcad stage ... --slice` refuses, and says what is missing, when it is not.
+
+## 7 Integration with Other Policies
+
+- `agentcad-start`: where targets sit on the way to a print.
 - `agentcad-prusaslicer`: the second target, a PrusaSlicer project.
 - `agentcad-print-intent`: the intent a target maps and `agentcad stage`, which runs a target.
 - `agentcad-gcode`: reading what a slicer produced from a target's job.
 - `agentcad-qc`: judging a part before it is staged.
 - `agentcad-policies`: how this policy is found and read.
 
-## 6 Anti-Patterns
+## 8 Anti-Patterns
 
 - **A transform without its convention**: a 4x4 or 12 numbers with no stated convention will be read transposed by someone; state it, as the sidecar does.
 - **Testing placement on a symmetric part**: a square turned the wrong way looks right; test with an asymmetric part and an asymmetric turn.
 - **A capability claimed by trying**: ask the registry what a target declares; do not call and catch.
 
-## 7 Evolution and Feedback
+## 9 Evolution and Feedback
 
 This policy ships with agentcad and changes with the targets; a new target, capability or placement field updates this policy in the same pull request.

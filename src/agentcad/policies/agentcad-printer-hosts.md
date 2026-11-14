@@ -9,6 +9,12 @@
 
 A sliced file is only useful once it is out of the printer, and a print is only understood once its state is known. Until now both were done by hand: a file copied from the printer's web page, a status read off its screen. agentcad keeps a registry of printer hosts, each declaring what it can do, so that every host is used the same way and the next one needs no new command. The registry is read-only by contract: nothing in it can start, stop, upload, change or delete anything on a printer. This policy says what a host is, how the read-only rule is built and checked, where credentials live and what is never shown, how the commands behave, and what the PrusaLink host does.
 
+## Reaching for It
+
+- What a printer holds, is doing, or printed: `agentcad printer list`, `files`, `status`, and `get` to download a file, all read-only.
+- Reading a file fetched from a printer: `agentcad gcode` (`agentcad-gcode`).
+- Starting, stopping or deleting anything on a printer: not agentcad's; it never sends those.
+
 ## CEP Navigation Guide
 
 **1 Hosts and Capabilities**
@@ -63,13 +69,19 @@ A sliced file is only useful once it is out of the printer, and a print is only 
 **6 Adding a Host**
 - What does a new host implement, and what checks it?
 
-**7 Integration with Other Policies**
+**7 Recipes**
+- What does a host command say when no host is configured?
+
+**8 Constraints to Probe**
+- Which limits of a printer host are found by a command first?
+
+**9 Integration with Other Policies**
 - Which policies use what a host fetches?
 
-**8 Anti-Patterns**
+**10 Anti-Patterns**
 - Which uses of a host mislead or put a printer at risk?
 
-**9 Evolution and Feedback**
+**11 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -164,14 +176,43 @@ The host sends the request, takes the printer's Digest challenge from the 401 re
 
 A host subclasses the host base class, sets its name, the capabilities it declares and the name of its one network function, implements exactly those capabilities, and registers under a short lower-case name. It reads its settings through the shared credentials module, so the environment, the file mode check and the masking come with it. Its tests add a fake server for the contract test to run against; a registered host without one fails the suite. The contract test then holds the new host to everything in section 2 without being edited.
 
-## 7 Integration with Other Policies
+## 7 Recipes
 
+With no host configured, every host command says where the address goes and stops (exit 2):
+
+```console
+# recipe: empty
+$ agentcad printer status
+# exit 2
+prusalink: no url: set AGENTCAD_PRUSALINK_URL or add `url = ...` under [prusalink]
+```
+
+Next: put the host's address and credentials in the user config folder's hosts file (section 2), never in a project, and run `agentcad printer list`.
+
+The same holds for listing what the printer knows; no command guesses an address:
+
+```console
+# recipe: empty
+$ agentcad printer list
+# exit 2
+prusalink: no url
+```
+
+## 8 Constraints to Probe
+
+- A host is reached only through its configured address: `agentcad printer status` refuses without one and says where to set it.
+- Credentials stay in the user config folder: `agentcad printer list` reads them from there and never prints them.
+- These commands only read: `agentcad printer get` downloads; nothing in agentcad starts, stops or deletes on a printer.
+
+## 9 Integration with Other Policies
+
+- `agentcad-start`: where printer hosts sit after a print.
 - `agentcad-gcode`: reading, checking and comparing the sliced files a host downloads.
 - `agentcad-targets`: the output side, where a staged job is written for a slicer; hosts are the read side of the printer.
 - `agentcad-printers`: the printer specifications QC judges against, which are not the same thing as a host.
 - `agentcad-policies`: how this policy is found and read.
 
-## 8 Anti-Patterns
+## 10 Anti-Patterns
 
 - **A second network path**: a helper that opens a socket "just to check" breaks the one-function rule the contract test relies on.
 - **A credential in a project**: an address and password in `agentcad.toml` or a script travel with the project; they belong in the environment or the private file.
@@ -180,6 +221,6 @@ A host subclasses the host base class, sets its name, the capabilities it declar
 - **Trusting a name from the printer**: a display name is data; it is cut to its last component before it names a local file.
 - **Testing against the real printer**: the suite uses a fake server on the loopback address, and a guard fails any test that tries another address.
 
-## 9 Evolution and Feedback
+## 11 Evolution and Feedback
 
 This policy ships with agentcad and changes with the hosts; a new host, capability or setting updates this policy in the same pull request.

@@ -1028,6 +1028,11 @@ def cmd_gcode_check(args):
     except TargetError as e:
         print(f"Error: {source_path}: {e}", file=sys.stderr)
         return 2
+    except (OSError, ValueError) as e:          # a missing or unreadable file, or TOML that does not parse
+        flag = "--project" if args.project else "--intent"
+        print(f"Error: {flag} {source_path}: cannot read it as TOML ({e}); {flag} names a file with [print] or "
+              f"[slice] tables", file=sys.stderr)
+        return 2
     label = f"{source_path.name} [slice]" if source_path else ""
     said = sys.stderr if args.json else sys.stdout          # with --json, stdout carries only the findings
     for c in conflicts:

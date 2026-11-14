@@ -9,6 +9,12 @@
 
 PrusaSlicer slices from a complete configuration, and a part staged for it should arrive as a project that already carries the settings the designer stated, the pose the part prints in, and nothing the designer did not mean. The `prusaslicer` output target (`agentcad-targets`) writes that project as a 3MF from a base configuration the user supplies, layers the print intent and the native settings over it, and refuses what it cannot write truthfully. This policy says where the base configuration comes from, how the layers combine, what the project holds, what is never written, and how the bed is checked.
 
+## Reaching for It
+
+- Staging for PrusaSlicer, slicing headless, or reading its output: this practice, with `agentcad stage --target prusaslicer` and `agentcad gcode`.
+- Another slicer: the neutral `generic` target (`agentcad-targets`).
+- What the target maps from `[print]` and what it takes from the base configuration: section 2 below.
+
 ## CEP Navigation Guide
 
 **1 The Base Configuration**
@@ -46,13 +52,19 @@ PrusaSlicer slices from a complete configuration, and a part staged for it shoul
 - What does the target read, and which command checks a project?
 - How does the target slice a project, and how is the output named?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- How is a part staged from a configuration PrusaSlicer wrote, and its project read back?
+
+**7 Constraints to Probe**
+- Which of PrusaSlicer's limits are found by a command first?
+
+**8 Integration with Other Policies**
 - Which policies govern the pieces around this target?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - Which uses of this target mislead?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -146,8 +158,36 @@ The target reads the settings a sliced `.bgcode`, a plain `.gcode` or a project 
 
 The target slices a project headless with PrusaSlicer's command line: `prusa-slicer` on PATH, or the program the `AGENTCAD_PRUSASLICER` environment variable names (a name that does not exist is not looked past). It runs `--export-gcode` on the project 3MF itself, so the sliced file carries exactly the settings and placements the project does, and names the output `.bgcode` or `.gcode` by its first bytes, never by an extension: the configuration's `binary_gcode` decides which PrusaSlicer writes. A slicer that exits non-zero, writes nothing or runs past ten minutes is refused in a sentence, and no sliced file is left behind. Without a slicer the target is not available (`agentcad targets` says so), and every other capability still works.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+The base configuration can be any file PrusaSlicer wrote: an exported `.ini`, a project 3MF, or a G-code it sliced, which carries its whole configuration.
+
+```console
+# recipe: fixtures
+$ agentcad session start examples/hex_tray
+Session started
+$ agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
+Iteration v1 recorded
+$ agentcad session finalize examples/hex_tray
+Session finalized.
+$ agentcad stage examples/hex_tray --target prusaslicer --base-config fixtures/golden_pair/peg.bgcode -o staged
+note: base configuration: peg.bgcode (376 settings)
+$ agentcad gcode check staged/hex_tray.3mf
+printer_settings_id = Original Prusa MK4 Input Shaper 0.4 nozzle
+layer_height = 0.2
+```
+
+The project carries the configuration it was staged with, readable before anything is sliced. Next: slice it (`agentcad stage ... --slice` where PrusaSlicer is installed) and check the result.
+
+## 7 Constraints to Probe
+
+- A base configuration is required: `agentcad stage PROJECT --target prusaslicer` refuses without one and names what it accepts.
+- A `[slice.prusaslicer]` key must be a setting of the base configuration: `agentcad stage` refuses an unknown key by name before writing.
+- A preset chosen in the slicer after loading the project can override it: `agentcad gcode check FILE --project PROJECT` reads the sliced file's real settings against the intent.
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where PrusaSlicer sits on the way to a print.
 - `agentcad-targets`: the contract this target implements, the placement and the generic target.
 - `agentcad-print-intent`: `[print]`, `[slice.<target>]`, the conflict report and `agentcad stage`.
 - `agentcad-gcode`: checking a sliced file against the native settings, and comparing slices.
@@ -155,7 +195,7 @@ The target slices a project headless with PrusaSlicer's command line: `prusa-sli
 - `agentcad-qc`: the print pose and the printer a part is judged against before it is staged.
 - `agentcad-policies`: how this policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **A fragment as the base**: a few settings are not a printer; PrusaSlicer fills the rest with defaults. Supply an exported configuration.
 - **The base configuration in a project**: it can carry credentials and local paths, and projects are shared. Keep it in the user config folder or pass it on the command line.
@@ -164,6 +204,6 @@ The target slices a project headless with PrusaSlicer's command line: `prusa-sli
 - **The same setting in both tables without meaning it**: a native value silently over the intent is a setting written twice; the conflict report is where it shows.
 - **A typo kept alive**: a native key the base configuration lacks is refused on purpose; correct the name rather than adding the key to the base.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy ships with agentcad and changes with the target; a change to the mapping, the layering, the project file or the bed check updates this policy in the same pull request.

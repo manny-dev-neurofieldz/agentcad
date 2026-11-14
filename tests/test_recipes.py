@@ -15,6 +15,8 @@ from agentcad.engines import get_engine
 from tests.gcode_fixtures import run_cli
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+#: The committed test data a `fixtures` recipe sees as ./fixtures: a real slice in both formats, a records library.
+FIXTURES = Path(__file__).resolve().parent / "data"
 RECIPES = [r for p in pol.all_policies() for r in pol.recipes(p)]
 #: Generated folders an example may hold in a working checkout; a recipe starts without them.
 GENERATED = ("_work", "exports", "renders", "viewer", "_archive", "__pycache__")
@@ -53,8 +55,10 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
 
     def make(kind):
-        if kind == "examples":
+        if kind in ("examples", "fixtures"):
             shutil.copytree(EXAMPLES, tmp_path / "examples", ignore=shutil.ignore_patterns(*GENERATED))
+        if kind == "fixtures":
+            shutil.copytree(FIXTURES, tmp_path / "fixtures")
         monkeypatch.chdir(tmp_path)
         return tmp_path
     return make
