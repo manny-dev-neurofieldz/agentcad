@@ -94,14 +94,18 @@ def cmd_stage(args):
     bed_from = f"its bed from {printer.source}" if printer else "the QC printer's bed"
     printer = printer or qc_printer
     centre = printer.bed_centre()
-    parts, y_next = [], None
+    placed = []                                     # each part posed and centred on the bed, with its depth in y
     for part_name, stl, part_cfg in finalized:
         part_qc = qcmod.settings(part_cfg) or qs
         V, _ = read_stl(stl)
         T, extent = bed_transform(V, part_qc.pose if part_qc.pose is not None else qs.pose, centre)
-        if y_next is not None:                       # the next part in a row along y
-            T[1][3] += y_next
-        y_next = (y_next or 0.0) + float(extent[1]) + GAP_MM
+        placed.append((part_name, stl, part_cfg, T, float(extent[1])))
+    # the parts in a row along y, GAP_MM apart edge to edge, the whole row centred on the bed
+    row = sum(depth for *_, depth in placed) + GAP_MM * (len(placed) - 1)
+    parts, y = [], -row / 2
+    for part_name, stl, part_cfg, T, depth in placed:
+        T[1][3] += y + depth / 2
+        y += depth + GAP_MM
         copies = args.copies if args.copies is not None else int(part_cfg.quantity or 1)
         parts.append(targets.JobPart(part_name, stl, copies=copies, transform=T))
     native = targets.native_tables(cfg, target.name)
