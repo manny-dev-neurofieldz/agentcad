@@ -190,7 +190,9 @@ def agents_md(b: Bundle) -> Dict[str, bytes]:
            f"`{b.name} policy read <name> --section <number>`. `{b.name} policy navigate <name>` shows a guide "
            f"again.",
            "- The skills are workflows that read the policies in the right order; follow one when its moment "
-           "comes.", "",
+           "comes.",
+           f"- The policies are written in the policy format the [MacEff]({MACEFF_LINK}) agent framework reads; "
+           f"`{b.name} plugin export --target maceff` writes them as a policy root it can mount.", "",
            "## Skills", ""]
     for skill in b.skills:
         out.append(f"- **{skill.name}**: {skill.description or 'see the skill file'}")
