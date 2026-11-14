@@ -158,8 +158,9 @@ def tools_of(parser) -> Tuple[Tool, ...]:
 
 def argv_for(tool: Tool, values: Dict[str, Any]) -> List[str]:
     """The command line (after ``agentcad``) a tool call stands for: the command's path, then each given option in
-    the command's own order, then the positionals. A name the command does not have, and a required one left out,
-    are refused by name."""
+    the command's own order, then ``--`` and the positionals. The ``--`` is always written before positionals: an
+    option that takes several values would otherwise read the positionals as more of its values. A name the command
+    does not have, and a required one left out, are refused by name."""
     known = {a.name: a for a in tool.arguments}
     unknown = sorted(set(values) - set(known))
     if unknown:
@@ -189,7 +190,7 @@ def argv_for(tool: Tool, values: Dict[str, Any]) -> List[str]:
                 options += [a.flags[0], item]
         elif items:
             options += [a.flags[0], *items]
-    return list(tool.path) + options + (["--"] if any(p.startswith("-") for p in positionals) else []) + positionals
+    return list(tool.path) + options + (["--"] + positionals if positionals else [])
 
 
 def tool_schema(tool: Tool) -> Dict[str, Any]:

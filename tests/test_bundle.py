@@ -121,14 +121,42 @@ def test_the_real_parser_accepts_the_command_line_each_tool_call_stands_for(ever
             assert (list(got) == list(v)) if isinstance(v, list) else got == v, (t.command, name, got, v)
 
 
+def test_each_list_option_alone_still_leaves_the_positionals_to_the_command():
+    """An option that takes several values, written last, would swallow the positionals after it: each list option
+    is given alone, beside the required arguments, and the parser must accept the line and return every value."""
+    parser = build_parser()
+    tried = 0
+    for t in plugin.collect().tools:
+        required = {a.name: _sample(a) for a in t.arguments if a.required}
+        for a in t.arguments:
+            if a.kind != "list" or a.required:
+                continue
+            values = dict(required, **{a.name: _sample(a)})
+            argv = bundle.argv_for(t, values)
+            try:
+                ns = parser.parse_args(argv)
+            except SystemExit:
+                raise AssertionError(f"{t.command}: the parser refused {argv}")
+            for name, v in values.items():
+                got = getattr(ns, name)
+                assert (list(got) == list(v)) if isinstance(v, list) else got == v, (t.command, name, got, v)
+            tried += 1
+    assert tried >= 20, "the list options of the command tree were all tried"
+
+
 def test_a_call_becomes_options_in_the_commands_order_then_positionals():
     it = next(t for t in plugin.collect().tools if t.path == ("session", "iterate"))
     argv = bundle.argv_for(it, {"all": True, "source_file": "part.py", "project": "bracket", "define": ["w=3", "h=4"]})
-    assert argv == ["session", "iterate", "-D", "w=3", "-D", "h=4", "--all", "bracket", "part.py"]
+    assert argv == ["session", "iterate", "-D", "w=3", "-D", "h=4", "--all", "--", "bracket", "part.py"]
     ns = build_parser().parse_args(argv)
     assert (ns.project, ns.source_file, ns.define, ns.all) == ("bracket", "part.py", ["w=3", "h=4"], True)
-    assert bundle.argv_for(it, {"project": "b", "source_file": "p.py", "all": False}) == ["session", "iterate", "b", "p.py"]
+    assert bundle.argv_for(it, {"project": "b", "source_file": "p.py", "all": False}) == ["session", "iterate", "--", "b", "p.py"]
     assert bundle.argv_for(it, {"project": "b", "source_file": "-odd.py"})[-3:] == ["--", "b", "-odd.py"]
+    section = next(t for t in plugin.collect().tools if t.path == ("probe", "section"))
+    argv = bundle.argv_for(section, {"source": "part.scad", "planes": ["z=1", "z=2"]})
+    assert argv == ["probe", "section", "--planes", "z=1", "z=2", "--", "part.scad"]
+    ns = build_parser().parse_args(argv)
+    assert (ns.source, ns.planes) == ("part.scad", ["z=1", "z=2"])
     rays = next(t for t in plugin.collect().tools if t.path == ("probe", "rays"))
     argv = bundle.argv_for(rays, {"source": "part.step", "length": 4.5})
     assert argv[argv.index("--length") + 1] == "4.5"

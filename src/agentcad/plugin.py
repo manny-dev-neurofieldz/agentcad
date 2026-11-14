@@ -224,7 +224,8 @@ A tool only names a command line; your program runs it. From a tool call to the 
 2. Each input property is one argument; its description ends with the option it stands for, or `(positional)`.
 3. A boolean set true adds its option; false or absent adds nothing. A value adds the option and the value. A
    list adds the option once per item where the option repeats, else the option followed by the items.
-   Positionals come last, in the schema's order.
+   Then `--`, then the positionals in the schema's order. The `--` is needed: an option that takes several
+   values would otherwise read the positionals as more of its values.
 
 `{b.name}.bundle.argv_for(tool, values)` does exactly this for a tool of `{b.name}.plugin.collect().tools`, and
 refuses a name the command does not have or a required one left out. Run the result with the installed command,
