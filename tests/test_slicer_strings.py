@@ -1,4 +1,6 @@
 """PrusaSlicer's spelling of string settings, pinned to what 2.9.6 saved when it loaded each spelling on the left."""
+from pathlib import Path
+
 import pytest
 
 from agentcad.gcode import check, slicer_strings as ss
@@ -70,6 +72,23 @@ def test_a_semicolon_alone_does_not_make_a_list():
     assert not ss.is_string_list("start_gcode", "M17 ; enable steppers\\nG28")
     assert ss.is_string_list("filament_type", "ASA")                 # one word, written bare, still a list
     assert ss.is_string_list("some_future_list", '"a b";c')
+    assert not ss.is_string_list("end_gcode", '"; MARK3 quoted whole"')   # a single string holds its quotes
+
+
+def test_the_single_strings_are_the_golden_pairs_text_settings():
+    """SINGLE_STRINGS is pinned to the slicer's own configuration: every G-code template, notes or format key the
+    golden pair writes bare is in it, except the ones left out by name, and each member is there, bare."""
+    from agentcad.gcode import bgcode
+    from agentcad.gcode.sliced import is_setting_key
+
+    golden = Path(__file__).parent / "data" / "golden_pair" / "peg.bgcode"
+    config = {k: v for k, v in bgcode.read(golden).metadata["slicer_metadata"].items() if is_setting_key(k)}
+    text = {k for k in config if (k.endswith(("_gcode", "_notes", "_format")) or k in ("notes", "post_process"))
+            and k not in ss.STRING_LISTS}
+    left_out = {"binary_gcode", "thumbnails_format", "post_process", "start_filament_gcode", "end_filament_gcode"}
+    assert text - left_out == ss.SINGLE_STRINGS
+    assert all(not config[k].startswith('"') for k in ss.SINGLE_STRINGS)
+    assert all(config[k].startswith('"') for k in ("start_filament_gcode", "end_filament_gcode"))
 
 
 def test_the_check_compares_an_asked_list_item_by_item():

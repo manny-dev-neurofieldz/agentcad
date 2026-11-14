@@ -184,7 +184,10 @@ def _text(value: Any, written: bool = False) -> str:
     return _unescape(s) if written else s
 
 
-def _same(found: str, want: Any) -> bool:
+def _same(key: str, found: str, want: Any) -> bool:
+    """Whether a value read from a file is the value asked for. A single string setting (``SINGLE_STRINGS``) keeps
+    its quotes on both sides: PrusaSlicer 2.9.6 held ``end_gcode = "; MARK3 quoted whole"`` with its quotes, and a
+    real slice emitted both quote characters, so the text asked for has to carry them too."""
     if isinstance(want, (list, tuple)) and want and all(isinstance(w, str) for w in want):
         return slicer_strings.split_list(str(found)) == list(want)     # a list of strings, item by item
     if isinstance(want, bool):
@@ -192,6 +195,8 @@ def _same(found: str, want: Any) -> bool:
     a, b = _num(found), _num(want)
     if a is not None and b is not None:
         return abs(a - b) <= 1e-6 * max(1.0, abs(b))
+    if key in slicer_strings.SINGLE_STRINGS:
+        return _unescape(str(found).strip()) == str(want).strip()
     return _text(found, written=True) == _text(want)
 
 
@@ -218,7 +223,7 @@ def check(config: Dict[str, str], intent: Dict[str, Any], source: str) -> List[F
         if found is None:
             severity, fix = "warning", FIX_MISSING
         elif want is not None:
-            severity = "ok" if _same(found, want) else "error"
+            severity = "ok" if _same(key, found, want) else "error"
             fix = "" if severity == "ok" else FIX_DIFFERS
         else:
             v = _num(found)

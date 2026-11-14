@@ -49,7 +49,8 @@ def test_a_quoted_string_setting_is_read_the_way_the_slicer_writes_it():
     by = {f.key: f.severity for f in check.check(found, intent, "t")}
     assert by == {"filament_notes": "ok", "filament_settings_id": "ok", "notes": "ok"}
     assert check.check({"filament_notes": '"say \\"hi\\""'}, {"filament_notes": 'say "ho"'}, "t")[0].severity == "error"
-    assert check.check({"start_gcode": '"M104 S200\\nG28"'}, {"start_gcode": "M104 S200\nG28"}, "t")[0].severity == "ok"
+    # a single string keeps its quotes (see the test below), so quotes the text asked for lacks are a difference
+    assert check.check({"start_gcode": '"M104 S200\\nG28"'}, {"start_gcode": "M104 S200\nG28"}, "t")[0].severity == "error"
 
 
 #: printer_notes as PrusaSlicer 2.9.6 wrote it into the golden pair's slice (tests/data/golden_pair/peg.bgcode): a single
@@ -73,6 +74,19 @@ def test_a_bare_string_setting_is_read_the_way_the_slicer_writes_it_too():
     assert {f.key: f.severity for f in check.check(found, intent, "t")} == {
         "printer_notes": "ok", "start_gcode": "ok", "post_process_notes": "ok"}
     assert check.check({"start_gcode": r"M17\nG28"}, {"start_gcode": "M17\nG29"}, "t")[0].severity == "error"
+
+
+def test_a_single_string_setting_keeps_its_quotes():
+    """PrusaSlicer 2.9.6 held end_gcode = "; MARK3 quoted whole" with its quotes: a real slice emitted both. A file
+    holding the quoted text is not the text asked for without them; asking for exactly what the file holds is ok.
+    A list of strings (filament_notes) still has its quotes read as the item's."""
+    held = '"; MARK3 quoted whole"'
+    assert check.check({"end_gcode": held}, {"end_gcode": "; MARK3 quoted whole"}, "t")[0].severity == "error"
+    assert check.check({"end_gcode": held}, {"end_gcode": held}, "t")[0].severity == "ok"
+    assert check.check({"end_gcode": "; MARK3 quoted whole"}, {"end_gcode": held}, "t")[0].severity == "error"
+    assert check.check({"end_gcode": "; MARK3 quoted whole"}, {"end_gcode": "; MARK3 quoted whole"}, "t")[0].severity == "ok"
+    assert check.check({"end_gcode": '"a\\nb"'}, {"end_gcode": '"a\nb"'}, "t")[0].severity == "ok"
+    assert check.check({"filament_notes": '"x y"'}, {"filament_notes": "x y"}, "t")[0].severity == "ok"
 
 
 def test_private_keys_are_never_checked_or_echoed():
