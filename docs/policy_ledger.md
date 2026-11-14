@@ -193,7 +193,7 @@ Reasons a point was not carried:
 | Derived values posing as parameters, and dead knobs | `build123d 1` |
 | Cuts added outside a revolved profile swallow its narrowest feature | `build123d 2.2` |
 | A connectivity patch needs its margin measured | `build123d 3` |
-| A geometry operation in a bare except ships its failure | `build123d 2.1`, `build123d 3`, `probe-construction 4` |
+| A geometry operation in a bare except ships its failure | `build123d 2.1`, `build123d 3`, `probe-construction 6` |
 | Freeze the target before the review | `design-review 1` |
 | Re-run the author's own instrument against the author's claims | `design-review 2` |
 | Round 1 (a flexure pawl): beams far thinner than the spec, which the build ignored | `design-practice 2`, `design-practice 3` |

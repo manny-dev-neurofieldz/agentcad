@@ -9,6 +9,14 @@
 
 A render shows a silhouette; it does not show how thick a wall is, how deep a bore goes, whether a gap is where it should be, which parameters of a program move the part at all, or whether a count of faces can be believed. The inspection probes measure those things. They read an exact source (a build123d program or a STEP file) exactly and a mesh to its tessellation, and every output says which it did. This policy says which probe answers which question, how to read the numbers, and what each one cannot tell.
 
+## Reaching for It
+
+- How thick a wall is, how wide a slot, where a cavity narrows: `agentcad probe rays`, along a line or a fan of lines.
+- How a part was made, and where its axes are: `agentcad probe inventory` (the face census and every cylinder's and cone's axis).
+- Which parameters of a program matter, and which are dead: `agentcad probe knobs`.
+- A part's sections as loops, arcs and lines: `agentcad probe section` (`agentcad-probe-recover`); why a fillet fails, or a face's draft: `agentcad-probe-construction`.
+- A part judged against an original: `agentcad compare` (`agentcad-compare`).
+
 ## CEP Navigation Guide
 
 **1 Choosing the Probe**
@@ -64,13 +72,19 @@ A render shows a silhouette; it does not show how thick a wall is, how deep a bo
 - What do live, saturated, dead, partial and refused mean?
 - What does a dead verdict not prove?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- What do a width, an axis and a knob look like when measured, as commands?
+
+**7 Constraints to Probe**
+- Which limits of a probe are found by a command before its number is trusted?
+
+**8 Integration with Other Policies**
 - Which policies govern what surrounds these probes?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - Which readings of these probes mislead?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -164,13 +178,62 @@ Each run is measured four ways: volume, area, bounding-box size and solid count,
 
 A dead verdict names the measures, not a certainty. A knob that only moves a feature of equal volume along a wall, or only a label, reads as dead, and a delta that stays inside a clamp or below a feature's resolution reads as no change. Sweep again with a larger delta, and read the program, before removing a knob.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+How a plate was made, and how much wall stands between its middle hole and its edges: the inventory gives the holes' axes and radius, and a fan of rays from the middle hole's axis gives the wall in four directions.
+
+```console
+# recipe: examples
+$ agentcad export examples/peg_plate/source/peg_plate.py -f step -D part=plate -o plate.step
+Exported:
+$ agentcad probe inventory plate.step
+census {'plane': 6, 'cylinder': 3
+cylinder r 2.5: axis through (0, 0, -4) along (0, 0, 1)
+$ agentcad probe rays plate.step --fan 0,0,0:0,0,1:90 --length 12
+brep, exact face crossings
+F1@0: from (0.000, 0.000, 0.000) along (1.000, 0.000, 0.000)
+void     t    0.0000 ->    2.5000
+material 9.5000 in 1 run(s)
+F1@90: from (0.000, 0.000, 0.000) along (0.000, 1.000, 0.000)
+material 7.5000 in 1 run(s)
+```
+
+Each ray leaves the axis through the hole's void (2.5 mm, its radius) into material: towards the next hole along x the 12 mm ray ends still in material, and across the plate the wall to the long edge is 7.5 mm. Next: `--line` across the thinnest place to read it exactly.
+
+Which knobs of a program move the part: a verdict of dead is read against what the knob does, because knobs judges by volume, area, box and solid count.
+
+```console
+# recipe: examples
+$ agentcad probe knobs examples/peg_plate/source/peg_plate.py -D part=plate --knob pitch=2 --knob hole_d=0.5
+knob pitch: base 15, delta 2
+DEAD: no change in volume, area, bounding box or solid count either way
+knob hole_d: base 5, delta 0.5
+live: both sides change the part
+$ agentcad probe rays examples/peg_plate/source/peg_plate.py -D part=plate --line 10,0,0:1,0,0:12
+void     t    2.5000 ->    7.5000  length    5.0000  (12.500, 0.000, 0.000) -> (17.500, 0.000, 0.000)  [enclosed]
+$ agentcad probe rays examples/peg_plate/source/peg_plate.py -D part=plate -D pitch=17 --line 10,0,0:1,0,0:12
+void     t    4.5000 ->    9.5000  length    5.0000  (14.500, 0.000, 0.000) -> (19.500, 0.000, 0.000)  [enclosed]
+```
+
+`pitch` spreads the three holes apart; the same holes in other places leave every aggregate unchanged, so knobs calls it dead. One ray along the row at both values finds the outer hole's 5 mm of void moved 2 mm out, from 12.5..17.5 to 14.5..19.5: the knob is live. A dead verdict on a knob that only moves a feature is checked with a ray or a section before the knob is called dead.
+
+## 7 Constraints to Probe
+
+- An exact source gives exact crossings; a mesh gives its tessellation's: `agentcad probe rays SOURCE` says which on its first line (`brep` or `mesh`).
+- A ray that starts inside material, or a line too short, reports a clipped stretch: `agentcad probe rays` marks it `[clipped at the start]` or `[clipped at the end]`.
+- A census of mostly BSpline faces hides analytic types: `agentcad probe inventory` counts them, and a session warns when nine faces in ten are BSplines (section 3.1).
+- A knob that only moves a feature reads dead: `agentcad probe knobs` judges volume, area, box and solid count, so check such a knob with `agentcad probe rays` or `agentcad probe section` at two of its values.
+- A knob's verdict holds only for the deltas tried: `agentcad probe knobs SOURCE --knob NAME=DELTA` at a second, larger delta shows whether a knob dead at a small step is dead.
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where measuring a part sits among the goals.
+- `agentcad-design-practice`: which practice each probe checks.
 - `agentcad-session`: the tray after each iteration carries the census warning of section 3.1.
 - `agentcad-probe-recover`: section loops of an exact source, fits and comparison; it governs `agentcad probe section` for every source, and section 4 here adds what an STL changes.
 - `agentcad-policies`: how this and every other policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **Reading a clipped interval as a thickness**: an interval cut short by the range is a lower bound, whatever its length.
 - **Trusting a zero from a spline census**: no cylinders counted is not no cylinders present when the census says it cannot see them.
@@ -181,6 +244,6 @@ A dead verdict names the measures, not a certainty. A knob that only moves a fea
 - **Calling a knob dead from one small delta**: a delta inside a clamp reads as no change; sweep a larger one.
 - **Reading a saturated side as a broken knob**: it is at a limit, and the limit is the design's.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy ships with agentcad and changes with the commands it governs; a change to an inspection command's behaviour updates this policy in the same pull request.

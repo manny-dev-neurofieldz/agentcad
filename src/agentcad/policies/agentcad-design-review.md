@@ -9,6 +9,13 @@
 
 An author cannot measure what the author did not think to ask. A review is an instrument pointed at those blind spots: a peer who builds and probes the design independently, scores it on a fixed rubric with evidence, and asks for the one change that matters most. Its value is in the findings the author could not have made; a review that confirms the render has measured nothing. This policy says what an author hands over, the order a reviewer works in, the rubric, and what a review produces.
 
+## Reaching for It
+
+- Before calling a design done: freeze it with a tag and hand a reviewer the packet (section 1), with the review skill.
+- Asked to review someone else's design: section 2's order, the reviewer's instruments first and the author's conclusions last.
+- Checking your own iteration as you go: that is the session's reading of each iteration (`agentcad-session`), not a review; a review is a second instrument.
+- Judging a rebuild against an original: `agentcad compare` is one of the reviewer's instruments (`agentcad-compare`).
+
 ## CEP Navigation Guide
 
 **1 The Packet**
@@ -29,13 +36,19 @@ An author cannot measure what the author did not think to ask. A review is an in
 **5 What a Review Produces**
 - What does the record of a review hold, and what does a reviewer not do?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- How is a packet frozen, and how does a reviewer build and probe it before reading anything the author concluded?
+
+**7 Constraints to Probe**
+- Which of the reviewer's checks is answered by which command?
+
+**8 Integration with Other Policies**
 - Which policies give a reviewer its instruments?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - Which reviews measure nothing?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -69,15 +82,58 @@ Name one revision: the single construction change that retires the most findings
 
 A review's record holds the rubric scores with their evidence, the ranked findings, the one revision with its measurements, and what the critique missed, so the author can act on every line. A reviewer changes nothing in the design, the project or its records; the author applies the revision, and the next iteration shows whether it retired the findings.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+The author freezes the revision; the reviewer works from the tag, builds the program fresh, and measures before reading any claim.
+
+```console
+# recipe: examples
+$ agentcad session start examples/j_hook
+Session started
+$ agentcad session iterate examples/j_hook examples/j_hook/source/j_hook.py
+Iteration v1 recorded
+$ agentcad session tag examples/j_hook review-1 --note "packet for the first review"
+Tagged v1 as 'review-1'
+$ agentcad render examples/j_hook/tags/review-1/source/j_hook_v1.py --views iso --report -o reviewer
+counts     solids 1, faces 10
+valid      True
+$ agentcad probe knobs examples/j_hook/tags/review-1/source/j_hook_v1.py --knob wire_d=0.5 --knob lip=2
+knob wire_d: base 5, delta 0.5
+live: both sides change the part
+knob lip: base 12, delta 2
+live: both sides change the part
+```
+
+The reviewer's numbers come from the frozen source alone: one valid solid, and the knobs tried are live. A knob that moved nothing would be the first finding. Next: rays and sections on the load-bearing features, then the author's claims, then the rubric (sections 2 and 3).
+
+```mermaid
+flowchart LR
+    A["author: session tag PROJECT NAME"] --> B["reviewer: build the tag's source"]
+    B --> C["probe: knobs, rays, sections, fit"]
+    C --> D["read the author's claims"]
+    D --> E["score the rubric with the numbers"]
+    E --> F["one revision"]
+```
+
+## 7 Constraints to Probe
+
+- The packet must not move while it is reviewed: `agentcad session tag PROJECT NAME` freezes it and refuses to overwrite an existing tag.
+- A dead knob or a derived value posing as one: `agentcad probe knobs SOURCE --knob NAME=DELTA` says live or dead.
+- A wall, a width or a seat that is not the size claimed: `agentcad probe rays SOURCE --line ...`.
+- Connectivity a render cannot show: `agentcad render SOURCE --report` prints the solid count.
+- A mate that only one part states: `agentcad fit A B --mate NAME` with both bodies.
+- A replication that misses a feature: `agentcad compare ORIGINAL CANDIDATE --planes ...`, gate first.
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where a review sits among the goals.
 - `agentcad-session`: tags, the frozen copies a review scores.
 - `agentcad-compare`, `agentcad-probe-inspect`, `agentcad-probe-recover`, `agentcad-probe-construction`: the reviewer's instruments.
 - `agentcad-design-practice` and `agentcad-build123d`: the practices the rubric scores against.
 - `agentcad-fit`: the evidence for a mate.
 - `agentcad-policies`: how this policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **Reviewing the render**: four views confirm a silhouette; they say nothing about walls, sizes or connectivity.
 - **Reading the author first**: the review becomes the author's list in a second voice.
@@ -85,6 +141,6 @@ A review's record holds the rubric scores with their evidence, the ranked findin
 - **Many revisions**: a list of changes is not a decision; name the one.
 - **A moving target**: a design rewritten while it is reviewed.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy changes as reviews teach; a recurring finding is added to the rubric's wording when it has appeared in more than one review.

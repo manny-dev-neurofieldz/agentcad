@@ -9,6 +9,13 @@
 
 A replication or a revision is judged against something: an original STEP, a reference program, an earlier revision. `agentcad compare` answers in three instruments of different strength: a gate on the number of section loops per plane, which catches a missing or extra feature outright; distances between the two sections inside named windows, which say where a feature differs and by how much; and a sampled deviation over the whole surface, which summarises. This policy says what each instrument measures, how to read it, and why the strongest number is rarely the smallest one.
 
+## Reaching for It
+
+- A rebuild or a revision judged against an original STEP, a reference program or an earlier revision: `agentcad compare`, with planes through every feature that matters.
+- Two parts that must fit together, rather than match: `agentcad fit` (`agentcad-fit`).
+- What an original is made of, before building anything: the probes (`agentcad-probe-recover`, `agentcad-probe-inspect`).
+- One knob's effect on one part: `agentcad probe knobs` (`agentcad-probe-inspect`).
+
 ## CEP Navigation Guide
 
 **1 What Compare Takes**
@@ -30,13 +37,19 @@ A replication or a revision is judged against something: an original STEP, a ref
 **5 Reading a Comparison**
 - In which order are the numbers read, and what does each prove?
 
-**6 Integration with Other Policies**
+**6 Recipes**
+- What does a comparison that passes look like, and one whose gate fails?
+
+**7 Constraints to Probe**
+- Which limits of a comparison are found by a command before its numbers are trusted?
+
+**8 Integration with Other Policies**
 - Which policies feed and use a comparison?
 
-**7 Anti-Patterns**
+**9 Anti-Patterns**
 - Which readings of a comparison mislead?
 
-**8 Evolution and Feedback**
+**10 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -67,21 +80,66 @@ Its floor is the sampling: two identical surfaces sampled at different vertices 
 
 ## 5 Reading a Comparison
 
+```mermaid
+flowchart LR
+    G{"loop counts equal on every plane?"} -- "no" --> F["a feature is missing or extra: find it, rebuild"]
+    G -- "yes" --> W{"each window within its tolerance?"}
+    W -- "no" --> L["that feature differs: by the window's p95 and max"]
+    W -- "yes" --> D["deviation: summary, and the worst 5% the windows did not cover"]
+```
+
 Read the gate first: a count that differs is a missing or extra feature, and no distance makes up for it. Then the windows, feature by feature: they say where the parts differ and by how much, at the resolution of exact curves. Then the deviation, as the summary and as a pointer to regions the windows did not cover (its worst 5 %). For a replication, aim for window percentiles under the original's own export discretisation and a deviation at its sampling floor; for a revision, the windows over the changed features should show the change and the others nothing.
 
-## 6 Integration with Other Policies
+## 6 Recipes
 
+A revision judged against the part it revises: the hook with a 6.4 mm peg against the 6.2 mm original, on the plane through the peg, with a window on the peg alone.
+
+```console
+# recipe: examples
+$ agentcad compare examples/j_hook/source/j_hook.py examples/j_hook/source/j_hook.py --planes z=3 --window peg=-4,-4,4,4 -D peg_d=6.4
+z=3: loops 1 vs 1 ok
+window peg: p95 0.1, max 0.1
+deviation candidate->original p95 0.1
+```
+
+The gate holds, and the window says the peg differs by 0.1 mm all round, which is the radius change asked for; the deviation agrees. Next: a window over each feature that should not have changed, each reading near zero.
+
+A rebuild that lost a feature: the original plate has three holes, the candidate two. The gate fails whatever the distances say, and the command exits 1.
+
+```console
+# recipe: examples
+$ agentcad export examples/peg_plate/source/peg_plate.py -f step -D part=plate -o plate.step
+Exported:
+$ agentcad compare plate.step examples/peg_plate/source/peg_plate.py --planes z=0 -D part=plate -D n=2
+# exit 1
+z=0: loops 4 vs 3 DIFFERENT
+loop-count gate: FAILED
+```
+
+Four loops are the plate's outline and its three holes. Next: find the missing loop on the overlay (`-o DIR`) and rebuild; no window or deviation is read while the gate fails.
+
+## 7 Constraints to Probe
+
+- Loops are counted only between exact sources: `agentcad compare A B --planes ...` says so on stderr when either is a mesh, and then reports the deviation alone.
+- A plane that misses a feature cannot count it: `agentcad probe section SOURCE --planes ...` shows each plane's loops before they are compared (`agentcad-probe-recover`).
+- A loop cap limits the overlays, never the gate: `agentcad compare ... --max-loops N` says when it applied.
+- The deviation's floor is the sampling: `agentcad compare` of a source against itself reads near that floor, which is the smallest difference the number can show.
+- `-D` reaches only a candidate that is a program: `agentcad compare` names it on stderr as ignored for a STEP or STL candidate.
+
+## 8 Integration with Other Policies
+
+- `agentcad-start`: where comparing sits among the goals.
 - `agentcad-probe-recover`: the section loops and recovered curves a replication is built from.
 - `agentcad-probe-inspect`: rays, knobs and the inventory, for what a comparison points at.
 - `agentcad-reverse-engineering`: the order of work for a replication, of which compare is the last step.
 - `agentcad-policies`: how this policy is found and read.
 
-## 7 Anti-Patterns
+## 9 Anti-Patterns
 
 - **The deviation alone**: a small p95 can hide a missing tooth and a misplaced wall; read the gate and the windows first.
 - **One window over two features**: the nearer feature answers for both; name a window per feature.
 - **A capped count as evidence**: a listing that kept N loops says nothing about loop N + 1.
 
-## 8 Evolution and Feedback
+## 10 Evolution and Feedback
 
 This policy ships with agentcad and changes with `agentcad compare`; a change to its instruments updates this policy in the same pull request.

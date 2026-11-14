@@ -920,8 +920,12 @@ def cmd_probe_fillet(args):
               f"a program", file=sys.stderr)
         sys.exit(2)
     radii = [float(v) for v in args.radii.split(",")] if args.radii else (1.0, 0.6, 0.4, 0.25)
-    res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
-                             defines=_parse_defines(args.define) if args.define else None)
+    try:
+        res = probe.fillet_probe(Path(args.source), at=args.at, index=args.index, radii=radii, short_mm=args.short,
+                                 defines=_parse_defines(args.define) if args.define else None)
+    except LookupError as e:                    # fewer calls than --index: a refusal with the count, not a crash
+        print(f"Error: {e} (--index counts from 0; --at chooses fillet or chamfer)", file=sys.stderr)
+        sys.exit(2)
     print("\n".join(probe.render_fillet_probe(res)))
     if args.output:
         print(f"fillet.json: {probe.write_json(res, Path(args.output))}")

@@ -9,6 +9,13 @@
 
 A mate stated in one part's program is a hypothesis; only a check with both bodies tests it. Every single-part instrument can pass while two parts meet line to line, bind on the way in, or miss each other by a millimetre. `agentcad fit` loads two exact shapes, poses the second against the first, and measures overlap, clearance, the gap inside each declared window, and where the surfaces touch. This policy says how to declare a mate, how the pair is posed and measured, how to read the verdicts, and what is recorded.
 
+## Reaching for It
+
+- Two parts that must mate (a peg and its hole, a key and its slot, a lid and its rim): `agentcad fit`, with the mate declared in both parts, before either is printed.
+- After any change to a mate's parameters: the same fit again; finalize runs every declared mate and records it (`agentcad-session`).
+- A part checked against an original it should match, rather than a part it should fit: `agentcad compare` (`agentcad-compare`).
+- A clearance that depends on the material: fit sets the nominal; a printed plate of variants finds the real one (`agentcad-render-export`).
+
 ## CEP Navigation Guide
 
 **1 Declaring Mates**
@@ -43,13 +50,19 @@ A mate stated in one part's program is a hypothesis; only a check with both bodi
 - What does a fit record carry, and where is it written?
 - What does session finalize do with declared mates?
 
-**7 Integration with Other Policies**
+**7 Recipes**
+- What does a declared mate look like when it passes, and when the parts overlap?
+
+**8 Constraints to Probe**
+- Which limits of a fit are found by a command before its verdict is trusted?
+
+**9 Integration with Other Policies**
 - Which policies govern the parts before and after a fit?
 
-**8 Anti-Patterns**
+**10 Anti-Patterns**
 - Which readings of a fit are wrong?
 
-**9 Evolution and Feedback**
+**11 Evolution and Feedback**
 - How does this policy change?
 
 === CEP_NAV_BOUNDARY ===
@@ -118,13 +131,53 @@ A view shows where to look; the numbers in section 4 decide. Look at every view 
 
 Fit reads build123d programs and STEP files as exact shapes; any other part is refused with the reason.
 
-## 7 Integration with Other Policies
+## 7 Recipes
 
+The peg and plate example declares its mate in both parts; one source builds both, so each side says where its part declares its half:
+
+```console
+# recipe: examples
+$ agentcad fit examples/peg_plate/source/peg_plate.py examples/peg_plate/source/peg_plate.py --a-define part=plate --b-define part=peg --mate middle_peg --a-mates examples/peg_plate/parts/plate --b-mates examples/peg_plate/parts/peg
+pose: no key line on both sides: the spin about the axis is free
+interference 0 mm^3; clearance 0.05 mm
+window middle_peg: PASS (clearance 0.05 mm; nominal 0.05 +/- 0.05 mm)
+```
+
+No overlap, and 0.05 mm all round in the window, which is the nominal. The pose note is read too: the spin is a choice fit made, harmless for a round peg and not for a keyed one. Next: `--record` writes the result into both parts' manifests (section 6).
+
+The same pair with the peg 0.1 mm oversize, and an insertion sweep along the axis to see where it starts to bind:
+
+```console
+# recipe: examples
+$ agentcad fit examples/peg_plate/source/peg_plate.py examples/peg_plate/source/peg_plate.py --a-define part=plate --b-define part=peg --b-define clearance=-0.1 --mate middle_peg --a-mates examples/peg_plate/parts/plate --b-mates examples/peg_plate/parts/peg --sweep z --travel 4 --sweep-steps 2
+# exit 1
+interference 4.76 mm^3; clearance 0 mm
+window middle_peg: PASS
+insertion at 4 mm out: interference 1.587 mm^3
+insertion at 0 mm out: interference 4.76 mm^3
+fit: INTERFERENCE (the bodies overlap)
+```
+
+The window still reads PASS: a window's verdict guards against too tight a gap within its tolerance, and an overlap reads as a gap near zero. The interference decides, and the command exits 1. The sweep shows the overlap growing with depth from the first millimetres in, a peg too large all along rather than a burr at the bottom. Next: change the part the mate belongs to, and fit again.
+
+## 8 Constraints to Probe
+
+- A mate is posed only from datums both parts declare: `agentcad fit A B --mate NAME` refuses a side with no `[mates.NAME]`, saying where it looked and what to declare.
+- The spin and the seat are fit's choices when a key line or a rim plane is missing on a side: `agentcad fit` says so in its pose notes; read them before trusting a keyed or seated pair.
+- A window's minimum is resolved only to the lattice step: `agentcad fit ... --step MM` at half the step must give the same minimum, or the feature was not resolved.
+- A part that fits seated can bind on the way in: `agentcad fit ... --sweep AXIS` reports the interference along the travel.
+- Fit reads exact shapes only: `agentcad fit` refuses a mesh with the reason; export STEP from the source (`agentcad export -f step`) where it can.
+- A record is written only where a manifest exists: `agentcad fit ... --record` reports a project without one; finalize it first.
+
+## 9 Integration with Other Policies
+
+- `agentcad-start`: where a fit sits among the goals.
+- `agentcad-design-practice`: why a mate is a hypothesis until both bodies are posed.
 - `agentcad-session`: finalize runs the declared mates; the print manifest carries the fit table.
 - `agentcad-records`: what a fit record must hold wherever it is kept (a manifest, or a part record's `[fit.<mate>]` table), and the check that reads it.
 - `agentcad-policies`: how this policy is found and read.
 
-## 8 Anti-Patterns
+## 10 Anti-Patterns
 
 - **A render as the fit**: an assembled view looks the same at 0.0 mm and at 0.6 mm; read the clearance, the windows and the contacts.
 - **An empty window read as clear**: a window where one part has no surface measures nothing; move the box.
@@ -132,6 +185,6 @@ Fit reads build123d programs and STEP files as exact shapes; any other part is r
 - **A number written twice**: a window or nominal typed into a toml by hand drifts from the program that places the parts; generate it from the same parameters, or derive the datums from the parts.
 - **A pass read as a good fit**: the verdict guards against tight; a loose mate passes. Compare the clearance with the nominal.
 
-## 9 Evolution and Feedback
+## 11 Evolution and Feedback
 
 This policy ships with agentcad and changes with the command it governs; a change to fit's behaviour, to the `[mates]` contract or to the fit record updates this policy in the same pull request.

@@ -153,6 +153,15 @@ def test_probe_fillet_captures_the_call_by_index_and_leaves_build123d_intact(tmp
     assert build123d.fillet is real                                 # restored after every run
 
 
+def test_probe_fillet_on_a_program_with_fewer_calls_is_refused_with_the_count_not_a_traceback(tmp_path, capsys):
+    from tests.gcode_fixtures import run_cli
+    p = tmp_path / "two.py"
+    p.write_text(TWO_CALLS)
+    rc, out, err = run_cli(capsys, "probe", "fillet", p, "--index", "2")
+    assert rc == 2 and out == ""
+    assert "no fillet call number 2 (saw 2)" in err and "Traceback" not in err and "--index counts from 0" in err
+
+
 # --- probe draft ---------------------------------------------------------------------------------
 
 POCKET = ("from build123d import *\n\n"

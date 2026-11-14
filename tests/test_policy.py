@@ -191,11 +191,8 @@ def test_policy_lints(name):
 #: Policies not yet written in the enabling pattern (agentcad-policies, section 2.2). This list only shrinks: a
 #: policy upgraded while still listed fails below, so the list cannot hide a policy that is done.
 NOT_YET_UPGRADED = {
-    "agentcad-compare", "agentcad-design-review", "agentcad-fit",
     "agentcad-gcode", "agentcad-plugin", "agentcad-print-intent", "agentcad-printer-hosts", "agentcad-printers",
-    "agentcad-probe-construction", "agentcad-probe-inspect", "agentcad-probe-recover",
-    "agentcad-prusaslicer", "agentcad-qc", "agentcad-records",
-    "agentcad-reverse-engineering", "agentcad-targets",
+    "agentcad-prusaslicer", "agentcad-qc", "agentcad-records", "agentcad-targets",
 }
 UPGRADED = [n for n in POLICIES if n not in NOT_YET_UPGRADED]
 
