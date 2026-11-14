@@ -769,6 +769,7 @@ EXEMPT = {
     ("printers",): "reads no input",
     ("targets",): "reads no input",
     ("plugin", "export"): "reads no input: it writes the package's own skills and agent; held in test_plugin_export",
+    ("plugin", "hook"): "one kind of input: a harness's JSON payload on stdin; held in test_plugin_hooks",
     ("policy", "list"): "reads no input",
     ("policy", "navigate"): "one kind of input: a policy name",
     ("policy", "read"): "one kind of input: a policy name",

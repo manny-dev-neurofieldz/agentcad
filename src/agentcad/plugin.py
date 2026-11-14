@@ -1,17 +1,20 @@
 """agentcad as a Claude Code plugin: the skills and the reviewer agent that ship in the package, laid out where
 Claude Code looks for them.
 
-The export holds no code and no permissions. The skills call the ``agentcad`` command, which must be installed
-where the plugin is used; the policies they read come from that install (``agentcad policy``). The layout, checked
-with ``claude plugin validate --strict`` (Claude Code 2.1.302):
+The export holds no agentcad code and no permission rules. The skills call the ``agentcad`` command, which must be
+installed where the plugin is used; the policies they read come from that install (``agentcad policy``), and so do
+the hooks (agentcad.plugin_hooks). The layout, checked with ``claude plugin validate --strict`` (Claude Code
+2.1.302):
 
     .claude-plugin/plugin.json        name, version (the package's), description, author, license
     .claude-plugin/marketplace.json   with ``marketplace``: a local marketplace offering this plugin from "./"
     skills/<name>/SKILL.md            each skill, invoked as /agentcad:<name>
     agents/design-reviewer.md         the reviewer agent, agentcad:design-reviewer
-    hooks/hooks.json                  no hooks yet
+    hooks/hooks.json                  SessionStart, PostToolUse on Bash, PreToolUse on edits
+    hooks/run.sh                      runs ``agentcad plugin hook EVENT``, or says agentcad is missing
 
-The same package always exports the same bytes: files in name order, JSON with sorted keys, modes 0644 and 0755.
+The same package always exports the same bytes: files in name order, JSON with sorted keys, modes 0644 (run.sh
+0755) and 0755 for folders.
 """
 import json
 import shutil
@@ -28,8 +31,54 @@ TARGETS = ("claude-code",)
 WRITTEN = (".claude-plugin", "agents", "hooks", "skills")
 
 
+#: The harness events the plugin hooks, each with the tools it listens to (None: every occurrence) and the
+#: ``agentcad plugin hook`` event that answers it (agentcad.plugin_hooks).
+HOOKS = (("PostToolUse", "Bash", "post-tool-use"),
+         ("PreToolUse", "Edit|Write|MultiEdit|NotebookEdit", "pre-tool-use"),
+         ("SessionStart", None, "session-start"))
+RUNNER = "hooks/run.sh"
+#: The runner the harness calls. It holds no logic of its own: it hands the payload to the installed command, and
+#: without one it says so once, at session start, and stays silent for every other event (a missing install must
+#: not fail each tool call).
+RUN_SH = """#!/bin/sh
+# Runs one of the agentcad plugin's hooks through the installed agentcad command.
+# Written by: agentcad plugin export (agentcad {version}). Do not edit; export again.
+event="$1"
+if command -v agentcad >/dev/null 2>&1; then
+    exec agentcad plugin hook "$event" --plugin-version "{version}"
+fi
+cat >/dev/null
+if [ "$event" = "session-start" ]; then
+    printf '%s\\n' '{missing}'
+fi
+exit 0
+"""
+
+
 class PluginError(Exception):
     pass
+
+
+def hooks() -> Dict[str, object]:
+    """hooks.json: each event handed to the runner, which hands it to ``agentcad plugin hook``."""
+    out: Dict[str, list] = {}
+    for harness_event, matcher, event in HOOKS:
+        entry: Dict[str, object] = {"hooks": [{"type": "command",
+                                               "command": f'"${{CLAUDE_PLUGIN_ROOT}}/{RUNNER}" {event}'}]}
+        if matcher:
+            entry["matcher"] = matcher
+        out[harness_event] = [entry]
+    return {"hooks": out}
+
+
+def runner() -> bytes:
+    missing = json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": (
+        f"The agentcad plugin is loaded, but no agentcad command is on PATH here. Its skills call that command "
+        f"and will fail at their first step: install agentcad {agentcad.__version__} (pip install agentcad), "
+        f"then start the session again.")}}, sort_keys=True)
+    if "'" in missing:
+        raise PluginError("the runner's message holds a quote the shell script cannot carry")
+    return RUN_SH.format(version=agentcad.__version__, missing=missing).encode("ascii")
 
 
 def _metadata() -> Dict[str, str]:
@@ -76,7 +125,8 @@ def _files(with_marketplace: bool) -> Dict[str, bytes]:
     def as_json(value) -> bytes:
         return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
-    files = {".claude-plugin/plugin.json": as_json(manifest()), "hooks/hooks.json": as_json({"hooks": {}})}
+    files = {".claude-plugin/plugin.json": as_json(manifest()), "hooks/hooks.json": as_json(hooks()),
+             RUNNER: runner()}
     if with_marketplace:
         files[".claude-plugin/marketplace.json"] = as_json(marketplace())
     for skill in _shipped("skills"):
@@ -132,7 +182,7 @@ def export(out: Union[str, Path], target: str = "claude-code", with_marketplace:
         path = out / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(files[rel])
-        path.chmod(0o644)
+        path.chmod(0o755 if rel == RUNNER else 0o644)
         written.append(path)
     inside = {parent for p in written for parent in p.relative_to(out).parents if str(parent) != "."}
     for folder in sorted(inside):
