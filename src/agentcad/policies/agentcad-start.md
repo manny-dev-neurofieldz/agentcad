@@ -137,12 +137,12 @@ flowchart LR
 
 ### 1.6 Make agentcad's Know-How Available in a Harness
 
-The plugin export writes the skills, the reviewer agent, the hooks and the policies for a harness; other targets write a policy root for the [MacEff](https://github.com/cversek/MacEff) agent framework, an `AGENTS.md`, or tool definitions for a model API.
+The `claude-code` target writes a plugin: the skills, the reviewer agent and the hooks; the skills read the policies from the installed agentcad, so the plugin carries none. The other targets write the policies as a policy root for the [MacEff](https://github.com/cversek/MacEff) agent framework, an `AGENTS.md` that names every policy and skill, or tool definitions for a model API.
 
 ```mermaid
 flowchart LR
     A["agentcad plugin export --target T -o DIR"] --> B{"target"}
-    B --> C["claude-code: a plugin with skills, an agent and hooks"]
+    B --> C["claude-code: skills, an agent and hooks; policies read from the install"]
     B --> D["maceff: the policies as a policy root"]
     B --> E["agents-md: one AGENTS.md"]
     B --> F["api-tools: tools.json for a model API"]

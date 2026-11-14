@@ -209,14 +209,18 @@ def _fences(text: str) -> List[Tuple[int, str, List[str]]]:
 def recipes(policy: Policy) -> List[Recipe]:
     """The recipes in a policy: ``console`` blocks whose first line is ``# recipe: WORKSPACE``. A ``$ agentcad``
     line is a step; the lines under it until the next step are what its output must show, except ``# exit N``
-    (the status it must end with, 0 when not said) and other ``#`` lines, which are commentary. A malformed
+    (the status it must end with, 0 when not said) and other ``#`` lines, which are commentary. The output a step
+    is matched against is its stdout followed by its stderr, so a refusal's message comes after any printed lines.
+    A malformed
     recipe is a PolicyError naming the policy and line, so a recipe that would test nothing cannot pass."""
     import shlex
 
     found = []
     for at, info, body in _fences(policy.text):
-        if info != "console" or not body or not body[0].startswith(RECIPE_MARK):
+        if not body or not body[0].startswith(RECIPE_MARK):
             continue
+        if info != "console":           # a recipe under another fence would be skipped, and test nothing
+            raise PolicyError(f"{policy.name} line {at}: a recipe goes in a `console` fence, not {info or 'a bare'!r}")
         workspace = body[0][len(RECIPE_MARK):].strip()
         if workspace not in WORKSPACES:
             raise PolicyError(f"{policy.name} line {at}: recipe workspace {workspace!r} is not one of "
@@ -232,8 +236,13 @@ def recipes(policy: Policy) -> List[Recipe]:
                 if line.strip() and not line.startswith("#"):
                     raise PolicyError(f"{policy.name} line {n}: output before the first step")
             elif line.startswith("# exit "):
-                steps[-1].exit = int(line[len("# exit "):].strip())
+                said = line[len("# exit "):].strip()
+                if not said.isdigit():
+                    raise PolicyError(f"{policy.name} line {n}: '# exit' takes a number, not {said!r}")
+                steps[-1].exit = int(said)
             elif line.strip() and not line.startswith("#"):
+                if not line.replace("...", "").strip():
+                    raise PolicyError(f"{policy.name} line {n}: an expected line of only '...' matches any output")
                 steps[-1].expect.append(line.strip())
         if not steps:
             raise PolicyError(f"{policy.name} line {at}: a recipe with no step")

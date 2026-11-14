@@ -20,6 +20,18 @@ RECIPES = [r for p in pol.all_policies() for r in pol.recipes(p)]
 GENERATED = ("_work", "exports", "renders", "viewer", "_archive", "__pycache__")
 
 
+def _missing(engine):
+    """Why an engine cannot run a recipe here, or None. The Python engines also need PyVista to render, which
+    their availability check does not ask for."""
+    import importlib.util
+
+    if not get_engine(engine).available():
+        return f"engine {engine} is not installed here"
+    if engine in ("build123d", "voxelcad") and importlib.util.find_spec("pyvista") is None:
+        return f"engine {engine} renders with PyVista, which is not installed here"
+    return None
+
+
 def _engines_named(recipe):
     """The engines a recipe's examples use, read from their project files."""
     from agentcad.config import find_project
@@ -36,6 +48,10 @@ def _engines_named(recipe):
 
 @pytest.fixture
 def workspace(tmp_path, monkeypatch):
+    """A scratch folder to run in, with a user config folder of its own: a step never reads the developer's
+    printers or targets. (HOME stays: the engines' workers find their packages through it.)"""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
     def make(kind):
         if kind == "examples":
             shutil.copytree(EXAMPLES, tmp_path / "examples", ignore=shutil.ignore_patterns(*GENERATED))
@@ -51,8 +67,8 @@ def test_the_policies_carry_recipes():
 @pytest.mark.parametrize("recipe", RECIPES, ids=[f"{r.policy}:{r.line}" for r in RECIPES])
 def test_a_recipe_runs_and_shows_what_it_says(recipe, workspace, capsys):
     for name in sorted(_engines_named(recipe)):
-        if not get_engine(name).available():
-            pytest.skip(f"engine {name} is not installed here")
+        if _missing(name):
+            pytest.skip(_missing(name))
     workspace(recipe.workspace)
     for step in recipe.steps:
         rc, out, err = run_cli(capsys, *step.argv)
@@ -68,10 +84,18 @@ def test_a_recipe_runs_and_shows_what_it_says(recipe, workspace, capsys):
     ("# recipe: empty\noutput first\n$ agentcad info", "output before the first step"),
     ("# recipe: empty\n# only a comment", "no step"),
     ("# recipe: empty\n$ agentcad info\n# exit 0", "expects no output"),
+    ("# recipe: empty\n$ agentcad info\n...", "only '...'"),
+    ("# recipe: empty\n$ agentcad info\n# exit two\nx", "takes a number"),
 ])
 def test_a_malformed_recipe_is_refused_by_policy_and_line(body, said):
     text = f"# T\n\n```console\n{body}\n```\n"
     with pytest.raises(pol.PolicyError, match=said):
+        pol.recipes(pol.Policy("agentcad-x", text, {}))
+
+
+def test_a_recipe_under_another_fence_is_refused_not_skipped():
+    text = "# T\n\n```sh\n# recipe: empty\n$ agentcad info\nRegistered\n```\n"
+    with pytest.raises(pol.PolicyError, match="a recipe goes in a `console` fence"):
         pol.recipes(pol.Policy("agentcad-x", text, {}))
 
 
