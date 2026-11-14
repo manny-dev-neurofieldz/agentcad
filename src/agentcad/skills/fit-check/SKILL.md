@@ -7,7 +7,7 @@ Test a mate with both parts present: declared from their sources, posed from the
 
 ## Policy Engagement Protocol
 
-Run `agentcad policy navigate` for each policy below and read the sections whose questions match the step at hand:
+Run `agentcad policy navigate NAME` for each policy below. Read its Reaching for It first, then the sections whose questions match the step at hand, and run the recipe closest to the task before your own commands:
 
 1. `fit` - declaring mates, posing the pair, what fit measures, verdicts and records.
 2. `design-practice` - stating a mate and choosing a clearance.
@@ -20,20 +20,20 @@ Run `agentcad policy navigate` for each policy below and read the sections whose
 2. **Posing** - How are the two parts posed, and what does the pose leave undetermined?
 3. **Measuring** - What does fit measure, and what does each number say and not say?
 4. **Windows** - How is a window placed so it speaks for one mate?
-5. **Verdicts** - When does a fit pass or fail?
-6. **Records** - Where is a fit recorded, and when does finalize run one?
-7. **Material** - How is a clearance found when the process takes its own share?
-8. **Anchoring** - What makes a recorded fit say whether it still holds after either part changes?
+5. **Verdicts** - When does a fit pass or fail, and what does a window's pass not guard against?
+6. **Material** - How is a clearance found when the process takes its own share?
+7. **Reaching** - When does each policy say to reach for its commands, and when for another?
+8. **Recipes** - Which of its recipes is closest to this task, and what did its output show when run?
+9. **Constraints** - Which constraints does it say to probe for this task, and with which command?
 
 ## Workflow
 
-1. Read the mating feature's relation in the other part's source and declare the mate in both parts.
-2. `agentcad fit A B --mate NAME -o DIR`, with an insertion sweep for anything that slides in.
-3. Read the windows, the contacts and the sweep, then look at the views (the render-gate skill).
-4. Fix the relation, not the number; fit again.
-5. Record it: `agentcad fit A B --mate NAME --record`, or let finalize fit every declared mate.
-   In a part library, record it on both parts with snapshots of the sources it measured, then `agentcad records check` the library.
-6. Where the material decides the clearance, export a variant plate and print it.
+1. Where does the other part's source state the relation this mate depends on, and is the mate declared in both parts?
+2. `agentcad fit A B --mate NAME -o DIR`. Does the mate slide in, and if it does, along which axis does fit say to sweep (`--sweep AXIS`)?
+3. What do the interference, the windows, the contacts, the sweep and the pose notes say, and what do the views show (the render-gate skill)?
+4. Which part's relation is wrong? Change that, not the number, and run `agentcad fit` again.
+5. `agentcad fit A B --mate NAME --record`, or `agentcad session finalize PROJECT` for a project that declares the mate; in a library, `agentcad records check LIBRARY`.
+6. Does the material decide the clearance? `agentcad export SOURCE --variants KNOB=v1,v2,...`; what does render-export say to print and compare?
 
 ## Critical Meta-Pattern
 

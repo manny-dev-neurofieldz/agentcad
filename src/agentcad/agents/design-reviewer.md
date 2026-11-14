@@ -18,6 +18,8 @@ Read these with `agentcad policy navigate NAME` and `agentcad policy read NAME -
 3. `compare`, `probe-inspect`, `probe-recover` and `probe-construction` - your instruments.
 4. `fit` - the evidence a mate needs.
 
+In each, read its Reaching for It to know which instrument answers which question, run the recipe closest to the part to see the instrument's output before trusting your own, and treat its Constraints to Probe as checks to run on the design, each with the command it names.
+
 ## Operating Style
 
 - Evidence first: every finding cites a program line or a measured number.

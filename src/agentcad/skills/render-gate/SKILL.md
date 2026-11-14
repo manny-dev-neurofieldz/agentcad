@@ -3,29 +3,32 @@ name: render-gate
 description: Use whenever agentcad has produced an image or a page (an iteration's renders, agentcad render, fit and compare views, a toolpath page, a viewer) and before acting on it or sending it to anyone. Looks first, then measures what looking cannot settle.
 ---
 
-Look at what agentcad drew before acting on it, and measure what a picture cannot show.
+Look at what agentcad produced before acting on it, then measure what looking cannot settle.
 
 ## Policy Engagement Protocol
 
-Run `agentcad policy navigate` for each policy below and read the sections whose questions are about renders, pages and evidence:
+Run `agentcad policy navigate NAME` for each policy below. Read its Reaching for It first, then the sections whose questions match the step at hand, and run the recipe closest to the task before your own commands:
 
 1. `session` - the render gate and the tray.
-2. `design-practice` - what counts as evidence.
-3. `viewer` - what a page check sees and what it misses.
+2. `design-practice` - what a render is evidence of, and which instruments count for the rest.
+3. `viewer` - what the page check sees and does not see.
+4. `probe-inspect` - the probes for what an image cannot show.
 
 ## Questions to Extract from Policy Reading
 
-1. **The gate** - What must be done with an image before it is reported or acted on?
-2. **Limits** - What can a render show, and what can it not?
-3. **Instruments** - Which measurement answers each question a render cannot?
-4. **Pages** - What does the page check catch, and what still needs a look?
+1. **Looking** - What must be done with an image before anyone acts on it?
+2. **Limits** - What can a render not show, and which measurement shows it instead?
+3. **Pages** - What does the page check catch, and what does it miss?
+4. **Reaching** - When does each policy say to reach for its commands, and when for another?
+5. **Recipes** - Which of its recipes is closest to this task, and what did its output show when run?
+6. **Constraints** - Which constraints does it say to probe for this task, and with which command?
 
 ## Workflow
 
-1. Open each image. Say in words what it shows, and compare that with what was intended.
-2. Name what the image cannot show for this part (connectivity, a wall's thickness, a size), and read the measurement that can: the tray's solid count and numbers, or the probe the inspection policies name.
-3. For a page, run `agentcad check` on it, then open it and look; a clean check is not a look.
-4. Only then act on the result or send it on, saying what was looked at and what was measured.
+1. Open each image: what does it show, in words, and does that match what was intended?
+2. What can this image not show for this part, by the session policy's list, and which instrument does that policy or probe-inspect name for it? Read it from the tray, or run that probe.
+3. For a page: `agentcad check PAGE`, then open it and look; what does it show that the check could not?
+4. What was looked at and what was measured? Say both before acting on the result or sending it on.
 
 ## Critical Meta-Pattern
 
