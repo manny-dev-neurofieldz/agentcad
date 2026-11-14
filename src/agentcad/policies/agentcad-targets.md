@@ -92,7 +92,7 @@ A target that needs an input the job does not hold names it in `job_options` (th
 # recipe: empty
 $ agentcad targets
 generic     : write_job, read_output
-prusaslicer : write_job, slice, read_output, map_intent, printer_config
+prusaslicer...: write_job, slice, read_output, map_intent, printer_config
 ```
 
 `generic` writes a neutral project any slicer opens; `prusaslicer` also slices headless, maps the `[print]` intent onto its own settings and reads the printer from its configuration. Next: `agentcad stage PROJECT --target NAME`.
