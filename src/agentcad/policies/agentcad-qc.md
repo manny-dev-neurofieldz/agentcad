@@ -193,7 +193,7 @@ With `[qc] gate = true`, an error holds the part back: finalize still writes the
 
 ## 6 Recipes
 
-The hex tray example, finalized and judged against the default printer. QC finds what four renders did not: the walls between offset rows of pockets are 0.57 mm against a 0.9 mm limit.
+The hex tray example judged against the default printer. Its top view already shows pockets meeting corner to corner; QC puts numbers and places on it: walls of 0.56 mm between the offset rows against a 0.9 mm limit.
 
 ```console
 # recipe: examples
