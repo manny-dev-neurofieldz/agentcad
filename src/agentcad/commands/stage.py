@@ -102,6 +102,11 @@ def cmd_stage(args):
         placed.append((part_name, stl, part_cfg, T, float(extent[1])))
     # the parts in a row along y, GAP_MM apart edge to edge, the whole row centred on the bed
     row = sum(depth for *_, depth in placed) + GAP_MM * (len(placed) - 1)
+    bed_depth = float(printer.build_volume[1])
+    if row > bed_depth:
+        return _refuse(f"the row of {len(placed)} part(s) is {row:g} mm deep ({GAP_MM:g} mm apart edge to edge), "
+                       f"deeper than the {bed_depth:g} mm bed of {printer.label} ({bed_from}); nothing was staged "
+                       f"(stage the parts in smaller groups, or lay the deepest one along x)")
     parts, y = [], -row / 2
     for part_name, stl, part_cfg, T, depth in placed:
         T[1][3] += y + depth / 2

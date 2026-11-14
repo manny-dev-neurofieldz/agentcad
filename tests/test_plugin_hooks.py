@@ -81,6 +81,34 @@ def test_other_calls_and_projects_without_a_record_get_no_context(tmp_path, payl
     assert plugin_hooks.run("post-tool-use", dict(payload, cwd=str(tmp_path))) is None
 
 
+def test_an_iterate_that_records_nothing_new_is_said_to_have_failed_not_reported_again(tmp_path):
+    """The record's last iteration is told once; the same command again, with no new iteration in the record (the
+    build failed, or the source was refused), says the call recorded nothing, never the old iteration as new."""
+    _session(tmp_path / "bracket", warnings=["2 solids"], images={"iso": "/x/v3_iso.png"})
+    command = _bash("agentcad session iterate bracket part.py", tmp_path)
+    first = plugin_hooks.run("post-tool-use", command)["hookSpecificOutput"]["additionalContext"]
+    assert "recorded iteration 3 of bracket" in first
+    again = plugin_hooks.run("post-tool-use", command)["hookSpecificOutput"]["additionalContext"]
+    assert "recorded no new iteration of bracket (the latest is still iteration 3)" in again
+    assert "tray:" not in again and "v3_iso.png" not in again
+    record = tmp_path / "bracket" / "_work" / "session.json"
+    state = json.loads(record.read_text())
+    state["iterations"].append({"number": 4, "report": {"warnings": []}, "image_paths": {}})
+    record.write_text(json.dumps(state))
+    assert "recorded iteration 4 of bracket" in plugin_hooks.run("post-tool-use", command)[
+        "hookSpecificOutput"]["additionalContext"]
+
+
+@pytest.mark.parametrize("response", [{"exit_code": 1}, {"returncode": 2}, {"is_error": True}, {"interrupted": True}])
+def test_a_call_the_harness_reports_as_failed_is_said_to_have_failed_even_the_first_time(tmp_path, response):
+    _session(tmp_path / "bracket", warnings=["2 solids"])
+    payload = dict(_bash("agentcad session iterate bracket part.py", tmp_path), tool_response=response)
+    text = plugin_hooks.run("post-tool-use", payload)["hookSpecificOutput"]["additionalContext"]
+    assert "recorded no new iteration of bracket" in text and "tray:" not in text
+    ok = dict(payload, tool_response={"exit_code": 0, "stdout": "iteration 3"})
+    assert "recorded iteration 3" in plugin_hooks.run("post-tool-use", ok)["hookSpecificOutput"]["additionalContext"]
+
+
 def _library(root, table):
     root.mkdir(parents=True, exist_ok=True)
     (root / "agentcad.toml").write_text(table)
@@ -114,6 +142,28 @@ def test_edits_outside_the_guarded_patterns_and_other_tools_pass_untouched(tmp_p
     assert "the library's own notes" in reason, "without a practice the reason still says what to do"
     plain = _library(tmp_path / "plain", '[project]\nname = "x"\n')
     assert plugin_hooks.run("pre-tool-use", _edit("Edit", plain / "parts/arm/source/arm.py")) is None
+
+
+def test_on_a_volume_that_ignores_case_a_path_in_another_case_is_still_guarded(tmp_path, monkeypatch):
+    lib = _library(tmp_path / "lib", '[library]\nguarded = ["parts/*/source/*"]\n')
+    other_case = lib / "Parts" / "arm" / "SOURCE" / "arm.py"
+    assert plugin_hooks.case_insensitive(lib) in (True, False)
+    monkeypatch.setattr(plugin_hooks, "case_insensitive", lambda folder: False)
+    assert plugin_hooks.run("pre-tool-use", _edit("Edit", other_case)) is None, "a case-sensitive volume: another file"
+    monkeypatch.setattr(plugin_hooks, "case_insensitive", lambda folder: True)
+    out = plugin_hooks.run("pre-tool-use", _edit("Edit", other_case))
+    assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert plugin_hooks.run("pre-tool-use", _edit("Edit", lib / "parts/arm/notes.md")) is None
+
+
+def test_the_volume_case_rule_is_read_from_the_library_folder_itself(tmp_path):
+    folder = tmp_path / "lib"
+    folder.mkdir()
+    (folder / "agentcad.toml").write_text("[library]\n")
+    expected = (folder / "AGENTCAD.TOML").exists()          # what this volume does with the other spelling
+    assert plugin_hooks.case_insensitive(folder) is expected
+    (folder / "AGENTCAD.TOML").write_text("") if not expected else None
+    assert plugin_hooks.case_insensitive(folder) is False, "two files, one per spelling: a volume that keeps case"
 
 
 def test_a_config_that_does_not_parse_is_said_on_stderr_and_the_next_one_up_still_guards(tmp_path, capsys):

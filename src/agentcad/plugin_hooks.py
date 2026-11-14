@@ -6,7 +6,8 @@ or says how to install it), so the plugin holds no agentcad code:
 
     session-start   agentcad is installed at the plugin's version, or the session is told what differs.
     post-tool-use   after a shell call that ran ``agentcad session iterate``: the iteration's tray warnings and
-                    findings, and the renders to read before the next iterate.
+                    findings, and the renders to read before the next iterate; or, when the call failed or
+                    recorded nothing new, that it recorded no new iteration.
     pre-tool-use    an edit (Edit, Write, MultiEdit, NotebookEdit) of a file a library's [library] table guards
                     is denied, with the library's own practice as the reason.
 
@@ -14,6 +15,7 @@ The guard sees the edits the harness makes through those tools, not what a progr
 """
 import fnmatch
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -77,17 +79,49 @@ def _project_dir(project: str, cwd: Optional[str]) -> Optional[Path]:
     return None
 
 
-def _iteration_context(project: str, project_dir: Path) -> Optional[str]:
+#: Beside the session record: the number of the last iteration this hook told the session about.
+SEEN = "plugin_hook_seen.json"
+
+
+def _call_failed(payload: Dict[str, Any]) -> bool:
+    """Whether the harness reports the shell call as failed: an error, an interruption or a non-zero exit."""
+    response = payload.get("tool_response")
+    if not isinstance(response, dict):
+        return False
+    if response.get("is_error") or response.get("interrupted"):
+        return True
+    code = next((response[k] for k in ("exit_code", "exitCode", "returncode") if k in response), 0)
+    return isinstance(code, int) and not isinstance(code, bool) and code != 0
+
+
+def _seen(work: Path) -> Optional[Any]:
     try:
-        state = json.loads((project_dir / "_work" / "session.json").read_text(encoding="utf-8"))
+        return json.loads((work / SEEN).read_text(encoding="utf-8")).get("iteration")
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _iteration_context(project: str, project_dir: Path, failed: bool = False) -> Optional[str]:
+    work = project_dir / "_work"
+    try:
+        state = json.loads((work / "session.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        _warn(f"{project_dir / '_work' / 'session.json'} cannot be read ({e}); nothing said about the iteration")
+        _warn(f"{work / 'session.json'} cannot be read ({e}); nothing said about the iteration")
         return None
     iterations = state.get("iterations") or []
-    if not iterations:
+    it = iterations[-1] if iterations else None
+    number = it.get("number") if it else None
+    if failed or (it is not None and number == _seen(work)):
+        latest = f"the latest is still iteration {number}" if it else "it has no iteration yet"
+        return (f"agentcad session iterate recorded no new iteration of {project} ({latest}): the call failed or "
+                f"was refused, and its own output says why. Fix that before reading any render.")
+    if it is None:
         return None
-    it = iterations[-1]
-    lines = [f"agentcad session iterate recorded iteration {it.get('number')} of {project}."]
+    try:
+        (work / SEEN).write_text(json.dumps({"iteration": number}), encoding="utf-8")
+    except OSError as e:
+        _warn(f"{work / SEEN} cannot be written ({e}); a later failed iterate may be reported as this one")
+    lines = [f"agentcad session iterate recorded iteration {number} of {project}."]
     warnings = list((it.get("report") or {}).get("warnings") or [])
     findings = [f for f in ((it.get("judgments") or {}).get("findings") or [])
                 if f.get("severity") != "ok" and f.get("message") not in warnings]
@@ -113,9 +147,10 @@ def post_tool_use(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         return None
     command = str((payload.get("tool_input") or {}).get("command") or "")
     texts = []
+    failed = _call_failed(payload)
     for project in _iterate_projects(command):
         folder = _project_dir(project, payload.get("cwd"))
-        text = _iteration_context(project, folder) if folder else None
+        text = _iteration_context(project, folder, failed) if folder else None
         if text:
             texts.append(text)
     return _context("PostToolUse", "\n\n".join(texts)) if texts else None
@@ -142,9 +177,21 @@ def _library(start: Path) -> Optional[tuple]:
     return None
 
 
+def case_insensitive(folder: Path) -> bool:
+    """Whether the volume ``folder`` is on ignores case in names (macOS and Windows by default): its agentcad.toml
+    is also found, as the same file, under the name spelled in the other case."""
+    config = folder / "agentcad.toml"
+    other = folder / "AGENTCAD.TOML"
+    try:
+        return other.exists() and os.path.samefile(config, other)
+    except OSError:
+        return False
+
+
 def guarded_by(path: Path) -> Optional[str]:
     """The reason an edit of ``path`` is refused, or None. A [library] table's ``guarded`` globs are relative to
-    its agentcad.toml; ``practice`` says what to do instead."""
+    its agentcad.toml; ``practice`` says what to do instead. On a volume that ignores case the match ignores it
+    too, since a path spelled in another case there names the same guarded file."""
     path = path.resolve()
     found = _library(path.parent)
     if not found:
@@ -156,8 +203,9 @@ def guarded_by(path: Path) -> Optional[str]:
         rel = path.relative_to(folder).as_posix()
     except ValueError:
         return None
+    fold = case_insensitive(folder)
     for pattern in globs:
-        if fnmatch.fnmatchcase(rel, pattern):
+        if fnmatch.fnmatchcase(rel.casefold(), pattern.casefold()) if fold else fnmatch.fnmatchcase(rel, pattern):
             practice = str(table.get("practice") or "").strip()
             return (f"{rel} is guarded by the [library] table of {folder / 'agentcad.toml'} (pattern {pattern!r})."
                     + (f" {practice}" if practice else " Change it the way the library's own notes say, not by "
