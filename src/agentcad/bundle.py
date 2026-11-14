@@ -159,8 +159,11 @@ def tools_of(parser) -> Tuple[Tool, ...]:
 def argv_for(tool: Tool, values: Dict[str, Any]) -> List[str]:
     """The command line (after ``agentcad``) a tool call stands for: the command's path, then each given option in
     the command's own order, then ``--`` and the positionals. The ``--`` is always written before positionals: an
-    option that takes several values would otherwise read the positionals as more of its values. A name the command
-    does not have, and a required one left out, are refused by name."""
+    option that takes several values would otherwise read the positionals as more of its values. An option with one
+    value, or repeated once per value, is written as one word (``--length=4.5``), so a value starting with a dash is
+    not read as an option; an option that takes several values after one flag cannot be written that way, so an item
+    of it starting with a dash is refused. A name the command does not have, and a required one left out, are
+    refused by name."""
     known = {a.name: a for a in tool.arguments}
     unknown = sorted(set(values) - set(known))
     if unknown:
@@ -185,12 +188,23 @@ def argv_for(tool: Tool, values: Dict[str, Any]) -> List[str]:
             raise BundleError(f"{tool.name}: {a.name} takes a list")
         if not a.flags:
             positionals += items
-        elif a.repeat:
-            for item in items:
-                options += [a.flags[0], item]
-        elif items:
-            options += [a.flags[0], *items]
+        elif a.kind == "list" and not a.repeat:
+            dashed = [i for i in items if i.startswith("-")]
+            if dashed:          # several values follow one option as separate words: a dash would start an option
+                raise BundleError(f"{tool.name}: {a.name} ({a.flags[0]}) takes several values as separate words, "
+                                  f"so an item starting with a dash would be read as another option: {dashed[0]!r}")
+            if items:
+                options += [a.flags[0], *items]
+        else:
+            options += [_joined(a.flags, item) for item in items]
     return list(tool.path) + options + (["--"] + positionals if positionals else [])
+
+
+def _joined(flags: Tuple[str, ...], value: str) -> str:
+    """One option and its value as one word, so a value that starts with a dash (``-5``) is never read as another
+    option: ``--long=value`` when the option has a long spelling, else the short one with the value attached."""
+    long = next((f for f in flags if f.startswith("--")), None)
+    return f"{long}={value}" if long else f"{flags[0]}{value}"
 
 
 def tool_schema(tool: Tool) -> Dict[str, Any]:

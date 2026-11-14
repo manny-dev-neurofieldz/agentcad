@@ -582,6 +582,15 @@ def test_an_assemblys_row_is_laid_edge_to_edge_and_centred_on_the_bed(tmp_path, 
     assert 0.0 <= lid0 and peg1 <= 180.0
 
 
+def test_a_row_deeper_than_the_bed_is_refused_before_anything_is_written(tmp_path, monkeypatch, capsys, base):
+    """150 + 10 + 25 = 185 mm of row on the 180 mm deep bed: refused by its numbers, and no job folder written."""
+    parent = staged_assembly(tmp_path, monkeypatch, capsys, (("lid", "30, 150, 5", 1), ("peg", "8, 25, 20", 1)))
+    rc, out, err = run_cli(capsys, "stage", parent, "--target", PRUSA, "--base-config", base, "-o", tmp_path / "staged")
+    assert rc == 2 and out == ""
+    assert "the row of 2 part(s) is 185 mm deep" in err and "deeper than the 180 mm bed of SYNTHPRINTER" in err
+    assert not (tmp_path / "staged").exists()
+
+
 def test_stage_refuses_in_one_line_and_exit_status_2(tmp_path, monkeypatch, capsys, base):
     proj = staged_project(tmp_path, monkeypatch, capsys, '[slice.prusaslicer]\nperimeterz = 3\n')
     out_dir = tmp_path / "staged"

@@ -3,6 +3,8 @@ target is held to the bytes it wrote before the bundle existed; the maceff targe
 framework, https://github.com/cversek/MacEff) to the shipped policies byte for byte; the tool definitions to the
 real parser, which must accept the command line each one stands for."""
 import argparse
+import contextlib
+import io
 import json
 import stat
 
@@ -147,7 +149,7 @@ def test_each_list_option_alone_still_leaves_the_positionals_to_the_command():
 def test_a_call_becomes_options_in_the_commands_order_then_positionals():
     it = next(t for t in plugin.collect().tools if t.path == ("session", "iterate"))
     argv = bundle.argv_for(it, {"all": True, "source_file": "part.py", "project": "bracket", "define": ["w=3", "h=4"]})
-    assert argv == ["session", "iterate", "-D", "w=3", "-D", "h=4", "--all", "--", "bracket", "part.py"]
+    assert argv == ["session", "iterate", "--define=w=3", "--define=h=4", "--all", "--", "bracket", "part.py"]
     ns = build_parser().parse_args(argv)
     assert (ns.project, ns.source_file, ns.define, ns.all) == ("bracket", "part.py", ["w=3", "h=4"], True)
     assert bundle.argv_for(it, {"project": "b", "source_file": "p.py", "all": False}) == ["session", "iterate", "--", "b", "p.py"]
@@ -159,7 +161,49 @@ def test_a_call_becomes_options_in_the_commands_order_then_positionals():
     assert (ns.source, ns.planes) == ("part.scad", ["z=1", "z=2"])
     rays = next(t for t in plugin.collect().tools if t.path == ("probe", "rays"))
     argv = bundle.argv_for(rays, {"source": "part.step", "length": 4.5})
-    assert argv[argv.index("--length") + 1] == "4.5"
+    assert "--length=4.5" in argv
+
+
+def test_a_value_that_starts_with_a_dash_reaches_its_option_and_is_not_read_as_another():
+    """Every option with one value, and every repeated option, given a value that starts with a dash (-5 for a
+    number, -odd for a name): the value must reach its option, where "--window -odd" reads as an option with no
+    value. The option may still refuse it by its own check (a distance is 0 or more), and then its refusal names
+    the value; it may never say the option got no value."""
+    parser = build_parser()
+    tried = judged = 0
+    for t in plugin.collect().tools:
+        required = {a.name: _sample(a) for a in t.arguments if a.required}
+        for a in t.arguments:
+            if not a.flags or a.kind == "flag" or a.choices or (a.kind == "list" and not a.repeat):
+                continue
+            dashed = {"integer": -5, "number": -5.0}.get(a.type, "-odd")
+            values = dict(required, **{a.name: [dashed] if a.kind == "list" else dashed})
+            argv = bundle.argv_for(t, values)
+            said = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(said):
+                    ns = parser.parse_args(argv)
+            except SystemExit:
+                text = said.getvalue()
+                assert "expected one argument" not in text and "unrecognized" not in text, (t.command, argv, text)
+                assert str(dashed) in text.splitlines()[-1], (t.command, argv, text)
+                judged += 1
+            else:
+                got = getattr(ns, a.name)
+                assert (list(got) if a.kind == "list" else got) == values[a.name], (t.command, a.name, got)
+            tried += 1
+    assert tried >= 40 and judged < tried, "the single-valued and repeated options of the command tree were all tried"
+
+
+def test_an_item_starting_with_a_dash_in_a_several_valued_option_is_refused_not_misread():
+    """``--planes -odd`` reads -odd as an option (planes empty, and -o set to dd); ``--planes -Dw=3`` sets a define.
+    Neither can be written as one word, so argv_for refuses the item by name instead of passing it on."""
+    section = next(t for t in plugin.collect().tools if t.path == ("probe", "section"))
+    for item in ("-odd", "-Dw=3"):
+        with pytest.raises(BundleError, match=f"planes \\(--planes\\).*{item}"):
+            bundle.argv_for(section, {"source": "a.scad", "planes": ["z=1", item]})
+    ns = build_parser().parse_args(bundle.argv_for(section, {"source": "a.scad", "planes": ["z=-1"]}))
+    assert ns.planes == ["z=-1"], "a dash inside an item is fine"
 
 
 @pytest.mark.parametrize("values, said", [
