@@ -1,564 +1,97 @@
 # AgentCAD
 
-Extensible agentic feedback loop for parametric 3D CAD design. Write CAD code, render, analyze visually, iterate - all driven by an AI agent.
+A design loop for an AI agent and parametric CAD: write the part as code, render and measure it, look, change it, and know when it is right. One command line drives three CAD kernels (build123d, OpenSCAD, VoxelCAD), and every capability ships with a policy the agent reads before it acts.
 
-AgentCAD abstracts the design feedback loop so it works with any CLI or API-scriptable CAD engine. The agent generates parametric code, renders it to multi-view PNG images, analyzes the visual output, identifies errors, and corrects the design autonomously.
+| | | | |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/images/hex_tray/v3_iso.png" width="190" alt="A hex pocket tray in OpenSCAD"> | <img src="docs/images/j_hook/v4_front.png" width="190" alt="A pegboard hook in build123d"> | <img src="docs/images/gyroid_support_plug/v1_iso.png" width="190" alt="A gyroid support plug in VoxelCAD"> | <img src="docs/images/peg_plate/try1_section.png" width="190" alt="A fit check, overlap in red"> |
+| OpenSCAD: a tray, fixed in three iterations | build123d: a hook, and when to stop | VoxelCAD: a lattice, judged on the right printer | a fit with both bodies: the overlap in red |
 
-## Architecture
+Each picture comes from a [walkthrough](#walkthroughs) that CI runs as printed.
 
-```
-╭──────────────────────────────────────────────────────────╮
-│                    AI Agent (Claude)                     │
-│                                                          │
-│  ╭──────────╮    ╭──────────╮    ╭────────────────────╮  │
-│  │  Write   │───▶│  Render  │───▶│  Analyze images    │  │
-│  │ CAD code │    │  via CLI │    │  (multimodal)      │  │
-│  ╰──────────╯    ╰──────────╯    ╰─────────┬──────────╯  │
-│       ▲                                    │             │
-│       └──────────── Feedback Loop ─────────╯             │
-╰──────────────────────────┬───────────────────────────────╯
-                           │
-                   ╭───────┴───────╮
-                   │   CADEngine   │ ◀── Abstract interface
-                   ╰───────┬───────╯
-            ┌──────────────┼──────────────┐
-            ▼              ▼              ▼
-     +------------+ +------------+ +------------+
-     |  OpenSCAD  | |  VoxelCAD  | | build123d  |
-     |   Engine   | |   Engine   | |   Engine   |
-     +------------+ +------------+ +------------+
-```
+## Start here
 
-## Quick Start
+**As a person**
 
 ```bash
-pip install -e .
-
-# Check registered engines, their versions and export formats
-agentcad info
-
-# Render a source file to multi-view PNGs (engine from agentcad.toml, or -e)
-agentcad render design.scad -v iso front top right
-agentcad render model.py -e voxelcad -D size=25
-
-# Export (STL by default; other formats per engine)
-agentcad export design.scad -o output.stl
-agentcad export design.scad --format 3mf
+pip install -e ".[build123d]"            # OpenSCAD and VoxelCAD are optional engines
+agentcad info                             # which engines are installed here
+agentcad session start examples/hex_tray
+agentcad session iterate examples/hex_tray examples/hex_tray/source/hex_tray.scad
 ```
 
-## Engines
+Then open the four renders the iterate printed, and read [the hex tray walkthrough](examples/hex_tray/WALKTHROUGH.md) to see what they show.
 
-Every engine implements the same `CADEngine` contract, so `render`, `export`,
-`session` and the viewer behave the same way whichever one a project uses.
-`agentcad info` lists what is registered, whether its backend is installed,
-and which export formats it supports.
-
-### OpenSCAD
-- Renders `.scad` files via the OpenSCAD CLI
-- Supports BOSL2 library for high-level parametric modeling
-- Manifold backend for fast CSG operations (dropped automatically when the binary lacks it)
-- Native EGL headless rendering (no display server needed)
-- Exports STL, 3MF, OFF, AMF; `-D name=value` overrides go straight to OpenSCAD
-- `[engine.openscad] binary` (or `AGENTCAD_OPENSCAD`) names the executable when the first
-  `openscad` on PATH is not the one to use; a binary that will not run reports the engine as
-  unavailable in `agentcad info` rather than failing mid-render
-
-### VoxelCAD
-- Python-native voxel-based solid modeling
-- Cython streaming kernels for fast geometry evaluation
-- Smoothed STL export through the fused streaming pipeline (packed bits,
-  Butterworth low-pass, marching cubes, straight to STL with no intermediate
-  volumes); `[engine.voxelcad] surface_method`, `lowpass_cutoff`,
-  `lowpass_order`, `mc_stride` and `only_largest_component` tune it for the
-  renders and the export alike, and the metadata's `surface` block records
-  which pipeline ran with its triangle count and time
-- Source contract: `def build(**params)` returning the model (overrides are
-  coerced to the types of the defaults), or a module-level `model`
-- The grid is sized from the model: by default the longest side spans
-  `grid` voxels (256), so a 10 mm part and a 100 mm part build at the same
-  cell count; an explicit `voxel_size` overrides that, and a grid past
-  `warn_voxels` (64M) is reported before it is built
-- Every build runs in a subprocess with a configurable timeout, so an
-  oversize grid or an out-of-memory kill is an error result, not a stuck CLI
-- Measured facts (grid resolution, voxel size, bounding box, occupied cells,
-  volume, solid count by connectivity) travel back in `RenderResult.metadata`
-  / `ExportResult.metadata`
-- Install the backend with `pip install -e ".[voxelcad]"` (from the VoxelCAD
-  repository; it is not on PyPI)
-
-### build123d
-- B-rep modelling (OCCT) with STEP, STL, 3MF and SVG export
-- Same Python source contract as VoxelCAD: `def build(**params)` or a module-level
-  `part`; a script that names its product differently is harvested by size with
-  a warning naming the variable chosen
-- Every kernel call runs in a subprocess with a configurable timeout, so a hung
-  operation is reported instead of waited on; renders are shaded tessellations
-  with true B-rep edges; STEP/STL/3MF/SVG export work without PyVista
-- Measured facts (volume, area, bounding box, face and edge counts, validity)
-  travel back in `RenderResult.metadata` / `ExportResult.metadata`
-- Install the backend with `pip install -e ".[build123d]"`
-
-## Examples and the gallery
-
-`examples/` holds one project per design across the three engines: a
-gyroid electrode support plug (VoxelCAD), a pegboard J-hook, a printed M6
-thread pair and a peg-and-plate assembly with part subprojects (build123d), and a
-BOSL2 L-bracket and a hex pocket tray (OpenSCAD). Each is a plain agentcad
-project (`agentcad.toml`, `source/`, a README saying what it exercises).
+**As an agent**
 
 ```bash
-python examples/build_examples.py          # every example through a session, from scratch
-agentcad gallery build -o site --projects "examples/*"
-agentcad gallery check site                # every link and thumbnail resolves
+pip install -e ".[build123d]"
+agentcad policy navigate start            # agentcad by goal: the skill, the policies and the first command
+agentcad plugin export --target claude-code -o agentcad-plugin    # the skills, for a harness that loads plugins
 ```
 
-The `gallery` workflow does exactly that on every pull request from a
-clean checkout, attaches the built site to the run, and on `main` deploys
-it as this repository's GitHub Page. An example that stops building fails
-the check: the gallery is a test of the tool on every engine.
+Every agent harness reads the same know-how in its own form: a plugin (`claude-code`), a policy root for the [MacEff](https://github.com/cversek/MacEff) agent framework (`maceff`), one [AGENTS.md](AGENTS.md) (`agents-md`), or tool definitions for a model API (`api-tools`).
 
-## Probe and compare
+## Skills
 
-```bash
-agentcad probe section part.py --planes y=3.2 z=mid -o loops.json   # closed loops of exact edges per plane
-agentcad probe section part.step --planes z=mid --arcs               # ... and the lines and arcs in each loop, every joint judged
-agentcad probe section part.step --planes y=3.2 --chain 2 > outline.py   # loop 2 as a literal a build123d program pastes
-agentcad probe sketches design.dump.json --against part.step        # what was drawn, and what the part still carries
-agentcad probe inventory part.step --planes z=mid                    # bbox, volume, census, cylinder AXES, loops
-agentcad probe rays part.py --line -30,0,0:1,0,0 --fan 5,0,0:0,0,1:45   # material and void along lines and a radial fan
-agentcad probe knobs part.py --knob width=2 --knob wall=10%          # which parameters move the part, which do nothing
-agentcad compare original.step candidate.py --planes y=3.2 -o cmp/   # loop-count gate, deviation both ways, overlays
+| Skill | Use it when | Walkthrough |
+|---|---|---|
+| `start` | you have a goal and no map of the commands | (routes to the others) |
+| `design-session` | designing, revising or replicating a part | [hex tray](examples/hex_tray/WALKTHROUGH.md), [J-hook](examples/j_hook/WALKTHROUGH.md), [gyroid plug](examples/gyroid_support_plug/WALKTHROUGH.md) |
+| `render-gate` | any image or page agentcad produced is about to be acted on | every walkthrough's "Looked at" |
+| `fit-check` | two parts must mate | [peg and plate](examples/peg_plate/WALKTHROUGH.md) |
+| `reverse-engineer` | a part exists only as a STEP, a mesh or a design record | [plate from its STEP](examples/plate_recovery/WALKTHROUGH.md) |
+| `print-prep` | a finished part is headed for a printer | [hex tray, part 2](examples/hex_tray/WALKTHROUGH.md#part-2-from-the-finished-tray-to-a-checked-slice) |
+| `review` | before calling a design done, or reviewing someone else's | `agentcad policy navigate design-review` |
+
+A skill asks; the policies answer. Each one reads the installed version's policies when it runs (`agentcad policy list`), so it never goes stale.
+
+## The loop
+
+```mermaid
+flowchart LR
+    S["session start"] --> I["session iterate: render and measure"]
+    I --> L{"look at the renders, read the tray"}
+    L -- "what looking cannot settle" --> P["probe: rays, sections, knobs, fit"]
+    P --> C["change the source or a knob"]
+    L -- "something to fix" --> C
+    C --> I
+    L -- "right" --> F["session finalize: exports, manifest, viewer"]
+    F --> Q["qc, stage, read the slice"]
 ```
 
-`loops.json` (loops of typed edges per plane) and `points.json` (sampled
-surface points) are the two exchange formats; every probe writes them and
-`compare` reads them. A cap an instrument applies is printed with its
-value. A cylindrical face reports its axis, never its centroid. Meshes are
-compared in the sampled compartment only, and the output says so.
+## Walkthroughs
 
-`--arcs` reads each loop as the designer drew it. A mesh-converted body gives hundreds of short `line`
-edges; they are fitted back into arcs and lines (a run grows while one line or one circle holds every
-vertex within `--fit-tol`, 0.005 mm by default; a vertex turning more than 30 degrees is a corner), and
-edges that are already lines or arcs pass through. Directions are in the section plane's own 2D frame,
-with every loop read counter-clockwise, so `cw` and `ccw` mean one thing. Each joint is judged from the
-fitted primitives: `not tangent` when the centre distance is more than `--tangent-tol` (0.01 mm) from
-|r1 - r2| (arcs turning the same way), r1 + r2 (opposite ways) or r (an arc and a line), `kinked` when
-that passes but the curves cross at over a degree (the centre distance is second order in that angle),
-else `tangent`. The record in `loops.json` gains `arcs` per loop, and each circular edge gains `via`, a point
-a quarter of the way along it, because the end points cannot say which way a semicircle runs.
+Each walkthrough is one session as an agent lives it: the goal, the skill and the policies read, the commands as typed, every iteration's pictures with what was seen and what was changed. CI runs every command in them and rebuilds the pictures with `python examples/build_walkthroughs.py`.
 
-`--chain N` prints loop N of the listing as a Python list of `("line", p0, p1)` and
-`("arc", center, radius, p0, p1, direction)` tuples, each segment ending on the numbers the next begins
-with, and sends the listing to stderr so the output can be redirected into a program. Segments shorter
-than `--min-len` (0.02 mm) are removed, the joint moving to where their neighbours meet; an edge that is
-neither a line nor an arc is left as a commented gap, reported, and makes the exit status 1. It is never
-turned into a line. `agentcad policy read probe-recover` says how far to trust each number.
+- [A hex tray in OpenSCAD](examples/hex_tray/WALKTHROUGH.md): pockets that meet at their corners, found by looking and measured by QC, fixed in two steps; then staged and its slice checked.
+- [A pegboard hook in build123d](examples/j_hook/WALKTHROUGH.md): three print orientations tried, a quiet QC report that broke the peg's fit, and a decision.
+- [A gyroid support plug in VoxelCAD](examples/gyroid_support_plug/WALKTHROUGH.md): the right printer, a part in pieces the render could not show, and a skin whose cost only the render showed.
+- [A peg and its plate](examples/peg_plate/WALKTHROUGH.md): a clearance chosen with both bodies, an insertion sweep, and a pass read with its number.
+- [A plate rebuilt from its STEP](examples/plate_recovery/WALKTHROUGH.md): numbers recovered by the probes, not traced, and a gate that passed while the windows did not.
 
-`probe sketches` reads a design dump (the JSON of a parametric-CAD design: sketches, parameters and a
-timeline, geometry in centimetres) and prints its sketches in millimetres with a flag on construction
-curves. Every dimension is labelled `DRAWN`. With `--against PART` (a STEP file or a build123d program)
-a dimension is also `APPLIED` when the part's section on the sketch's plane carries it within `--tol`
-(0.01 mm), and printed `absent from the section` when it does not: it was drawn and the part lacks it.
-Reading the dump needs no CAD backend; `--against` needs build123d and says so when it is missing. The
-dump format is `agentcad policy read probe-recover --section 5.1`.
+## How it is built
 
-### Compare detail
-
-`compare` reports the deviation both ways (each sampled point's distance to the nearest sampled point of
-the other part): p50, p95 and max as before, and now the `rms`, and where the worst 5 percent lie as
-`worst5` (with every point tied with the last of them, so equal deviations are never split by sort
-order): the number of points and the smallest distance among them, their bounding box, and clusters.
-The clustering rule is stated in the record (`method`) and printed: the worst points are binned into cells
-of one twentieth of the bounding-box diagonal, cells that touch form a cluster, and each cluster gives
-the mean of its points, its size, its worst distance and its box (the five worst are kept). With
-`--window NAME=x0,y0,x1,y1` and `-o DIR`, each window also gets an overlay image zoomed to it
-(`overlay_<plane>_<window>.png`, listed under the window in the record), the two sections drawn over each
-other.
-
-```bash
-agentcad compare orig.step cand.py --planes z=mid --window hole=-14,-4,-4,4 -o cmp/
+```mermaid
+flowchart TB
+    A["agent or person"] --> CLI["agentcad command line"]
+    POL["policies: one per capability, read before acting"] -.-> A
+    SK["skills: the questions, by goal"] -.-> A
+    CLI --> E{"CADEngine contract"}
+    E --> O["OpenSCAD"]
+    E --> B["build123d"]
+    E --> V["VoxelCAD"]
+    CLI --> SES["sessions, tray, viewer"]
+    CLI --> PR["probes, compare, fit"]
+    CLI --> PT["QC, staging, G-code, printer hosts"]
 ```
 
-### Rays
-
-`probe rays` measures what a render cannot: wall thickness, bore depth, gaps.
-A line is `--line START:DIRECTION[:LEN]` (`x,y,z:dx,dy,dz`); a fan is
-`--fan POINT:AXIS:STEP[:FROM[:TO]]`, lines that leave a point on an axis, square
-to it, every STEP degrees (right-hand rule about the axis; 0 degrees is the
-world axis most nearly square to it). Each line reports its intervals of
-material and void with entry, exit and length along the line, and flags an
-interval cut short by the end of the range (`clipped_start`, `clipped_end`,
-never a thickness) and a void with material on both sides (`enclosed`). A
-build123d program or STEP file is read exactly (face crossings found exactly,
-midpoints classified against the solid, so a tangent opens no gap and a line in a
-face counts as material); an STL is read to its tessellation, with a fixed tie
-rule so a line through a vertex or along an edge is counted once. The record
-(`-o`, schema `agentcad.probe.rays/1`) says which kind it was. For checks built on rays,
-`agentcad.rays.ray_intervals(target, origin, direction)` is the library entry
-point (`load_target` builds the target from a program, STEP or STL).
-
-### Sections of a mesh
-
-`probe section` also takes an STL. The loops come from intersecting each
-triangle with the plane, joined end to end; collinear segments merge, so a flat
-face is one edge and a polylined circle is a run of short ones that `fit` reads
-back as a circle. The records have the keys of the exact loops (`kind` `mesh`
-at the top says whose section it is), and each loop and plane adds `extents`:
-the radial extent (nearest and farthest distance from an axis) and the axial
-extent (lowest and highest position along it). `--axis x|y|z` names the axis
-(default each plane's own normal) and `--axis-center A,B` where it passes
-(default the middle of the bounding box):
-
-```bash
-agentcad probe section turned.stl --planes y=0 --axis z    # a profile through the axis: radii and height
-```
-
-A plane through vertices reads as moved a hair toward lower coordinates, and at
-the mesh's lowest coordinate as moved a hair up, so a part standing on z=0 and
-cut at z=0 gives the outline of its bottom face.
-
-### Knobs
-
-`probe knobs` finds out which parameters of a build123d program (`def build(**params)`) reach the geometry.
-Each `--knob NAME=DELTA` (or `NAME=10%`, a share of the base) builds the program at the base plus and minus
-the delta, so a sweep costs one build for the base and two per knob, and says so. Each side reports its change
-in volume, area, bounding-box size and solid count against the base. A knob is `live` when both sides change
-the part, `saturated` when only one does (a clamp, a limit: the record names the side that does nothing),
-`dead` when neither does, `partial` when a side does not build (the error is recorded), `refused` when
-neither does. `-D NAME=VALUE` moves the base first. A dead verdict names the four measures, not a
-certainty: sweep a larger delta and read the program before removing a knob.
-
-### The census says when it cannot see
-
-A body converted to splines reports every face as a BSpline, so its census
-shows no cylinders, cones, spheres or tori and the cylinder list is empty.
-When 90 percent or more of the faces are BSpline, `probe inventory` (the
-`census_notes` field and a warning line) and the iteration tray say the
-representation hides analytic types, so the zeros are read as unknown, not as
-none.
-
-## Fit and mates
-
-```bash
-agentcad fit bar.py chute.py --mates-from job/ --record project/   # interference, clearance, windows, renders
-```
-
-A `[mates]` table in `agentcad.toml`, `job.toml` or `part.toml` declares each
-mate's window (`[x0, y0, z0, x1, y1, z1]`), its `parts = [a, b]` (or a
-`counterpart` in a part's own toml) and a `nominal_mm`. Windows are sampled on
-both surfaces with a lattice, so a window in the middle of a flat face still
-reads the gap; a mate is checked only on its own pair. The result is recorded
-in the project's print manifest keyed by the two parts' defines.
-
-## Staging for a slicer
-
-`agentcad stage` writes a finalized project's parts, posed for printing and placed on the bed, for an output
-target, and `agentcad targets` lists the targets and what each can do. `generic` writes a plain 3MF plate any
-slicer opens, with a placement sidecar. `prusaslicer` writes a PrusaSlicer project: the plate with a complete
-configuration, the project's `[print]` intent mapped onto it, and its `[slice.prusaslicer]` overrides over that.
-
-```bash
-agentcad stage my_part --target prusaslicer --base-config my_printer.ini
-```
-
-The configuration a PrusaSlicer project starts from is yours to supply, since any copy shipped here would be
-somebody's printer: a flat `.ini` exported from PrusaSlicer, a project 3MF, or a `.gcode` or `.bgcode` it sliced.
-Pass it with `--base-config`, or name it once under `[prusaslicer]` in `targets.toml` in the agentcad user config
-folder. It stays out of projects, and the credentials and `post_process` it holds are never written. From
-`[print]`, `layer_height`, `walls`, `infill_percent` and `supports` map to `layer_height`, `perimeters`,
-`fill_density` and the support switches; `stage` lists every other key as not mapped, with the reason, and
-reports each place a native value disagrees with the intent. A key the base configuration does not carry is
-refused by name, and so is a placement that leaves the bed, before a file is written. The written 3MF reads
-back through `agentcad gcode check`. `agentcad policy read prusaslicer` has the rest.
-
-## Reading sliced files
-
-A design is not finished when it is exported: the slicer decides where supports go, which settings
-apply and how each layer is printed, and Prusa printers receive that as binary G-code (`.bgcode`).
-The `gcode` commands read it, in pure Python, with no slicer installed:
-
-```bash
-agentcad gcode info part.bgcode           # header, block table, printer and print metadata, thumbnails
-agentcad gcode decode part.bgcode -o part.gcode   # plain G-code (a plain .gcode passes through)
-agentcad gcode thumbnails part.bgcode -o thumbs/
-agentcad gcode summary part.bgcode [--json]       # layers, filament, extrusion by object and feature, supports
-agentcad gcode compare a.bgcode b.gcode [--json]  # two slices side by side, and the settings that differ
-```
-
-`gcode summary` models the sliced file by layer (`;LAYER_CHANGE`/`;Z:`/`;HEIGHT:`), object (`M486` labels)
-and feature type (`;TYPE:`), in absolute or relative extrusion with G92 resets, arcs and firmware retraction.
-Its filament total is computed the way the slicer reports it (net extrusion without a final retraction that
-is never primed again) and is printed beside the total the file states, so the two can be compared. A file
-without feature comments still gives layers by Z and totals, and says the features are unknown; feature
-types the model does not recognise are counted, never dropped.
-
-`--json` prints a record with schema `agentcad.gcode.summary/1`: `layers`, `top_z`, `filament_used`
-(`filament_mm`, `volume_cm3`, `mass_g` when the density is known), `filament_used_stated_mm` (the total
-the file states: a binary file's print metadata, a plain file's statistics comments), `features_known`, `unknown_features`, `objects` (id to name), `by_object` (filament,
-per-feature amounts, `support_share`), `by_feature`, `support` (`share`, first and last layer and Z),
-`brim_area_mm2` and `estimated_time` (the printing time the file states, as `seconds` and the file's own
-`text`, or null; it is read from the file's metadata or its estimate comment, never computed).
-
-`gcode check` compares the slicer settings the file carries with what the project intended, declared as a
-`[slice]` table in `agentcad.toml` (or any TOML file, such as a print job's `job.toml`), keyed by the
-slicer's own setting names:
-
-```toml
-[slice]
-layer_height = 0.2
-temperature = { min = 270, max = 285, why = "layer bond in ASA-CF" }
-support_material_buildplate_only = { value = 1, why = "supports must not grow inside the bores" }
-```
-
-```bash
-agentcad gcode check part.bgcode --project my_part/      # or --intent job.toml; --json for the findings
-```
-
-The file may also be a PrusaSlicer project (3MF): `gcode check` compares the configuration the project carries.
-
-Each finding is a sentence: the setting, the value in the file, the value asked for, why it matters, and
-the usual fix. A differing value is an error (exit status 1); a value outside a range, or a setting the file
-does not carry, is a warning. With no `[slice]` table the command prints the file's key settings and says
-there is nothing to check against. Print-host credentials in a slicer configuration are never printed. The
-table also travels in the session's print manifest (`slice_intent`).
-
-`gcode supports` says where supports touch the part, found from the toolpaths themselves: support extrusion
-under the part's own extrusion within a Z window of the slicer's contact distance plus two layer heights (the
-feature labels alone miss organic supports, which end in tips with no interface layer). Contacts are grouped
-into bands, each with its object, height range, area and bed position:
-
-```bash
-agentcad gcode supports plate.bgcode                                   # bands in the bed frame
-agentcad gcode supports plate.bgcode --placement plate.placement.json  # also in each STL's frame, and
-                                                                       # outside / inside a cavity
-```
-
-A placement sidecar (schema `agentcad.placement/1`) records, per slicer label, the STL and its offset on the
-bed. With it, each band is located in its object's own frame and checked against the mesh: on an outer surface,
-or walled in on every side (a bore or pocket), which is an error (exit status 1): such supports are hard to
-remove and foul the fit.
-
-`gcode view` writes a standalone page of the toolpaths, offline (three.js inlined): lines coloured by
-feature with a toggle per feature and a layer-range slider. Toolpaths are embedded within a budget
-(`--budget-mb`, default 8, counted as embedded base64; the inlined three.js adds about 0.6 MB); over it,
-every Nth layer is kept, first and last always, and the page says so.
-
-With `--placement` (and `--stl-root` when the STLs are elsewhere) the placed parts are drawn translucent
-under the paths, and support contacts as dots: green on an outer surface, red walled in a cavity.
-
-```bash
-agentcad gcode view plate.bgcode -o plate.toolpaths.html --placement plate.placement.json
-```
-
-`--artifact DIR` writes the same page as `DIR/index.html` without its document shell, plus an empty
-`files.json` (everything is inline), for an artifact host that supplies the shell.
-
-`gcode compare A B` reads two sliced files, `.bgcode` or plain G-code in any mix, and reports for A, for B and
-as B minus A: the stated printing time, the filament used (the summary's total beside the total the file
-states, in mm and in grams), layers and top height, the support share, the contact bands that `gcode supports`
-finds (count and area; bands under `--min-area`, 1 mm2 by default, are counted apart and said so), and the
-extrusion of each object, where an object in only one file gets a row of its own. Under the table it lists the
-settings that differ between the two embedded configurations (the first 20, with a count of the rest;
-`--all-settings` lists every one). Credentials and local paths in a configuration are never compared or shown.
-`--json` prints the record, schema `agentcad.gcode.compare/1`: `a`, `b`, `delta` (B minus A) and `settings`.
-A comparison gives no verdict: it exits 0 when both files were read, 1 when one could not be.
-
-`session finalize` writes a toolpath page beside every `.bgcode` or `.gcode` file in the project's exports
-folder (`<name>.toolpaths.html`, within `[output] viewer_embed_mb`) and lists them in the print manifest
-under `sliced`; a file it cannot read is warned about and skipped.
-
-Every block's CRC32 is checked; a damaged or truncated file fails with an error that names the block and
-its byte offset (`--no-verify` skips the checks and says so). Supported: the format's version 1, all four
-compression codes (none, deflate, heatshrink 11/4 and 12/4) and all three G-code encodings (none, MeatPack,
-MeatPack keeping comments). The reader is written from the published format specification of Prusa's
-libbgcode and the descriptions of heatshrink and MeatPack; it does not contain libbgcode code.
-
-## Printer hosts
-
-A printer host is where a printer can be asked what it holds and what it is doing. agentcad reads from
-one and never writes to it: the host contract allows GET and HEAD only, in one function per host that the
-tests check on the wire and in the source. PrusaLink (HTTP Digest) is the first host.
-
-```
-agentcad printer list                       # the printers the host knows, with their state
-agentcad printer files [folder] [--limit 5] # newest first, each file by its display name and its short name
-agentcad printer get NAME -o fixtures/      # NAME is either name; the file is checked for length before it is kept
-agentcad printer status                     # state, temperatures, the running job
-```
-
-The address and credentials come from `AGENTCAD_PRUSALINK_URL`, `AGENTCAD_PRUSALINK_USER` (default `maker`)
-and `AGENTCAD_PRUSALINK_PASSWORD`, or from a `[prusalink]` table in `hosts.toml` in the agentcad user config
-folder (`$XDG_CONFIG_HOME/agentcad` or `~/.config/agentcad`). A `hosts.toml` that group or others can reach is
-refused with the `chmod 600` that fixes it. A credential is never printed, logged, put in JSON or written to a
-project. `agentcad policy read printer-hosts` has the rest.
-
-## Records
-
-A part library keeps its history in record files: a `part.toml` per part (with its fit records,
-`[fit.<mate>]`), a `job.toml` per print job, and the print manifests finalize writes. Most of a record is
-prose; a few fields are structured so that tools can rely on them: the day a job was staged, planned and
-printed, the verdict on a print, and when a fit was measured, against which part, with what verdict and on
-which sources (each with its SHA-256).
-
-```
-agentcad records check LIBRARY/             # every record under a folder: types, dates, verdicts, references
-agentcad records check parts/x/part.toml    # one record, its own fields only
-agentcad records check LIBRARY/ --json      # the whole reading (schema agentcad.records/1)
-agentcad duties LIBRARY/                    # the work the records say is owed, with its evidence
-agentcad duties LIBRARY/ --as-of 2026-03-11 --json
-```
-
-The check exits 1 on an error (a missing or malformed structured field, a verdict that contradicts the print
-date) and reports warnings (a part the library does not know, a fit recorded on one side only) without
-failing. It never edits a record. `agentcad duties` lists the work those fields say is owed: a printed job
-with no verdict (or a pending one), a job past its planned day that has not printed, and a fit whose
-sources have changed since it was recorded (or that recorded none). Each duty has a stable key, so a tool
-that files duties elsewhere can match one it filed before. `agentcad policy read records` has the contract.
-
-## Program-side helpers (build123d)
-
-```python
-from agentcad.helpers import soften
-part, report = soften(part, fillet_r=1.0, chamfer_c=0.4, exclude=[[x0, y0, z0, x1, y1, z1]])
-print("\n".join(agentcad.report.render_lines(report)))
-```
-
-`soften` fillets the concave joints and chamfers the convex edges of a
-build123d part, trying the size then half of it and bisecting the selection
-so one edge that refuses costs only itself. Every refused edge is listed
-with its length, midpoint and the error; edges a neighbour's feature made
-unfindable are counted as lost, never dropped, so applied + refused + lost
-equals the candidates. `exclude` keeps a coin path or a thread sharp.
-
-## Configuration
-
-Each project folder carries an `agentcad.toml`. Engine tuning lives in a
-`[engine.<name>]` table; only the project's engine reads its table, and keys
-the engine does not know are reported on stderr rather than silently ignored.
-
-```toml
-[project]
-engine = "openscad"
-
-[engine.openscad]
-fa = 1.0
-fs = 0.5
-
-[engine.voxelcad]
-grid = 256            # voxels along the longest side (default)
-# voxel_size = 0.05   # or an explicit cell size, which overrides grid
-timeout = 120
-```
-
-## Camera Presets
-
-Presets are engine-neutral viewing directions (eye, target, up, projection);
-each engine derives its own camera from them, so the same preset gives the
-same view on every engine.
-
-| Preset | View | Purpose |
-|--------|------|---------|
-| `iso` | Front-right-top perspective | Default - shows three faces |
-| `front` | Front orthographic | Dimensional inspection |
-| `top` | Top-down orthographic | Plan view |
-| `right` | Right orthographic | Side profile |
-| `back` | Rear orthographic | Back features |
-
-## Python API
-
-```python
-from agentcad.engines import get_engine
-from pathlib import Path
-
-engine = get_engine("openscad", settings={"fa": 2.0})
-result = engine.render(Path("design.scad"), Path("output/"), views=["iso", "front"],
-                       defines={"width": "40"})
-for view, path in result.images.items():
-    print(f"{view}: {path}")
-print(result.metadata)  # engine-specific measured facts, e.g. facet_count
-
-mesh = engine.export(Path("design.scad"), Path("output/design.3mf"), fmt="3mf")
-if not mesh.success:
-    print(mesh.errors)    # an unsupported format is an error result, not an exception
-```
-
-## Adding a New Engine
-
-Implement the `CADEngine` abstract interface:
-
-```python
-from agentcad.engine import CADEngine, RenderResult, ExportResult, ValidationResult
-
-class MyEngine(CADEngine):
-    known_settings = ("tolerance",)     # keys accepted from [engine.mycad]
-    FILE_EXTENSION = ".mycad"
-    EXPORT_FORMATS = ("stl", "step")
-
-    @property
-    def name(self) -> str: return "MyCAD"
-
-    def available(self) -> bool: ...
-    def version(self) -> str | None: ...
-    def render(self, source_path, output_dir, views=None, image_size=1024, defines=None) -> RenderResult: ...
-    def export(self, source_path, output_path, fmt="stl", defines=None) -> ExportResult: ...
-    def validate_syntax(self, code) -> ValidationResult: ...
-```
-
-Register it in `engines/__init__.py`. The contract test suite is parametrized
-over the registry, so `pytest` exercises the new engine the same way the CLI
-does with no test changes; `export` must return `self._unsupported_format(fmt)`
-for formats outside `EXPORT_FORMATS`.
-
-## Policies
-
-Every capability ships with a policy: a document in the package that says what the capability is for, how to use it well and how it fails, read through the CLI so the guidance always matches the installed version.
-
-```
-agentcad policy list                      # installed policies and the commands each governs
-agentcad policy navigate session          # a policy's numbered topics and their questions
-agentcad policy read session --section 2  # one section, with its subsections
-```
-
-The set covers every command and the practice around them:
-
-| Policy | Governs |
-|---|---|
-| `projects` | `new-project`, `projects`, `status`, `open`, `config-init`, `config-show`; the `agentcad.toml` tables |
-| `engines` | `info`; the engine contract, the program contract, OpenSCAD, build123d and VoxelCAD settings |
-| `session` | `session start`, `iterate`, `reopen`, `tag`, `note`, `finalize`, `status`; the tray and the render gate |
-| `render-export` | `render`, `export`, variant plates |
-| `viewer` | `viewer`, `check`, `gallery build`, `gallery check` |
-| `probe-recover`, `probe-inspect`, `probe-construction` | `probe section`, `sketches`; `rays`, `knobs`, `inventory`; `fillet`, `draft` |
-| `compare`, `fit` | `compare`; `fit` and `[mates]` |
-| `qc`, `printers`, `targets`, `print-intent` | `qc`, `printers`, `targets`, `stage` |
-| `prusaslicer` | the PrusaSlicer target: base configuration, mapping, project file, bed check |
-| `gcode` | every `gcode` command |
-| `printer-hosts` | `printer list`, `files`, `get`, `status`; read-only by contract |
-| `policies` | `policy list`, `navigate`, `read`; the format |
-| `design-practice`, `build123d`, `reverse-engineering`, `design-review` | practice: posture and evidence, construction pitfalls, recovering intent, the review rubric |
-
-Policies follow a fixed format (a header, a navigation guide of numbered questions, one boundary line, numbered sections), so another tool that reads the same format can mount them unchanged. `tests/test_policy.py` checks the reader against reference outputs committed under `tests/data/policy_golden/`, holds every command to exactly one governing policy and every flag to a mention in that policy's text (a command or flag added without its policy text fails the suite), and lints each policy (plain ASCII, no absolute paths, fences at column 0, the navigation guide numbered like the content). `docs/policy_ledger.md` records where the guidance came from.
-
-## Skills and the Reviewer
-
-The package also ships workflow skills in `src/agentcad/skills/`: `design-session`, `render-gate`, `reverse-engineer`, `fit-check`, `print-prep` and `review`. It also ships a `design-reviewer` agent in `src/agentcad/agents/`. Each skill is a short workflow, the questions to ask at each step, and the policies that answer them. The answers come from `agentcad policy` when the skill is used, so a skill does not go stale when a policy changes. `tests/test_skills.py` fails if a skill or the agent names a policy or a command that this version does not have, and `tests/test_packaging.py` fails if one is missing from the wheel.
-
-## Adding a Command
-
-A command module in `src/agentcad/commands/` adds commands without editing `cli.py`. The module defines `register(subparsers, groups)`: `subparsers` is the top-level subparsers action, and `groups` maps a command group's name (`probe`, `gcode`, `gallery`, `session`, and any group a module adds) to that group's subparsers action, so a module can also add a subcommand under an existing group. Every argument carries help text; `tests/test_cli_tree.py` walks the whole tree (`agentcad.cli.build_parser()`) and fails on a command without a handler or an argument without help. A module that fails to import is reported on stderr and skipped, and the other commands keep working.
-
-## Testing
-
-```bash
-pip install -e ".[dev]"
-pytest                          # summary; add --tb=short for failures
-pytest --cov=agentcad           # with coverage (workers included; see pyproject)
-```
-
-Engine tests skip when a backend is not installed, so the suite is green on a
-machine with only one engine and still exercises every engine that is present.
-CI installs all three engines, runs the suite with coverage and fails under
-the floor set in `.github/workflows/tests.yml`.
+## More
+
+- [Reference](docs/reference.md): every engine, command family and convention in full.
+- Policies: `agentcad policy list`, then `navigate` and `read`; [how they are written](docs/reference.md#policies).
+- [The gallery](https://manny-dev-neurofieldz.github.io/agentcad/): every example built by CI, each with its viewer.
+- [Where the guidance came from](docs/policy_ledger.md).
 
 ## License
 

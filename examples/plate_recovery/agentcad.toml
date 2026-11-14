@@ -1,0 +1,9 @@
+[project]
+name = "plate_recovery"
+engine = "build123d"
+description = "A plate rebuilt from its STEP: the holes' pitch and size recovered by the probes, not traced"
+[output]
+base_dir = ".."
+sub_dir = "."
+image_size = 512
+default_views = ["iso", "top"]
