@@ -128,3 +128,51 @@ def test_the_checks_have_teeth():
         {"design-review", "compare", "probe-inspect", "nonesuch"}
     with pytest.raises(pol.PolicyError):
         pol.get_policy("nonesuch")
+
+
+
+# --- skills ask; policies answer ------------------------------------------------------------------------
+
+def _skill_texts():
+    return {name: text for kind, name, text in TEXTS if kind == "skill"}
+
+
+def _steps(text):
+    """The numbered steps of a skill's workflow, each with its continuation lines."""
+    m = re.search(r"^## Workflow\n(.*?)(?=^## |\Z)", text, flags=re.M | re.S)
+    return re.findall(r"^\d+\. (.*(?:\n   .*)*)", m.group(1), flags=re.M) if m else []
+
+
+def _sentences(text):
+    text = re.sub(r"```.*?```", " ", text, flags=re.S)
+    text = re.sub(r"[`*_]", "", text)
+    for s in re.split(r"(?<=[.!?:;])\s+|\n", text):
+        words = re.findall(r"[a-z0-9']+", s.lower())
+        if len(words) >= 8:
+            yield " ".join(words)
+
+
+def test_every_workflow_step_runs_a_command_or_asks_a_question_a_policy_answers():
+    """A rule restated as a step goes stale when its policy changes; a step names the command, or asks."""
+    bad = []
+    for name, text in _skill_texts().items():
+        steps = _steps(text)
+        assert steps, f"{name} has a numbered workflow"
+        bad += [f"{name}: {s.splitlines()[0][:80]}" for s in steps if "`agentcad " not in s and "?" not in s]
+    assert not bad, "steps that neither run a command nor ask a question: " + "; ".join(bad)
+
+
+def test_no_sentence_of_a_skill_is_copied_from_a_policy():
+    from agentcad import policy as pol
+    corpus = " ".join(" ".join(re.findall(r"[a-z0-9']+", re.sub(r"[`*_]", "", p.text.lower())))
+                      for p in pol.all_policies())
+    copied = [f"{name}: {s}" for name, text in _skill_texts().items() for s in _sentences(text) if s in corpus]
+    assert not copied, "sentences a skill copies from a policy (ask for them instead): " + "; ".join(copied)
+
+
+def test_the_start_skill_routes_to_every_other_skill():
+    texts = _skill_texts()
+    start = texts["start"]
+    missing = [name for name in texts if name != "start" and name not in start]
+    assert not missing, f"the start skill does not route to: {missing}"
+    assert "agentcad policy navigate start" in start
