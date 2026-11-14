@@ -99,13 +99,28 @@ def test_an_iterate_that_records_nothing_new_is_said_to_have_failed_not_reported
         "hookSpecificOutput"]["additionalContext"]
 
 
-@pytest.mark.parametrize("response", [{"exit_code": 1}, {"returncode": 2}, {"is_error": True}, {"interrupted": True}])
-def test_a_call_the_harness_reports_as_failed_is_said_to_have_failed_even_the_first_time(tmp_path, response):
+def test_a_session_started_again_reports_its_first_iteration_as_new(tmp_path):
+    """After a restart the record numbers from 1 again; its v1 was recorded later than the v1 the hook told of,
+    so it is new, however the old record went (archived, or discarded with --no-archive)."""
+    folder = tmp_path / "bracket"
+    record = folder / "_work" / "session.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"iterations": [{"number": 1, "timestamp": "2026-01-01T10:00:00", "report": {}}]}))
+    command = _bash("agentcad session iterate bracket part.py", tmp_path)
+    assert "recorded iteration 1 of bracket" in plugin_hooks.run("post-tool-use", command)[
+        "hookSpecificOutput"]["additionalContext"]
+    record.write_text(json.dumps({"iterations": [{"number": 1, "timestamp": "2026-01-01T10:05:00", "report": {}}]}))
+    again = plugin_hooks.run("post-tool-use", command)["hookSpecificOutput"]["additionalContext"]
+    assert "recorded iteration 1 of bracket" in again and "no new iteration" not in again
+
+
+@pytest.mark.parametrize("response", [{"interrupted": True, "stdout": "", "stderr": ""}])
+def test_a_call_the_harness_reports_as_cut_short_is_said_to_have_failed_even_the_first_time(tmp_path, response):
     _session(tmp_path / "bracket", warnings=["2 solids"])
     payload = dict(_bash("agentcad session iterate bracket part.py", tmp_path), tool_response=response)
     text = plugin_hooks.run("post-tool-use", payload)["hookSpecificOutput"]["additionalContext"]
     assert "recorded no new iteration of bracket" in text and "tray:" not in text
-    ok = dict(payload, tool_response={"exit_code": 0, "stdout": "iteration 3"})
+    ok = dict(payload, tool_response={"interrupted": False, "stdout": "iteration 3", "stderr": ""})
     assert "recorded iteration 3" in plugin_hooks.run("post-tool-use", ok)["hookSpecificOutput"]["additionalContext"]
 
 
@@ -162,8 +177,9 @@ def test_the_volume_case_rule_is_read_from_the_library_folder_itself(tmp_path):
     (folder / "agentcad.toml").write_text("[library]\n")
     expected = (folder / "AGENTCAD.TOML").exists()          # what this volume does with the other spelling
     assert plugin_hooks.case_insensitive(folder) is expected
-    (folder / "AGENTCAD.TOML").write_text("") if not expected else None
-    assert plugin_hooks.case_insensitive(folder) is False, "two files, one per spelling: a volume that keeps case"
+    if not expected:                                        # a volume that keeps case can hold both spellings
+        (folder / "AGENTCAD.TOML").write_text("")
+        assert plugin_hooks.case_insensitive(folder) is False, "two files, one per spelling: a volume that keeps case"
 
 
 def test_a_config_that_does_not_parse_is_said_on_stderr_and_the_next_one_up_still_guards(tmp_path, capsys):

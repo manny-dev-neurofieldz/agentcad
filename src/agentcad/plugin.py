@@ -224,7 +224,8 @@ A tool only names a command line; your program runs it. From a tool call to the 
 2. Each input property is one argument; its description ends with the option it stands for, or `(positional)`.
 3. A boolean set true adds its option; false or absent adds nothing. A value adds the option and the value as
    one word, `--option=value`, so a value starting with a dash is not read as an option. A list adds that word
-   once per item where the option repeats, else the option followed by the items.
+   once per item where the option repeats, else the option followed by the items as separate words; there an
+   item starting with a dash would be read as another option, and `argv_for` refuses it.
    Then `--`, then the positionals in the schema's order. The `--` is needed: an option that takes several
    values would otherwise read the positionals as more of its values.
 

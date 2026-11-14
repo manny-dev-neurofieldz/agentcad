@@ -195,6 +195,17 @@ def test_a_value_that_starts_with_a_dash_reaches_its_option_and_is_not_read_as_a
     assert tried >= 40 and judged < tried, "the single-valued and repeated options of the command tree were all tried"
 
 
+def test_an_item_starting_with_a_dash_in_a_several_valued_option_is_refused_not_misread():
+    """``--planes -odd`` reads -odd as an option (planes empty, and -o set to dd); ``--planes -Dw=3`` sets a define.
+    Neither can be written as one word, so argv_for refuses the item by name instead of passing it on."""
+    section = next(t for t in plugin.collect().tools if t.path == ("probe", "section"))
+    for item in ("-odd", "-Dw=3"):
+        with pytest.raises(BundleError, match=f"planes \\(--planes\\).*{item}"):
+            bundle.argv_for(section, {"source": "a.scad", "planes": ["z=1", item]})
+    ns = build_parser().parse_args(bundle.argv_for(section, {"source": "a.scad", "planes": ["z=-1"]}))
+    assert ns.planes == ["z=-1"], "a dash inside an item is fine"
+
+
 @pytest.mark.parametrize("values, said", [
     ({"project": "b", "source_file": "p.py", "colour": "red"}, "no argument colour"),
     ({"project": "b"}, "needs source_file"),

@@ -79,26 +79,30 @@ def _project_dir(project: str, cwd: Optional[str]) -> Optional[Path]:
     return None
 
 
-#: Beside the session record: the number of the last iteration this hook told the session about.
+#: Beside the session record: the last iteration this hook told the session about, by its number and the time it
+#: was recorded. The time is the key: a session started again numbers from 1, and its v1 is not the old v1.
 SEEN = "plugin_hook_seen.json"
 
 
 def _call_failed(payload: Dict[str, Any]) -> bool:
-    """Whether the harness reports the shell call as failed: an error, an interruption or a non-zero exit."""
+    """Whether the harness reports the shell call as cut short. A shell call that exits non-zero gets no
+    post-tool-use call at all; one that exits 0 carries stdout, stderr and ``interrupted``, and no exit status. So
+    an iterate that failed inside a line that still exited 0 (``iterate ...; echo done``) is found by the seen
+    marker, not here."""
     response = payload.get("tool_response")
-    if not isinstance(response, dict):
-        return False
-    if response.get("is_error") or response.get("interrupted"):
-        return True
-    code = next((response[k] for k in ("exit_code", "exitCode", "returncode") if k in response), 0)
-    return isinstance(code, int) and not isinstance(code, bool) and code != 0
+    return isinstance(response, dict) and bool(response.get("interrupted"))
 
 
-def _seen(work: Path) -> Optional[Any]:
+def _key(it: Dict[str, Any]) -> Dict[str, Any]:
+    return {"iteration": it.get("number"), "timestamp": it.get("timestamp")}
+
+
+def _seen(work: Path) -> Optional[Dict[str, Any]]:
     try:
-        return json.loads((work / SEEN).read_text(encoding="utf-8")).get("iteration")
-    except (OSError, ValueError, AttributeError):
+        seen = json.loads((work / SEEN).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return None
+    return seen if isinstance(seen, dict) else None
 
 
 def _iteration_context(project: str, project_dir: Path, failed: bool = False) -> Optional[str]:
@@ -111,14 +115,14 @@ def _iteration_context(project: str, project_dir: Path, failed: bool = False) ->
     iterations = state.get("iterations") or []
     it = iterations[-1] if iterations else None
     number = it.get("number") if it else None
-    if failed or (it is not None and number == _seen(work)):
+    if failed or (it is not None and _key(it) == _seen(work)):
         latest = f"the latest is still iteration {number}" if it else "it has no iteration yet"
         return (f"agentcad session iterate recorded no new iteration of {project} ({latest}): the call failed or "
                 f"was refused, and its own output says why. Fix that before reading any render.")
     if it is None:
         return None
     try:
-        (work / SEEN).write_text(json.dumps({"iteration": number}), encoding="utf-8")
+        (work / SEEN).write_text(json.dumps(_key(it)), encoding="utf-8")
     except OSError as e:
         _warn(f"{work / SEEN} cannot be written ({e}); a later failed iterate may be reported as this one")
     lines = [f"agentcad session iterate recorded iteration {number} of {project}."]
