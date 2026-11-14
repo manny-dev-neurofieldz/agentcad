@@ -145,7 +145,7 @@ agentcad.toml already exists. Use --force to overwrite.
 ## 6 Constraints to Probe
 
 - A name is looked up only in the designs directory: `agentcad projects` lists what a name can reach; pass a path for a project kept anywhere else.
-- A project outside the designs directory writes its session where its `[output]` table says: `agentcad config-show` prints the output folder before a session writes there (section 1.1).
+- A project outside the designs directory writes its session where its `[output]` table says: `agentcad config-show` prints the designs directory that table names (`base_dir` joined with `sub_dir`), and the session writes into the folder of the project's name inside it (section 1.1).
 - An existing `agentcad.toml` is never overwritten by accident: `agentcad config-init` refuses with exit 1 unless `--force`.
 - The template states print values nobody chose: `agentcad config-show` prints them as the project's material, layer height and printer until the `[print]` table is edited.
 - An assembly's parts are found by its `parts` globs: `agentcad projects` lists each project's parts under it, so a glob that matches nothing shows as a project without parts.

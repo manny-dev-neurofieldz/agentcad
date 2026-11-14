@@ -147,7 +147,7 @@ Each practice of this policy, with the command that checks it:
 - A wall, a width or a seat is the size asked for (sections 3, 4): `agentcad probe rays SOURCE --line ...` measures the material along a line.
 - A replica is faithful where it matters (section 1): `agentcad compare ORIGINAL CANDIDATE --planes ...`, with the loop counts as the gate.
 - A mate is right with both bodies (section 6): `agentcad fit A B --mate NAME`.
-- A clearance holds in the real material (section 6): `agentcad export SOURCE --variants KNOB=v1,v2,...` writes the plate to print.
+- A clearance holds in the real material (section 6): `agentcad export SOURCE --variants KNOB=v1,v2,...` writes one file per value, to print side by side.
 - An orientation survives the process (section 7): `agentcad qc PROJECT` judges the part posed as stated.
 
 ## 10 Integration with Other Policies

@@ -11,7 +11,7 @@ The sliced file is the last artifact before plastic and the only one that record
 
 ## Reaching for It
 
-- What a sliced file is before it prints (its time, filament, layers, settings): `agentcad gcode info` and `agentcad gcode summary`.
+- What a sliced file is before it prints (its time, filament, layers, settings): `agentcad gcode summary`, for binary or plain G-code; `agentcad gcode info` for the header, blocks and metadata of a binary `.bgcode` only.
 - Whether the slicer used the settings the project asked for: `agentcad gcode check FILE --project PROJECT` (or `--intent` a TOML file).
 - Where supports touch the part: `agentcad gcode supports`; the toolpaths as a page: `agentcad gcode view`.
 - Two slices of one part side by side: `agentcad gcode compare A B`.

@@ -137,8 +137,8 @@ def cmd_export(args):
     engine = _engine_for(args.engine, cfg)
     fmt = args.format.lower()
     output = Path(args.output) if args.output else source.with_suffix(f".{fmt}")
-    if not output.suffix:                       # `-o plate` names the file; the format names its extension
-        output = output.with_suffix(f".{fmt}")
+    if output.suffix.lower() != f".{fmt}":     # `-o plate` or `-o plate.v2` names the file; the format names its extension
+        output = output.with_name(output.name + f".{fmt}")
 
     defines = _parse_defines(args.define) if args.define else {}
     if fmt not in engine.supported_export_formats:

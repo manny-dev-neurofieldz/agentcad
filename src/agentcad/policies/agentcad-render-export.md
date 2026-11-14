@@ -103,10 +103,10 @@ Exported: ...plate_peg_d-6p2.stl (peg_d=6.2, volume 1397)
 Exported: ...plate_peg_d-6p4.stl (peg_d=6.4, volume 1411)
 $ agentcad export examples/j_hook/source/j_hook.py --variants peg_dia=6.0,6.2
 # exit 2
-peg_dia
+Error: --variants peg_dia: j_hook.py has no such parameter
 ```
 
-The volume steps by the same amount each time, which says each file really differs only in the peg. Next: print them, keep the one that fits, and write its value into the source.
+The volume rises with the peg, by 13 then 14 mm^3: a little more each step, as the peg's section grows with the square of its diameter, which says each file differs only in the peg. Next: print them, keep the one that fits, and write its value into the source.
 
 ## 4 Constraints to Probe
 

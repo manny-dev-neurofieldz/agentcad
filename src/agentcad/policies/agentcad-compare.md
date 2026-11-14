@@ -120,7 +120,7 @@ Four loops are the plate's outline and its three holes. Next: find the missing l
 
 ## 7 Constraints to Probe
 
-- Loops are counted only between exact sources: `agentcad compare A B --planes ...` says so on stderr when either is a mesh, and then reports the deviation alone.
+- Loops are counted only between exact sources: `agentcad compare A B --planes ...` says so in a `note:` line of its report when either is a mesh, and then reports the deviation alone.
 - A plane that misses a feature cannot count it: `agentcad probe section SOURCE --planes ...` shows each plane's loops before they are compared (`agentcad-probe-recover`).
 - A loop cap limits the overlays, never the gate: `agentcad compare ... --max-loops N` says when it applied.
 - The deviation's floor is the sampling: `agentcad compare` of a source against itself reads near that floor, which is the smallest difference the number can show.

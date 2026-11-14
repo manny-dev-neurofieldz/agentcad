@@ -135,6 +135,10 @@ def test_an_output_named_without_an_extension_gets_the_formats(monkeypatch, caps
     assert (tmp_path / "single.stl").stat().st_size > 0 and not (tmp_path / "single").exists()
     assert (tmp_path / "plate_size-8.stl").is_file() and (tmp_path / "plate_size-9.stl").is_file()
     assert "single.stl" in capsys.readouterr().out
+    _run(monkeypatch, ["export", str(src), "-e", "openscad", "-o", str(tmp_path / "plate.v2")])      # a dot is not an extension
+    _run(monkeypatch, ["export", str(src), "-e", "openscad", "-o", str(tmp_path / "kept.STL")])      # the format's own, any case
+    assert (tmp_path / "plate.v2.stl").is_file() and not (tmp_path / "plate.v2").exists()
+    assert (tmp_path / "kept.STL").is_file() and not (tmp_path / "kept.STL.stl").exists()
 
 
 def test_a_session_at_its_cap_names_the_commands_that_go_on(tmp_path):
